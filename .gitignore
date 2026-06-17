@@ -1,0 +1,38 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+
+# Virtual environments
+.venv
+
+# Local machine state and secrets
+.DS_Store
+.env
+.env.*
+!.env.example
+
+# Generated experiment artifacts
+data/
+results/
+artifacts/
+checkpoints/
+models/
+wandb/
+.cache/
+*.h5
+*.hdf5
+*.pt
+*.pth
+*.safetensors
+*.bin
+
+# External reference checkouts kept locally, not vendored into this repo.
+deception-detection/
+truth_spec/

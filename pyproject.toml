@@ -1,0 +1,45 @@
+[project]
+name = "intelligent-liars"
+version = "0.1.0"
+description = "Activation-direction experiments for steering truth reporting in Qwen3-VL."
+readme = "README.md"
+authors = [
+    { name = "Avinash Krishna", email = "avikrish001@gmail.com" }
+]
+requires-python = ">=3.11"
+dependencies = [
+    "accelerate>=1.0",
+    "datasets>=3.0",
+    "einops>=0.8",
+    "h5py>=3.11",
+    "hf-transfer>=0.1.9",
+    "huggingface-hub>=0.25",
+    "matplotlib>=3.9",
+    "numpy>=1.26",
+    "pandas>=2.2",
+    "pillow>=10.4",
+    "python-dotenv>=1.0",
+    "qwen-vl-utils[decord]>=0.0.14",
+    "rich>=13.8",
+    "safetensors>=0.4",
+    "scikit-learn>=1.5",
+    "seaborn>=0.13",
+    "torch>=2.5",
+    "tqdm>=4.66",
+    "transformers>=4.57",
+    "typer>=0.12",
+]
+
+[project.scripts]
+intelligent-liars = "intelligent_liars:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[dependency-groups]
+dev = [
+    "mypy>=1.13",
+    "pytest>=8.3",
+    "ruff>=0.8",
+]
