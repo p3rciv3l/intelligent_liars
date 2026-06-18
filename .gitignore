@@ -36,3 +36,5 @@ wandb/
 # External reference checkouts kept locally, not vendored into this repo.
 deception-detection/
 truth_spec/
+references/
+tmp/

@@ -19,7 +19,9 @@ dependencies = [
     "pandas>=2.2",
     "pillow>=10.4",
     "python-dotenv>=1.0",
+    "pyyaml>=6.0.2",
     "qwen-vl-utils[decord]>=0.0.14",
+    "requests>=2.32",
     "rich>=13.8",
     "safetensors>=0.4",
     "scikit-learn>=1.5",
@@ -28,6 +30,7 @@ dependencies = [
     "tqdm>=4.66",
     "transformers>=4.57",
     "typer>=0.12",
+    "nnsight>=0.5.12",
 ]
 
 [project.scripts]
