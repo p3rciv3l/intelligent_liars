@@ -6,6 +6,8 @@ from typing import Any, Sequence
 
 
 DEFAULT_MODEL_ID = "Qwen/Qwen3-VL-8B-Thinking"
+QWEN_ATTENTION_IMPLEMENTATION = "flash_attention_2"
+QWEN_DTYPE_NAME = "torch.bfloat16"
 
 
 @dataclass(frozen=True)
@@ -26,7 +28,7 @@ class ModelBundle:
 
 def resolve_model_id(model_name: str | None = None) -> str:
     """Return the single supported Hugging Face model id."""
-    model_id = model_name or os.getenv("MODEL_NAME") or DEFAULT_MODEL_ID
+    model_id = model_name or DEFAULT_MODEL_ID
     if model_id != DEFAULT_MODEL_ID:
         raise ValueError(f"Only {DEFAULT_MODEL_ID} is supported for this project, got {model_id}.")
     return model_id
@@ -79,16 +81,33 @@ def load_model_and_processor(config: ModelLoadConfig | None = None) -> ModelBund
     bundle = load_processor(config)
     from transformers import Qwen3VLForConditionalGeneration
 
-    model_kwargs: dict[str, Any] = {
-        "cache_dir": config.cache_dir,
-        "device_map": "auto",
-        "dtype": "auto",
-    }
-
-    model = Qwen3VLForConditionalGeneration.from_pretrained(model_id, **model_kwargs)
+    model = Qwen3VLForConditionalGeneration.from_pretrained(
+        model_id,
+        **qwen_model_load_kwargs(cache_dir=config.cache_dir),
+    )
     model.eval()
     bundle.model = model
     return bundle
+
+
+def qwen_model_load_kwargs(*, cache_dir: str | None = None) -> dict[str, Any]:
+    """Return the shared Qwen3-VL load kwargs for Transformers and NNsight."""
+    import torch
+
+    return {
+        "cache_dir": cache_dir,
+        "device_map": "auto",
+        "dtype": torch.bfloat16,
+        "attn_implementation": QWEN_ATTENTION_IMPLEMENTATION,
+    }
+
+
+def qwen_model_load_description() -> str:
+    return (
+        f'dtype="{QWEN_DTYPE_NAME}", '
+        'device_map="auto", '
+        f'attn_implementation="{QWEN_ATTENTION_IMPLEMENTATION}"'
+    )
 
 
 def get_model_and_tokenizer(

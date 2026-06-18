@@ -30,6 +30,7 @@ from intelligent_liars.models import (
     load_model_and_processor,
     load_processor,
     model_config_from_env,
+    qwen_model_load_description,
     resolve_model_id,
 )
 from intelligent_liars.activation_backends import TransformersHookBackend
@@ -92,7 +93,7 @@ def check_env(
     require_cuda: bool = typer.Option(False, help="Fail if CUDA is unavailable."),
     check_processor: bool = typer.Option(
         False,
-        help="Download/load only the Hugging Face processor for MODEL_NAME.",
+        help="Download/load only the hardcoded Qwen3-VL processor.",
     ),
     check_model: bool = typer.Option(
         False,
@@ -122,7 +123,7 @@ def check_env(
     table.add_row("model_id", model_id)
     table.add_row("hf_home", model_config.cache_dir or "default")
     table.add_row("hf_token", "set" if os.getenv("HF_TOKEN") else "not set")
-    table.add_row("model_load", 'dtype="auto", device_map="auto"')
+    table.add_row("model_load", qwen_model_load_description())
     table.add_row(
         "gpu_ids",
         ",".join(str(gpu_id) for gpu_id in model_config.gpu_ids)
@@ -132,6 +133,7 @@ def check_env(
     table.add_row("torch", _version("torch"))
     table.add_row("transformers", _version("transformers"))
     table.add_row("accelerate", _version("accelerate"))
+    table.add_row("flash-attn", _version("flash-attn"))
     table.add_row("nnsight", _version("nnsight"))
     table.add_row("qwen-vl-utils", _version("qwen-vl-utils"))
 

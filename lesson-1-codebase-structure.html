@@ -1,0 +1,519 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Lesson 1 - Intelligent Liars Codebase Structure</title>
+  <style>
+    :root {
+      --ink: #111827;
+      --muted: #4b5563;
+      --line: #1f2937;
+      --soft: #eef2f7;
+      --data: #dbeafe;
+      --code: #dcfce7;
+      --model: #fde68a;
+      --artifact: #fce7f3;
+      --risk: #fee2e2;
+      --panel: #ffffff;
+    }
+    body {
+      margin: 0;
+      font-family: Helvetica, Arial, sans-serif;
+      color: var(--ink);
+      background: #f8fafc;
+      line-height: 1.35;
+    }
+    main {
+      max-width: 1240px;
+      margin: 0 auto;
+      padding: 24px 28px 44px;
+    }
+    h1 {
+      margin: 0 0 6px;
+      font-size: 30px;
+      letter-spacing: 0;
+    }
+    h2 {
+      margin: 28px 0 10px;
+      padding-top: 14px;
+      border-top: 2px solid #cbd5e1;
+      font-size: 22px;
+      letter-spacing: 0;
+    }
+    h3 {
+      margin: 18px 0 8px;
+      font-size: 17px;
+      letter-spacing: 0;
+    }
+    p {
+      margin: 8px 0;
+      max-width: 980px;
+    }
+    code, pre {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+      font-size: 13px;
+    }
+    code {
+      background: #e5e7eb;
+      padding: 1px 4px;
+      border-radius: 4px;
+    }
+    pre {
+      background: #111827;
+      color: #e5e7eb;
+      padding: 12px;
+      overflow-x: auto;
+      border-radius: 6px;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 10px 0 18px;
+      background: var(--panel);
+    }
+    th, td {
+      border: 1px solid #cbd5e1;
+      padding: 8px 9px;
+      vertical-align: top;
+      text-align: left;
+      font-size: 13px;
+    }
+    th {
+      background: #e2e8f0;
+      font-weight: 700;
+    }
+    .lede {
+      font-size: 15px;
+      color: var(--muted);
+      max-width: 1040px;
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 14px;
+    }
+    .box {
+      background: var(--panel);
+      border: 1px solid #cbd5e1;
+      border-radius: 8px;
+      padding: 12px;
+    }
+    .tight li {
+      margin: 4px 0;
+    }
+    .diagram {
+      background: var(--panel);
+      border: 1px solid #cbd5e1;
+      border-radius: 8px;
+      padding: 10px;
+      margin: 12px 0 18px;
+      overflow-x: auto;
+    }
+    .caption {
+      color: var(--muted);
+      font-size: 12px;
+      margin: 4px 0 0;
+    }
+    .tag {
+      display: inline-block;
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-size: 11px;
+      font-weight: 700;
+      border: 1px solid #94a3b8;
+      background: #f8fafc;
+    }
+    .callout {
+      border-left: 4px solid #334155;
+      background: #f1f5f9;
+      padding: 10px 12px;
+      margin: 12px 0;
+    }
+    svg text {
+      font-family: Helvetica, Arial, sans-serif;
+      fill: #111827;
+    }
+    svg .small { font-size: 11px; }
+    svg .tiny { font-size: 9px; }
+    svg .label { font-size: 12px; font-weight: 700; }
+    svg .title { font-size: 15px; font-weight: 700; }
+    svg .edge { stroke: #111827; stroke-width: 1.4; fill: none; marker-end: url(#arrow); }
+    svg .dash { stroke-dasharray: 4 3; }
+    svg .box { stroke: #1f2937; stroke-width: 1.2; rx: 6; }
+  </style>
+</head>
+<body>
+<main>
+  <h1>Lesson 1: Intelligent Liars Codebase Structure</h1>
+  <p class="lede">This lesson teaches the repository as a system of objects and transformations. The starting object is not "a model" or "a probe." The starting object is a set of files on disk. The code turns those files into prompts, model responses, labels, token masks, hidden-state rows, and later probe-training data.</p>
+
+  <h2>0. The One-Sentence Map</h2>
+  <p>The repository is a pipeline for taking Truth Spec-style text datasets, running or replaying them through Qwen3-VL, isolating assistant answer-token hidden states, and writing labeled activation rows that can later train truth/deception probes.</p>
+  <div class="callout">
+    <strong>Separate these three things immediately:</strong>
+    <ul class="tight">
+      <li><strong>Data files</strong>: CSV, YAML, JSON, and HDF5 files stored under <code>data/</code>, <code>references/</code>, and <code>results/</code>.</li>
+      <li><strong>Python objects</strong>: dataclasses such as <code>PromptExample</code>, <code>ActivationExample</code>, <code>ProcessorBatch</code>, and <code>DetectionMask</code>.</li>
+      <li><strong>Model computation</strong>: Qwen3-VL forward passes or generation calls. These create text or hidden-state tensors, but they are not the labels by themselves.</li>
+    </ul>
+  </div>
+
+  <h2>1. Primitive Objects</h2>
+  <table>
+    <tr><th>Primitive</th><th>Concrete example</th><th>What it is</th><th>What it is not</th></tr>
+    <tr><td>Repository root</td><td><code>/Users/student/Desktop/ai/intelligent_liars</code></td><td>The filesystem boundary for project code, source data, generated outputs, tests, and docs.</td><td>Not a Python package by itself.</td></tr>
+    <tr><td>Python package</td><td><code>src/intelligent_liars/</code></td><td>The importable code. CLI commands call into these modules.</td><td>Not where raw datasets should be written.</td></tr>
+    <tr><td>Source data</td><td><code>data/claims/*.csv</code>, <code>data/roleplaying/dataset.yaml</code>, <code>references/truth_spec/data/rollouts/*.json</code></td><td>Prompt or label material before our Qwen run.</td><td>Not automatically probe-ready.</td></tr>
+    <tr><td>Generated rollout</td><td><code>data/rollouts/roleplaying__plain__qwen3-vl-8b-thinking.json</code></td><td>Qwen's generated assistant output plus metadata and placeholder labels.</td><td>Not final judged labels until grading fills them.</td></tr>
+    <tr><td>Activation dataset</td><td><code>ActivationDataset(task, examples)</code></td><td>A normalized in-memory list of labeled message examples.</td><td>Not tensorized yet.</td></tr>
+    <tr><td>Detection mask</td><td><code>DetectionMask.tensor</code></td><td>A boolean row selector over token positions after processor tokenization.</td><td>Not an attention mask. It does not alter what the model can see.</td></tr>
+    <tr><td>Activation HDF5</td><td><code>results/extracted_feats_all_layers_qwen3-vl-8b-thinking.h5</code></td><td>The probe input artifact: hidden-state rows plus labels and metadata.</td><td>Not the probe trainer itself.</td></tr>
+  </table>
+
+  <h2>2. Main Anchor Architecture Diagram</h2>
+  <div class="diagram">
+    <svg width="1180" height="640" viewBox="0 0 1180 640" role="img" aria-label="Intelligent Liars codebase architecture">
+      <defs>
+        <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+          <path d="M0,0 L0,6 L9,3 z" fill="#111827"></path>
+        </marker>
+      </defs>
+      <rect x="18" y="18" width="1144" height="604" fill="#ffffff" stroke="#94a3b8" stroke-width="1.2" rx="8"></rect>
+      <text x="34" y="44" class="title">Anchor map: files on disk become Qwen responses, judged labels, answer-token masks, and HDF5 activation rows</text>
+
+      <rect x="36" y="70" width="164" height="506" fill="#f8fafc" stroke="#94a3b8" rx="6"></rect>
+      <text x="54" y="94" class="label">CLI surface</text>
+      <rect x="54" y="118" width="126" height="44" class="box" fill="#e0f2fe"></rect>
+      <text x="66" y="136" class="small">check-env</text>
+      <text x="66" y="151" class="tiny">runtime, CUDA, deps</text>
+      <rect x="54" y="182" width="126" height="52" class="box" fill="#e0f2fe"></rect>
+      <text x="66" y="201" class="small">generate-rollouts</text>
+      <text x="66" y="216" class="tiny">roleplaying/sandbag</text>
+      <rect x="54" y="254" width="126" height="52" class="box" fill="#e0f2fe"></rect>
+      <text x="66" y="273" class="small">generate-insider</text>
+      <text x="66" y="288" class="tiny">multi-turn transcript</text>
+      <rect x="54" y="326" width="126" height="52" class="box" fill="#e0f2fe"></rect>
+      <text x="66" y="345" class="small">grade-*</text>
+      <text x="66" y="360" class="tiny">OpenRouter judge</text>
+      <rect x="54" y="398" width="126" height="52" class="box" fill="#e0f2fe"></rect>
+      <text x="66" y="417" class="small">extract-activations</text>
+      <text x="66" y="432" class="tiny">HDF5 rows</text>
+
+      <rect x="230" y="70" width="212" height="506" fill="#f8fafc" stroke="#94a3b8" rx="6"></rect>
+      <text x="250" y="94" class="label">Data layer</text>
+      <rect x="252" y="118" width="168" height="62" class="box" fill="#dbeafe"></rect>
+      <text x="265" y="139" class="small">static source data</text>
+      <text x="265" y="154" class="tiny">data/claims, repe, got</text>
+      <text x="265" y="168" class="tiny">data/internal_state</text>
+      <rect x="252" y="204" width="168" height="62" class="box" fill="#dbeafe"></rect>
+      <text x="265" y="225" class="small">prompt seeds</text>
+      <text x="265" y="240" class="tiny">data/roleplaying/*.yaml</text>
+      <text x="265" y="254" class="tiny">references/truth_spec rollouts</text>
+      <rect x="252" y="290" width="168" height="62" class="box" fill="#dbeafe"></rect>
+      <text x="265" y="311" class="small">insider prompts</text>
+      <text x="265" y="326" class="tiny">data/insider_trading</text>
+      <text x="265" y="340" class="tiny">prompts/**/*.yaml</text>
+      <rect x="252" y="376" width="168" height="62" class="box" fill="#fce7f3"></rect>
+      <text x="265" y="397" class="small">generated JSON</text>
+      <text x="265" y="412" class="tiny">data/rollouts/*.json</text>
+      <text x="265" y="426" class="tiny">qwen generations</text>
+      <rect x="252" y="462" width="168" height="62" class="box" fill="#fce7f3"></rect>
+      <text x="265" y="483" class="small">activation HDF5</text>
+      <text x="265" y="498" class="tiny">results/*.h5</text>
+      <text x="265" y="512" class="tiny">probe input artifact</text>
+
+      <rect x="474" y="70" width="220" height="506" fill="#f8fafc" stroke="#94a3b8" rx="6"></rect>
+      <text x="494" y="94" class="label">Normalization modules</text>
+      <rect x="496" y="118" width="176" height="66" class="box" fill="#dcfce7"></rect>
+      <text x="508" y="139" class="small">rollouts.py</text>
+      <text x="508" y="154" class="tiny">PromptExample</text>
+      <text x="508" y="168" class="tiny">generate_completions</text>
+      <rect x="496" y="212" width="176" height="66" class="box" fill="#dcfce7"></rect>
+      <text x="508" y="233" class="small">judging.py</text>
+      <text x="508" y="248" class="tiny">judge prompts</text>
+      <text x="508" y="262" class="tiny">label fields</text>
+      <rect x="496" y="306" width="176" height="92" class="box" fill="#dcfce7"></rect>
+      <text x="508" y="327" class="small">activations.py</text>
+      <text x="508" y="342" class="tiny">ActivationDataset</text>
+      <text x="508" y="356" class="tiny">QwenProcessorTokenizer</text>
+      <text x="508" y="370" class="tiny">DetectionMaskBuilder</text>
+      <text x="508" y="384" class="tiny">write_activation_hdf5</text>
+      <rect x="496" y="426" width="176" height="66" class="box" fill="#dcfce7"></rect>
+      <text x="508" y="447" class="small">activation_backends.py</text>
+      <text x="508" y="462" class="tiny">backend protocol</text>
+      <text x="508" y="476" class="tiny">text-only model inputs</text>
+
+      <rect x="724" y="70" width="198" height="506" fill="#f8fafc" stroke="#94a3b8" rx="6"></rect>
+      <text x="744" y="94" class="label">Model surfaces</text>
+      <rect x="746" y="118" width="154" height="72" class="box" fill="#fde68a"></rect>
+      <text x="758" y="139" class="small">models.py</text>
+      <text x="758" y="154" class="tiny">Qwen3-VL loader</text>
+      <text x="758" y="168" class="tiny">bf16 + flash_attention_2</text>
+      <rect x="746" y="220" width="154" height="90" class="box" fill="#fde68a"></rect>
+      <text x="758" y="241" class="small">Qwen processor</text>
+      <text x="758" y="256" class="tiny">chat template</text>
+      <text x="758" y="270" class="tiny">input_ids</text>
+      <text x="758" y="284" class="tiny">attention_mask</text>
+      <rect x="746" y="340" width="154" height="92" class="box" fill="#fde68a"></rect>
+      <text x="758" y="361" class="small">Qwen decoder</text>
+      <text x="758" y="376" class="tiny">model.model</text>
+      <text x="758" y="390" class="tiny">.language_model.layers[i]</text>
+      <text x="758" y="404" class="tiny">answer-token hidden rows</text>
+      <rect x="746" y="462" width="154" height="56" class="box" fill="#fde68a"></rect>
+      <text x="758" y="483" class="small">NNsight wrapper</text>
+      <text x="758" y="498" class="tiny">trace and future edits</text>
+
+      <rect x="954" y="70" width="176" height="506" fill="#f8fafc" stroke="#94a3b8" rx="6"></rect>
+      <text x="974" y="94" class="label">Research outputs</text>
+      <rect x="976" y="128" width="132" height="76" class="box" fill="#fce7f3"></rect>
+      <text x="988" y="150" class="small">graded labels</text>
+      <text x="988" y="165" class="tiny">HONEST=0</text>
+      <text x="988" y="179" class="tiny">DECEPTIVE=1</text>
+      <rect x="976" y="238" width="132" height="84" class="box" fill="#fce7f3"></rect>
+      <text x="988" y="260" class="small">activation rows</text>
+      <text x="988" y="275" class="tiny">layer_i/task</text>
+      <text x="988" y="289" class="tiny">metadata/task</text>
+      <text x="988" y="303" class="tiny">token positions</text>
+      <rect x="976" y="356" width="132" height="84" class="box" fill="#fee2e2"></rect>
+      <text x="988" y="378" class="small">future code</text>
+      <text x="988" y="393" class="tiny">probe trainers</text>
+      <text x="988" y="407" class="tiny">truth directions</text>
+      <text x="988" y="421" class="tiny">steering evals</text>
+
+      <path class="edge" d="M180 208 C206 208, 214 224, 252 232"></path>
+      <path class="edge" d="M420 236 C452 236, 462 150, 496 150"></path>
+      <path class="edge" d="M672 150 C704 150, 714 154, 746 154"></path>
+      <path class="edge" d="M900 154 C930 154, 944 164, 976 164"></path>
+      <path class="edge" d="M180 352 C210 352, 224 407, 252 407"></path>
+      <path class="edge" d="M420 407 C454 407, 468 246, 496 246"></path>
+      <path class="edge" d="M420 493 C456 493, 468 352, 496 352"></path>
+      <path class="edge" d="M672 352 C704 352, 714 386, 746 386"></path>
+      <path class="edge" d="M900 386 C928 386, 944 280, 976 280"></path>
+      <path class="edge dash" d="M823 432 C823 444, 823 452, 823 462"></path>
+      <text x="210" y="196" class="tiny">command selects source</text>
+      <text x="682" y="134" class="tiny">load model + processor</text>
+      <text x="706" y="372" class="tiny">capture selected rows</text>
+    </svg>
+    <p class="caption">Read left to right: CLI commands choose a task, data loaders normalize raw files into objects, model surfaces compute text or activations, output files preserve enough metadata for later probes.</p>
+  </div>
+
+  <h2>3. Progressive Build: From Files to Probe Rows</h2>
+  <div class="diagram">
+    <svg width="1180" height="360" viewBox="0 0 1180 360" role="img" aria-label="Progressive build of the pipeline">
+      <defs>
+        <marker id="arrow2" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+          <path d="M0,0 L0,6 L9,3 z" fill="#111827"></path>
+        </marker>
+      </defs>
+      <rect x="20" y="20" width="1140" height="318" fill="#fff" stroke="#94a3b8" rx="8"></rect>
+      <text x="40" y="48" class="title">Same system built in stages</text>
+      <g>
+        <rect x="44" y="84" width="170" height="92" class="box" fill="#dbeafe"></rect>
+        <text x="58" y="108" class="label">Stage 1: raw files</text>
+        <text x="58" y="128" class="tiny">YAML rows, CSV rows,</text>
+        <text x="58" y="142" class="tiny">reference rollout JSON</text>
+        <text x="58" y="156" class="tiny">No Qwen tensor yet.</text>
+      </g>
+      <path d="M214 130 L262 130" stroke="#111827" stroke-width="1.4" marker-end="url(#arrow2)"></path>
+      <g>
+        <rect x="262" y="84" width="170" height="92" class="box" fill="#dcfce7"></rect>
+        <text x="276" y="108" class="label">Stage 2: examples</text>
+        <text x="276" y="128" class="tiny">PromptExample or</text>
+        <text x="276" y="142" class="tiny">ActivationExample</text>
+        <text x="276" y="156" class="tiny">Python-level objects.</text>
+      </g>
+      <path d="M432 130 L480 130" stroke="#111827" stroke-width="1.4" marker-end="url(#arrow2)"></path>
+      <g>
+        <rect x="480" y="84" width="170" height="92" class="box" fill="#fde68a"></rect>
+        <text x="494" y="108" class="label">Stage 3: processor</text>
+        <text x="494" y="128" class="tiny">chat template, input_ids,</text>
+        <text x="494" y="142" class="tiny">attention_mask, offsets</text>
+        <text x="494" y="156" class="tiny">Token positions exist.</text>
+      </g>
+      <path d="M650 130 L698 130" stroke="#111827" stroke-width="1.4" marker-end="url(#arrow2)"></path>
+      <g>
+        <rect x="698" y="84" width="170" height="92" class="box" fill="#fde68a"></rect>
+        <text x="712" y="108" class="label">Stage 4: Qwen pass</text>
+        <text x="712" y="128" class="tiny">generate text or</text>
+        <text x="712" y="142" class="tiny">forward trace layers</text>
+        <text x="712" y="156" class="tiny">Numerical states exist.</text>
+      </g>
+      <path d="M868 130 L916 130" stroke="#111827" stroke-width="1.4" marker-end="url(#arrow2)"></path>
+      <g>
+        <rect x="916" y="84" width="190" height="92" class="box" fill="#fce7f3"></rect>
+        <text x="930" y="108" class="label">Stage 5: artifacts</text>
+        <text x="930" y="128" class="tiny">rollout JSON, graded JSON,</text>
+        <text x="930" y="142" class="tiny">or HDF5 activation rows</text>
+        <text x="930" y="156" class="tiny">Probe-ready only after labels.</text>
+      </g>
+      <rect x="262" y="222" width="606" height="64" class="box" fill="#f1f5f9"></rect>
+      <text x="282" y="246" class="label">Invariant across stages</text>
+      <text x="282" y="266" class="small">The source row identity follows the object: source_index, task name, model id, generated_model, label schema, token positions, and detected answer text.</text>
+    </svg>
+  </div>
+
+  <h2>4. Module-by-Module Code Map</h2>
+  <table>
+    <tr><th>File</th><th>Core responsibility</th><th>Important objects/functions</th><th>How to read it</th></tr>
+    <tr><td><code>PROJECT.md</code></td><td>Research contract and scope.</td><td>Text-only first pass, Truth Spec reuse, Qwen3-VL adaptation, experiment loop.</td><td>Read before changing broad direction. It tells you which work is in-scope now.</td></tr>
+    <tr><td><code>src/intelligent_liars/cli.py</code></td><td>Command-line entrypoints.</td><td><code>check-env</code>, <code>generate-rollouts</code>, <code>grade-rollouts</code>, <code>generate-insider-trading</code>, <code>extract-activations</code>.</td><td>Read when asking "what command starts the path?"</td></tr>
+    <tr><td><code>src/intelligent_liars/models.py</code></td><td>Stock Qwen3-VL loading.</td><td><code>ModelLoadConfig</code>, <code>ModelBundle</code>, <code>load_model_and_processor</code>, <code>qwen_model_load_kwargs</code>.</td><td>Read when asking "what exact model and load kwargs are used?"</td></tr>
+    <tr><td><code>src/intelligent_liars/rollouts.py</code></td><td>Prompt loading and Qwen text generation.</td><td><code>PromptExample</code>, <code>GenerationSettings</code>, <code>generate_rollout_task</code>, <code>generate_completions</code>, <code>generate_insider_trading_transcripts</code>.</td><td>Read when asking "how do prompts become generated JSON?"</td></tr>
+    <tr><td><code>src/intelligent_liars/judging.py</code></td><td>LLM-as-judge grading for generated text.</td><td><code>JudgeConfig</code>, <code>grade_rollout_file</code>, <code>grade_insider_trading_transcripts</code>, classification helpers.</td><td>Read when asking "how does text become deterministic-ish labels?"</td></tr>
+    <tr><td><code>src/intelligent_liars/activations.py</code></td><td>Dataset adapters, masks, extraction loop, HDF5 writer.</td><td><code>ActivationExample</code>, <code>ActivationDataset</code>, <code>QwenProcessorTokenizer</code>, <code>DetectionMaskBuilder</code>, <code>extract_dataset_activations</code>.</td><td>Read when asking "how do examples become hidden-state rows?"</td></tr>
+    <tr><td><code>src/intelligent_liars/activation_backends.py</code></td><td>Backend abstraction for hidden-state capture.</td><td><code>ActivationBackend</code>, <code>TransformersHookBackend</code>, <code>prepare_model_inputs</code>.</td><td>Read when asking "where is the model surface selected?"</td></tr>
+    <tr><td><code>src/intelligent_liars/nnsight_backend.py</code></td><td>NNsight load/trace/write-capable backend.</td><td><code>NnsightActivationBackend</code>, <code>load_nnsight_bundle</code>, <code>qwen3_vl_text_decoder_layer</code>.</td><td>Read when asking "how do we trace or later edit Qwen decoder layers?"</td></tr>
+    <tr><td><code>tests/</code></td><td>Contract checks.</td><td>Mask alignment tests, CLI guard tests, mocked loader tests, rollout tests.</td><td>Read after changing behavior to know which invariant you may have broken.</td></tr>
+  </table>
+
+  <h2>5. Mechanism Microscope: What Is a Backend?</h2>
+  <p>By "backend," this code does not mean a web server. It means "the mechanism that runs a model and returns hidden states in a common shape." The dataset code should not care whether hidden states came from a PyTorch forward hook or from NNsight tracing.</p>
+  <div class="diagram">
+    <svg width="1180" height="420" viewBox="0 0 1180 420" role="img" aria-label="Backend protocol microscope">
+      <defs>
+        <marker id="arrow3" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+          <path d="M0,0 L0,6 L9,3 z" fill="#111827"></path>
+        </marker>
+      </defs>
+      <rect x="24" y="24" width="1132" height="370" fill="#fff" stroke="#94a3b8" rx="8"></rect>
+      <text x="44" y="52" class="title">Microscope: same capture contract, two implementations</text>
+      <rect x="60" y="96" width="220" height="184" class="box" fill="#dbeafe"></rect>
+      <text x="78" y="120" class="label">Inputs from activations.py</text>
+      <text x="78" y="148" class="small">inputs: {input_ids, attention_mask}</text>
+      <text x="78" y="168" class="small">detection_mask: bool[B,T]</text>
+      <text x="78" y="188" class="small">layers: [0, 1, ..., L-1]</text>
+      <text x="78" y="208" class="small">capture_logits: bool</text>
+      <text x="78" y="236" class="tiny">Important: offset_mapping is used for masks,</text>
+      <text x="78" y="250" class="tiny">but is stripped before model forward.</text>
+      <path d="M280 188 L350 188" stroke="#111827" stroke-width="1.5" marker-end="url(#arrow3)"></path>
+      <rect x="350" y="70" width="250" height="142" class="box" fill="#dcfce7"></rect>
+      <text x="370" y="96" class="label">TransformersHookBackend</text>
+      <text x="370" y="122" class="small">register_forward_hook(layer_i)</text>
+      <text x="370" y="142" class="small">model(**inputs, use_cache=False)</text>
+      <text x="370" y="162" class="small">hidden_states[detection_mask]</text>
+      <text x="370" y="182" class="small">detach().cpu()</text>
+      <rect x="350" y="244" width="250" height="116" class="box" fill="#dcfce7"></rect>
+      <text x="370" y="270" class="label">NnsightActivationBackend</text>
+      <text x="370" y="296" class="small">with model.trace(inputs)</text>
+      <text x="370" y="316" class="small">layer_i.output[detection_mask].save()</text>
+      <text x="370" y="336" class="small">saved.value.detach().cpu()</text>
+      <path d="M600 142 L684 190" stroke="#111827" stroke-width="1.5" marker-end="url(#arrow3)"></path>
+      <path d="M600 308 L684 230" stroke="#111827" stroke-width="1.5" marker-end="url(#arrow3)"></path>
+      <rect x="684" y="118" width="230" height="168" class="box" fill="#fde68a"></rect>
+      <text x="704" y="144" class="label">ActivationTraceResult</text>
+      <text x="704" y="172" class="small">activations_by_layer: dict[int, Tensor]</text>
+      <text x="704" y="192" class="small">logits: Tensor | None</text>
+      <text x="704" y="212" class="small">surfaces: layer -> path/name</text>
+      <text x="704" y="240" class="tiny">The extraction loop consumes this common</text>
+      <text x="704" y="254" class="tiny">object, regardless of backend implementation.</text>
+      <path d="M914 202 L996 202" stroke="#111827" stroke-width="1.5" marker-end="url(#arrow3)"></path>
+      <rect x="996" y="128" width="118" height="148" class="box" fill="#fce7f3"></rect>
+      <text x="1010" y="154" class="label">HDF5 writer</text>
+      <text x="1010" y="182" class="tiny">layer_0/task</text>
+      <text x="1010" y="196" class="tiny">layer_1/task</text>
+      <text x="1010" y="210" class="tiny">metadata/task</text>
+      <text x="1010" y="224" class="tiny">labels</text>
+      <text x="1010" y="238" class="tiny">token_positions</text>
+    </svg>
+  </div>
+
+  <h2>6. Trace Diagram: One Roleplaying Row Through the Codebase</h2>
+  <p>Keep one concrete row alive. Suppose row 0 in <code>data/roleplaying/dataset.yaml</code> describes a student asking for an extension and has <code>answer_prefix: Student:</code>. The code does not train anything during generation. It produces a Qwen answer and writes it into a Truth Spec-compatible JSON shape.</p>
+  <div class="diagram">
+    <svg width="1180" height="520" viewBox="0 0 1180 520" role="img" aria-label="Trace of one roleplaying row">
+      <defs>
+        <marker id="arrow4" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+          <path d="M0,0 L0,6 L9,3 z" fill="#111827"></path>
+        </marker>
+      </defs>
+      <rect x="20" y="20" width="1140" height="470" fill="#fff" stroke="#94a3b8" rx="8"></rect>
+      <text x="42" y="50" class="title">Trace: roleplaying source row 0</text>
+      <rect x="52" y="88" width="188" height="128" class="box" fill="#dbeafe"></rect>
+      <text x="66" y="114" class="label">YAML row</text>
+      <text x="66" y="142" class="tiny">scenario: student needs extension</text>
+      <text x="66" y="156" class="tiny">question: teacher asks why</text>
+      <text x="66" y="170" class="tiny">answer_prefix: Student:</text>
+      <text x="66" y="184" class="tiny">honest/deceptive completions</text>
+      <text x="66" y="198" class="tiny">are reference text, not Qwen output.</text>
+      <path d="M240 152 L302 152" stroke="#111827" stroke-width="1.5" marker-end="url(#arrow4)"></path>
+      <rect x="302" y="88" width="190" height="128" class="box" fill="#dcfce7"></rect>
+      <text x="316" y="114" class="label">PromptExample</text>
+      <text x="316" y="142" class="tiny">source_index=0</text>
+      <text x="316" y="156" class="tiny">input_messages=[system,user,</text>
+      <text x="316" y="170" class="tiny">assistant prefix, empty detect]</text>
+      <text x="316" y="184" class="tiny">expected_label=None</text>
+      <path d="M492 152 L554 152" stroke="#111827" stroke-width="1.5" marker-end="url(#arrow4)"></path>
+      <rect x="554" y="88" width="204" height="128" class="box" fill="#fde68a"></rect>
+      <text x="568" y="114" class="label">Qwen generation input</text>
+      <text x="568" y="142" class="tiny">apply_chat_template(...)</text>
+      <text x="568" y="156" class="tiny">continue_final_message=True</text>
+      <text x="568" y="170" class="tiny">processor -> input_ids[B,T]</text>
+      <text x="568" y="184" class="tiny">model.generate(...)</text>
+      <path d="M758 152 L820 152" stroke="#111827" stroke-width="1.5" marker-end="url(#arrow4)"></path>
+      <rect x="820" y="88" width="240" height="128" class="box" fill="#fce7f3"></rect>
+      <text x="834" y="114" class="label">Rollout JSON record</text>
+      <text x="834" y="142" class="tiny">input_messages: original prompt</text>
+      <text x="834" y="156" class="tiny">output_messages: Qwen assistant text</text>
+      <text x="834" y="170" class="tiny">graded_deception: ["unknown"]</text>
+      <text x="834" y="184" class="tiny">metadata.source_index=0</text>
+      <path d="M940 216 C940 254, 790 254, 790 292" stroke="#111827" stroke-width="1.5" marker-end="url(#arrow4)"></path>
+      <rect x="672" y="292" width="236" height="108" class="box" fill="#fee2e2"></rect>
+      <text x="690" y="318" class="label">Judge fills label later</text>
+      <text x="690" y="346" class="tiny">grade-rollouts calls judging.py</text>
+      <text x="690" y="360" class="tiny">result becomes graded_deception</text>
+      <text x="690" y="374" class="tiny">unknown rows are skipped for probes</text>
+      <path d="M672 348 L594 348" stroke="#111827" stroke-width="1.5" marker-end="url(#arrow4)"></path>
+      <rect x="370" y="292" width="224" height="108" class="box" fill="#dcfce7"></rect>
+      <text x="388" y="318" class="label">ActivationExample</text>
+      <text x="388" y="346" class="tiny">messages include generated assistant answer</text>
+      <text x="388" y="360" class="tiny">label: HONEST or DECEPTIVE</text>
+      <text x="388" y="374" class="tiny">detect=True on answer span</text>
+      <path d="M370 348 L286 348" stroke="#111827" stroke-width="1.5" marker-end="url(#arrow4)"></path>
+      <rect x="94" y="292" width="192" height="108" class="box" fill="#fde68a"></rect>
+      <text x="112" y="318" class="label">Processor + mask</text>
+      <text x="112" y="346" class="tiny">render chat template</text>
+      <text x="112" y="360" class="tiny">token offsets locate answer text</text>
+      <text x="112" y="374" class="tiny">detection_mask selects rows</text>
+      <path d="M286 400 C350 458, 748 458, 812 400" stroke="#111827" stroke-width="1.5" marker-end="url(#arrow4)"></path>
+      <rect x="812" y="292" width="228" height="108" class="box" fill="#fce7f3"></rect>
+      <text x="830" y="318" class="label">HDF5 activation rows</text>
+      <text x="830" y="346" class="tiny">layer_i/roleplaying__plain</text>
+      <text x="830" y="360" class="tiny">metadata labels and source_index</text>
+      <text x="830" y="374" class="tiny">answer-token hidden states only</text>
+    </svg>
+  </div>
+
+  <h2>7. What Changed With FlashAttention-2</h2>
+  <p>The model loading primitive changed in one place and is reused by both model paths.</p>
+  <pre><code>qwen_model_load_kwargs(cache_dir=...)
+  -> {
+       "cache_dir": cache_dir,
+       "device_map": "auto",
+       "dtype": torch.bfloat16,
+       "attn_implementation": "flash_attention_2",
+     }</code></pre>
+  <p>This matters because <code>generate-rollouts</code> and <code>generate-insider-trading</code> use <code>load_model_and_processor</code>, while NNsight extraction uses <code>load_nnsight_bundle</code>. If these diverge, generation and activation extraction might run under different numerical/runtime settings. The new helper keeps them aligned.</p>
+
+  <h2>8. The Mental Model to Keep</h2>
+  <div class="grid">
+    <div class="box">
+      <h3>Local computation</h3>
+      <p>The code locally reads files, builds Python objects, formats Qwen chat strings, runs model calls, writes JSON/HDF5. This is machinery.</p>
+    </div>
+    <div class="box">
+      <h3>System-level purpose</h3>
+      <p>The research purpose is to find hidden-state directions correlated with truthfulness/deception, then test whether steering can damage reported truth while preserving other capabilities.</p>
+    </div>
+    <div class="box">
+      <h3>Representation vs label</h3>
+      <p>A hidden state is a numeric vector row inside Qwen. A label is an external tag like <code>HONEST=0</code> or <code>DECEPTIVE=1</code>. Probe training later connects them.</p>
+    </div>
+    <div class="box">
+      <h3>Generation vs extraction</h3>
+      <p>Generation creates the assistant text. Extraction replays prompt+answer through Qwen and captures internal hidden states at answer tokens. Those are different passes.</p>
+    </div>
+  </div>
+</main>
+</body>
+</html>

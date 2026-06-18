@@ -150,17 +150,19 @@ Important defaults:
 Truth Spec's original loader in `references/truth_spec/src/models.py` is built
 around NNsight `LanguageModel` and text-only model families. This repo uses
 `src/intelligent_liars/models.py` for the stock Qwen3-VL load path.
-The loader supports one model:
+The loader hardcodes one supported model:
 
 - `Qwen/Qwen3-VL-8B-Thinking`
-- `Qwen3VLForConditionalGeneration.from_pretrained(..., dtype="auto", device_map="auto")`
+- `Qwen3VLForConditionalGeneration.from_pretrained(..., dtype=torch.bfloat16, device_map="auto", attn_implementation="flash_attention_2")`
 - `AutoProcessor.from_pretrained(...)` for the paired tokenizer/chat template
 
 This keeps model loading aligned with the processor we need for Qwen3-VL
 inference and token masking. Activation extraction and later steering should be
 implemented as a separate backend. `src/intelligent_liars/nnsight_backend.py`
 sets up the first NNsight path for tracing Qwen3-VL text-decoder activations at
-`model.model.language_model.layers[layer_idx]`.
+`model.model.language_model.layers[layer_idx]`. Install `flash-attn` separately
+on the CUDA box before `--check-model` or `--check-nnsight`; it is not a base
+dependency because it is hardware-specific.
 
 ## External References
 

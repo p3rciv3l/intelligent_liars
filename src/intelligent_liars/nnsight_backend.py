@@ -11,7 +11,13 @@ from intelligent_liars.activation_backends import (
     prepare_model_inputs,
     qwen3_vl_decoder_surface,
 )
-from intelligent_liars.models import ModelLoadConfig, load_processor, model_config_from_env, resolve_model_id
+from intelligent_liars.models import (
+    ModelLoadConfig,
+    load_processor,
+    model_config_from_env,
+    qwen_model_load_kwargs,
+    resolve_model_id,
+)
 
 
 @dataclass
@@ -127,9 +133,7 @@ def load_nnsight_bundle(config: ModelLoadConfig | None = None) -> NnsightBundle:
     processor_bundle = load_processor(config)
     model = LanguageModel(
         model_id,
-        cache_dir=config.cache_dir,
-        device_map="auto",
-        dtype="auto",
+        **qwen_model_load_kwargs(cache_dir=config.cache_dir),
     )
     return NnsightBundle(
         model=model,
