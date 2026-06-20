@@ -19,7 +19,36 @@ wheels/
 !.env.example
 
 # Generated experiment artifacts
-data/
+data/*
+!data/insider_trading/
+data/insider_trading/*
+!data/insider_trading/*.txt
+!data/insider_trading/prompts/
+!data/insider_trading/prompts/**/
+!data/insider_trading/prompts/**/*.yaml
+!data/roleplaying/
+data/roleplaying/*
+!data/roleplaying/dataset.yaml
+!data/roleplaying/grading_template.txt
+!data/rollout_prompts/
+data/rollout_prompts/*
+!data/rollout_prompts/*.json
+!data/sandbagging_v2/
+data/sandbagging_v2/*
+!data/sandbagging_v2/*.txt
+!data/sandbagging_v2/*.json
+!data/claims/
+data/claims/*
+!data/claims/*.csv
+!data/repe/
+data/repe/*
+!data/repe/*.csv
+!data/geometry_of_truth/
+data/geometry_of_truth/*
+!data/geometry_of_truth/*.csv
+!data/internal_state/
+data/internal_state/*
+!data/internal_state/*.csv
 results/
 artifacts/
 checkpoints/

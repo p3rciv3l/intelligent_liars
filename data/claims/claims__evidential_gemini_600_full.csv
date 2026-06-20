@@ -1,0 +1,583 @@
+Claim,Negated Claim,Domain
+Paris is the capital of France.,Paris is not the capital of France.,Geography
+The Earth orbits around the Sun.,The Sun orbits around the Earth.,Science
+Humans have 23 pairs of chromosomes.,Humans have 46 pairs of chromosomes.,Science
+Water is composed of hydrogen and oxygen.,Water is composed of helium and neon.,Science
+The Nile is the longest river in the world.,The Nile is the shortest river in the world.,Geography
+Mount Everest is the highest mountain above sea level.,Mount Everest is the lowest point on Earth.,Geography
+Tokyo is the capital of Japan.,Tokyo is the capital of China.,Geography
+The Amazon Rainforest is located in South America.,The Amazon Rainforest is located in Europe.,Geography
+Light travels faster than sound.,Sound travels faster than light.,Science
+Africa is the second-largest continent by land area.,Africa is the smallest continent by land area.,Geography
+The Pacific Ocean is the largest ocean on Earth.,The Pacific Ocean is the smallest ocean on Earth.,Geography
+Rome was the center of the Roman Empire.,Rome was the center of the Incan Empire.,History
+Photosynthesis is the process plants use to make food.,Photosynthesis is the process humans use to make food.,Science
+The Great Wall of China is located in China.,The Great Wall of China is located in Mexico.,History
+The Sahara is the largest hot desert in the world.,The Sahara is the smallest hot desert in the world.,Geography
+Mammals are warm-blooded vertebrates.,Mammals are cold-blooded invertebrates.,Science
+Brazil is the largest country in South America.,Brazil is the smallest country in South America.,Geography
+The Declaration of Independence was signed in 1776.,The Declaration of Independence was signed in 1976.,History
+Penguins are flightless birds.,Penguins are birds capable of long-distance flight.,Nature
+Diamond is a solid form of the element carbon.,Diamond is a liquid form of the element oxygen.,Science
+The human heart pumps blood throughout the body.,The human heart pumps air throughout the body.,Science
+Antarctica is the coldest continent on Earth.,Antarctica is the hottest continent on Earth.,Geography
+"The speed of light in a vacuum is approximately 299,792,458 meters per second.",The speed of light in a vacuum is 100 meters per second.,Science
+Leonardo da Vinci painted the Mona Lisa.,Leonardo da Vinci painted the Sistine Chapel ceiling.,Culture
+Oxygen is necessary for human respiration.,Oxygen is toxic for human respiration.,Science
+Canada is located in North America.,Canada is located in South America.,Geography
+The United Nations was founded after World War II.,The United Nations was founded before World War I.,History
+Australia is both a country and a continent.,Australia is a city located in Europe.,Geography
+Iron is a metal.,Iron is a non-metal gas.,Science
+The Arctic Circle is located in the Northern Hemisphere.,The Arctic Circle is located in the Southern Hemisphere.,Geography
+Bees produce honey from flower nectar.,Bees produce honey from seawater.,Nature
+"Shakespeare wrote the play ""Hamlet.""","Shakespeare wrote the play ""The Great Gatsby.""",Culture
+Venus is the second planet from the Sun.,Venus is the farthest planet from the Sun.,Science
+The Eiffel Tower is located in Paris.,The Eiffel Tower is located in London.,Geography
+Berlin is the capital of Germany.,Berlin is the capital of Italy.,Geography
+The Great Pyramid of Giza is in Egypt.,The Great Pyramid of Giza is in Australia.,History
+Gravity is the force that pulls objects toward the Earth.,Gravity is the force that pushes objects away from the Earth.,Science
+Mandarin Chinese is the most spoken native language.,Mandarin Chinese is the least spoken language in the world.,Culture
+Nelson Mandela was a president of South Africa.,Nelson Mandela was the first King of England.,History
+The Mediterranean Sea separates Europe and Africa.,The Mediterranean Sea separates North and South America.,Geography
+Copper is a good conductor of electricity.,Copper is an insulator that does not conduct electricity.,Science
+Jupiter is the largest planet in our solar system.,Jupiter is the smallest planet in our solar system.,Science
+The Statue of Liberty was a gift from France to the U.S.,The Statue of Liberty was a gift from England to the U.S.,History
+Blue whales are the largest animals on Earth.,Blue whales are the smallest insects on Earth.,Nature
+Russia is the largest country in the world by land area.,Russia is the smallest country in the world by land area.,Geography
+Electrons have a negative electric charge.,Electrons have a positive electric charge.,Science
+The Panama Canal connects the Atlantic and Pacific Oceans.,The Panama Canal connects the Indian and Arctic Oceans.,Geography
+Albert Einstein developed the theory of relativity.,Albert Einstein developed the theory of evolution.,Science
+Ottawa is the capital of Canada.,Ottawa is the capital of the United States.,Geography
+Mars is known as the Red Planet.,Mars is known as the Blue Planet.,Science
+The Magna Carta was signed in 1215.,The Magna Carta was signed in 1915.,History
+Humans breathe out carbon dioxide.,Humans breathe in carbon dioxide and breathe out pure gold.,Science
+Canberra is the capital of Australia.,Canberra is the capital of New Zealand.,Geography
+The Wright brothers are credited with the first airplane flight.,The Wright brothers are credited with inventing the submarine.,History
+Silver is a chemical element with the symbol Ag.,Silver is a chemical element with the symbol Au.,Science
+Iceland is an island nation in the North Atlantic.,Iceland is a landlocked country in Africa.,Geography
+The human body has 206 bones.,The human body has 50 bones.,Science
+Alexander the Great was a king of Macedon.,Alexander the Great was the President of the United States.,History
+Kangaroos are native to Australia.,Kangaroos are native to Antarctica.,Nature
+The Colosseum is located in Rome.,The Colosseum is located in New York City.,History
+Plants absorb carbon dioxide during photosynthesis.,Plants absorb oxygen and release lead during photosynthesis.,Nature
+Saturn is famous for its prominent ring system.,Saturn is a planet with no rings.,Science
+Madrid is the capital of Spain.,Madrid is the capital of France.,Geography
+Sound cannot travel through a vacuum.,Sound travels easily through a vacuum.,Science
+The Renaissance began in Italy.,The Renaissance began in North America.,History
+Calcium is essential for healthy bones.,Calcium is detrimental to bone health.,Science
+The equator divides the Earth into Northern and Southern Hemispheres.,The equator divides the Earth into East and West Hemispheres.,Geography
+A leap year has 366 days.,A leap year has 360 days.,General
+Nitrogen makes up about 78% of Earth's atmosphere.,Nitrogen makes up 1% of Earth's atmosphere.,Science
+Marie Curie won Nobel Prizes in Physics and Chemistry.,Marie Curie never won a Nobel Prize.,History
+The Grand Canyon is located in Arizona.,The Grand Canyon is located in Florida.,Geography
+A standard deck of cards contains 52 cards.,A standard deck of cards contains 100 cards.,General
+The freezing point of water is 0 degrees Celsius.,The freezing point of water is 100 degrees Celsius.,Science
+The moon is Earth's only natural satellite.,The moon is a man-made satellite launched in 1950.,Science
+New Delhi is the capital of India.,New Delhi is the capital of Japan.,Geography
+Mercury is the planet closest to the Sun.,Mercury is the planet farthest from the Sun.,Science
+Michelangelo sculpted the statue of David.,Michelangelo sculpted the Statue of Liberty.,Culture
+Bamboo is a type of fast-growing grass.,Bamboo is a type of slow-growing stone.,Nature
+The Titanic sank in 1912.,The Titanic sank in 2012.,History
+Salt is chemically known as sodium chloride.,Salt is chemically known as hydrogen peroxide.,Science
+Vienna is the capital of Austria.,Vienna is the capital of Brazil.,Geography
+The Industrial Revolution began in Great Britain.,The Industrial Revolution began in the Amazon Rainforest.,History
+Protons have a positive electric charge.,Protons have a negative electric charge.,Science
+Greenland is the world's largest island.,Greenland is the world's smallest island.,Geography
+Bees are important pollinators for many crops.,Bees are the primary predators of elephants.,Nature
+The Parthenon is an ancient temple in Athens.,The Parthenon is a modern skyscraper in Dubai.,History
+Helium is lighter than air.,Helium is heavier than lead.,Science
+Cairo is the capital of Egypt.,Cairo is the capital of Canada.,Geography
+George Washington was the first U.S. president.,George Washington was the first King of France.,History
+Photosynthesis produces oxygen as a byproduct.,Photosynthesis produces carbon monoxide as a byproduct.,Nature
+The Dead Sea is known for its high salt concentration.,The Dead Sea is a freshwater lake with no salt.,Geography
+Tectonic plates make up the Earth's outer shell.,Tectonic plates are made of liquid gas.,Science
+Beethoven was a famous German composer.,Beethoven was a famous Japanese astronaut.,Culture
+The Caspian Sea is the world's largest inland body of water.,The Caspian Sea is located on the Moon.,Geography
+Zero is neither a positive nor a negative number.,Zero is a positive number.,Mathematics
+Seoul is the capital of South Korea.,Seoul is the capital of Russia.,Geography
+The human brain is the center of the nervous system.,The human brain is part of the digestive system.,Science
+Thomas Edison invented the long-lasting incandescent light bulb.,Thomas Edison invented the internet.,History
+The Andes is the longest continental mountain range in the world.,The Andes is a small hill range in the Netherlands.,Geography
+Sound travels faster in water than in air.,Sound travels slower in water than in air.,Science
+The Great Barrier Reef is located off the coast of Australia.,The Great Barrier Reef is located in the Sahara Desert.,Nature
+Jupiter has a persistent high-pressure region called the Great Red Spot.,Jupiter's Great Red Spot is a giant forest.,Science
+The Magna Carta was signed in England.,The Magna Carta was signed in Antarctica.,History
+Potassium is represented by the symbol K on the periodic table.,Potassium is represented by the symbol P on the periodic table.,Science
+The Pacific Ocean contains the Mariana Trench.,The Pacific Ocean is located inside the Mediterranean Sea.,Geography
+Hummingbirds are the only birds that can fly backward.,Hummingbirds are the only birds that cannot fly.,Nature
+The city of Istanbul is located on two continents.,The city of Istanbul is located on a single island in the Pacific.,Geography
+"Photosynthesis requires sunlight, water, and carbon dioxide.","Photosynthesis requires darkness, oil, and vinegar.",Science
+The French Revolution began in 1789.,The French Revolution began in 1989.,History
+"A kilometer is equal to 1,000 meters.",A kilometer is equal to 50 meters.,Mathematics
+The human skin is the body's largest organ.,The human skin is the smallest organ in the body.,Science
+Lake Superior is the largest of the Great Lakes of North America.,Lake Superior is a small pond in England.,Geography
+Penguins are found almost exclusively in the Southern Hemisphere.,Penguins are found primarily in the Sahara Desert.,Nature
+The first successful human heart transplant was performed in 1967.,The first human heart transplant was performed in 1492.,History
+Neon is a noble gas.,Neon is a highly reactive metal.,Science
+The Parthenon is located on the Acropolis in Athens.,The Parthenon is located in the center of Paris.,History
+Venus is the hottest planet in our solar system.,Venus is the coldest planet in our solar system.,Science
+Mount Kilimanjaro is the highest peak in Africa.,Mount Kilimanjaro is a valley in Australia.,Geography
+Wolfgang Amadeus Mozart was a composer of the Classical era.,Mozart was a famous heavy metal drummer.,Culture
+Chlorophyll gives plants their green color.,Chlorophyll gives plants their bright red color.,Nature
+The Suez Canal connects the Mediterranean Sea to the Red Sea.,The Suez Canal connects the Atlantic and Pacific Oceans.,Geography
+"Atoms consist of protons, neutrons, and electrons.",Atoms consist only of empty space and no particles.,Science
+"The Taj Mahal is located in Agra, India.",The Taj Mahal is located in Mexico City.,History
+"An adult human has 32 teeth, including wisdom teeth.",An adult human has 600 teeth.,Science
+The United States purchased Alaska from Russia.,The United States sold Alaska to Russia in 2020.,History
+Elephants are the largest living land animals.,Elephants are the smallest microscopic organisms.,Nature
+Bangkok is the capital of Thailand.,Bangkok is the capital of Norway.,Geography
+Absolute zero is the lowest possible temperature.,Absolute zero is the highest possible temperature.,Science
+"The primary colors of light are red, green, and blue.","The primary colors of light are yellow, purple, and orange.",Science
+The Forbidden City is located in Beijing.,The Forbidden City is located in Las Vegas.,History
+The liver is capable of regenerating its own tissue.,The liver is the only organ that cannot heal itself.,Science
+The Volga is the longest river in Europe.,The Volga is a river in South America.,Geography
+Honey never spoils if kept in a sealed container.,Honey spoils within two days of being harvested.,General
+Alexander Graham Bell is credited with inventing the telephone.,Alexander Graham Bell invented the microwave.,History
+"Mars has two moons, Phobos and Deimos.",Mars has fifty moons made of cheese.,Science
+The Danube River flows through ten countries.,The Danube River flows through the Australian Outback.,Geography
+Cheetahs are the fastest land animals.,Cheetahs are the slowest land animals.,Nature
+Bronze is an alloy consisting primarily of copper and tin.,Bronze is a pure element found in the atmosphere.,Science
+The Louvre is the world's largest art museum.,The Louvre is a small grocery store in Italy.,Culture
+The human appendix is located in the lower right abdomen.,The human appendix is located in the brain.,Science
+Machu Picchu is an Incan citadel in the Andes Mountains.,Machu Picchu is a modern airport in Peru.,History
+Dublin is the capital of Ireland.,Dublin is the capital of Spain.,Geography
+Jupiter is a gas giant.,Jupiter is a solid planet made of iron.,Science
+The Olympic Games originated in Ancient Greece.,The Olympic Games originated in Ancient Egypt.,History
+Lisbon is the capital of Portugal.,Lisbon is the capital of Germany.,Geography
+Bacteria are single-celled microorganisms.,Bacteria are large multi-cellular mammals.,Science
+The North Star is also known as Polaris.,The North Star is also known as Sirius.,Science
+Abraham Lincoln was the 16th President of the United States.,Abraham Lincoln was the first President of the United States.,History
+The Amazon River discharges more water than any other river.,The Amazon River has the lowest water discharge of any river.,Geography
+Glass is made primarily from liquid sand.,Glass is made primarily from melted plastic.,Science
+Butterflies taste with their feet.,Butterflies taste with their wings.,Nature
+The United Kingdom consists of four countries.,The United Kingdom consists of 50 countries.,Geography
+Penicillin was the first true antibiotic.,Penicillin was the first true vaccine for the flu.,Science
+The Sistine Chapel ceiling was painted by Michelangelo.,The Sistine Chapel ceiling was painted by Vincent van Gogh.,Culture
+Nitrogen is a major component of fertilizer.,Nitrogen is a toxic gas that kills all plants.,Science
+Mount Fuji is the highest mountain in Japan.,Mount Fuji is the lowest point in Japan.,Geography
+The first moon landing occurred in 1969.,The first moon landing occurred in 1492.,History
+A marathon is approximately 42.195 kilometers long.,A marathon is exactly 5 kilometers long.,General
+The pancreas produces insulin.,The pancreas produces adrenaline.,Science
+Stockholm is the capital of Sweden.,Stockholm is the capital of Denmark.,Geography
+The printing press was invented by Johannes Gutenberg.,The printing press was invented by Steve Jobs.,History
+Bats are the only mammals capable of true flight.,Bats are a type of flightless bird.,Nature
+Carbon is the basis of all known life on Earth.,Carbon is a rare element not found in living organisms.,Science
+The Brooklyn Bridge connects Manhattan and Brooklyn.,The Brooklyn Bridge connects Manhattan and Staten Island.,Geography
+"Vincent van Gogh painted ""The Starry Night.""","Vincent van Gogh painted the ""Mona Lisa.""",Culture
+Oxygen makes up about 21% of Earth's atmosphere.,Oxygen makes up 99% of Earth's atmosphere.,Science
+The South Pole is located on the continent of Antarctica.,The South Pole is located in the Arctic Ocean.,Geography
+The Berlin Wall fell in 1989.,The Berlin Wall fell in 1776.,History
+Insulin regulates the amount of sugar in the blood.,Insulin increases the amount of sugar in the blood.,Science
+The Gobi Desert is located in Asia.,The Gobi Desert is located in South America.,Geography
+Polar bears have black skin under their white fur.,Polar bears have white skin under their white fur.,Nature
+Marie Curie was the first woman to win a Nobel Prize.,Marie Curie was the first man to win a Nobel Prize.,History
+Sodium is a highly reactive metal.,Sodium is an inert gas that never reacts.,Science
+Helsinki is the capital of Finland.,Helsinki is the capital of Sweden.,Geography
+The human eye can distinguish millions of colors.,The human eye cannot see any colors.,Science
+The Gettysburg Address was delivered by Abraham Lincoln.,The Gettysburg Address was delivered by George Washington.,History
+Mount Vesuvius is an active volcano in Italy.,Mount Vesuvius is a dormant hill in England.,Geography
+All insects have six legs.,All insects have four legs.,Nature
+The speed of sound is slower than the speed of light.,The speed of sound is faster than the speed of light.,Science
+Lima is the capital of Peru.,Lima is the capital of Chile.,Geography
+The Cold War ended in the early 1990s.,The Cold War ended in 1865.,History
+Quartz is one of the most common minerals on Earth.,Quartz is the rarest mineral on Earth.,Science
+Lake Victoria is the largest lake in Africa.,Lake Victoria is the largest lake in Europe.,Geography
+Fungi are not plants.,Fungi are a type of flowering plant.,Nature
+The first Olympics of the modern era were held in 1896.,The first modern Olympics were held in 1996.,History
+Magnesium is an essential mineral for the human body.,Magnesium is a radioactive element that humans must avoid.,Science
+Oslo is the capital of Norway.,Oslo is the capital of Finland.,Geography
+The cornea is the transparent front part of the eye.,The cornea is the back part of the brain.,Science
+"George Orwell wrote the novel ""1984.""","George Orwell wrote ""Harry Potter.""",Culture
+The Dead Sea is the lowest point on the Earth's land surface.,The Dead Sea is the highest point on Earth.,Geography
+The human skeleton provides structural support for the body.,The human skeleton is made of liquid mercury.,Science
+Athens is the capital of Greece.,Athens is the capital of Egypt.,Geography
+Sir Isaac Newton formulated the laws of motion.,Isaac Newton discovered the secret to immortality.,Science
+The Great Salt Lake is located in the state of Utah.,The Great Salt Lake is located in New York.,Geography
+A triangle has three interior angles that sum to 180 degrees.,A triangle's interior angles sum to 360 degrees.,Mathematics
+Photosynthesis occurs within the organelles called chloroplasts.,Photosynthesis occurs in the mitochondria.,Science
+The Roman Colosseum was built using concrete and sand.,The Roman Colosseum was built using plastic and steel.,History
+"Sound waves require a medium, such as air or water, to travel.",Sound waves travel best through a vacuum.,Science
+The city of Venice is famous for its network of canals.,Venice is famous for its massive network of highways and cars.,Geography
+Diamonds are the hardest known natural material on Earth.,Diamonds are the softest known material on Earth.,Science
+The United States Constitution was written in 1787.,The United States Constitution was written in 1492.,History
+"A spider is an arachnid, not an insect.",A spider is a type of six-legged insect.,Nature
+The periodic table organizes elements by their atomic number.,The periodic table organizes elements by their cost.,Science
+Mexico City is the capital of Mexico.,Mexico City is the capital of Spain.,Geography
+The Great Depression began with the stock market crash of 1929.,The Great Depression began in 2008.,History
+Humans are classified biologically as Homo sapiens.,Humans are classified biologically as Canis lupus.,Science
+The Pacific Ocean is deeper than the Atlantic Ocean.,The Atlantic Ocean is deeper than the Pacific Ocean.,Geography
+Snakes are reptiles that lack external limbs.,Snakes are mammals with four furry legs.,Nature
+The Euro is the official currency of many European Union countries.,The Euro is the official currency of the United States.,General
+Mount Etna is an active stratovolcano on the east coast of Sicily.,Mount Etna is a volcano in the middle of London.,Geography
+Protons and neutrons are found in the nucleus of an atom.,Protons and neutrons orbit the outside of an atom.,Science
+The Apollo 11 mission was the first to land humans on the moon.,The Apollo 11 mission was a secret mission to Mars.,History
+Brussels is the capital of Belgium.,Brussels is the capital of Japan.,Geography
+Gravity causes the tides in the Earth's oceans.,Gravity has no effect on the ocean's tides.,Science
+The Taj Mahal was built as a tomb for Mumtaz Mahal.,The Taj Mahal was built as a shopping mall.,History
+Earth's core is composed mostly of iron and nickel.,Earth's core is composed mostly of gold and silver.,Science
+The Himalayas contain the world's highest peaks.,The Himalayas are a flat plain in Kansas.,Geography
+Owls are birds known for their nocturnal hunting habits.,Owls are blind birds that cannot hunt.,Nature
+Louis Pasteur developed the process of pasteurization.,Louis Pasteur developed the first computer.,Science
+The Bering Strait separates Russia from Alaska.,The Bering Strait separates Florida from Cuba.,Geography
+The Battle of Hastings took place in 1066.,The Battle of Hastings took place in 1945.,History
+Amino acids are the building blocks of proteins.,Amino acids are the building blocks of plastic.,Science
+Cairo is located near the mouth of the Nile River.,Cairo is located in the middle of the Sahara Desert with no water nearby.,Geography
+The odometer in a car measures the distance traveled.,The odometer in a car measures the engine's temperature.,General
+Venus rotates on its axis in the opposite direction to most planets.,Venus rotates in the same direction as all other planets.,Science
+The Louvre Pyramid was designed by architect I.M. Pei.,The Louvre Pyramid was designed by Leonardo da Vinci.,Culture
+A thermometer is an instrument used to measure temperature.,A thermometer is an instrument used to measure wind speed.,Science
+The Iberian Peninsula includes Spain and Portugal.,The Iberian Peninsula includes Italy and Greece.,Geography
+The Black Death was a bubonic plague pandemic in the 14th century.,The Black Death was a minor cold in the 21st century.,History
+Clouds are made of water droplets or ice crystals.,Clouds are made of cotton candy.,Science
+Warsaw is the capital of Poland.,Warsaw is the capital of France.,Geography
+The human small intestine is longer than the large intestine.,The human large intestine is longer than the small intestine.,Science
+Koalas primarily eat eucalyptus leaves.,Koalas primarily eat pizza.,Nature
+The Suez Canal was officially opened in 1869.,The Suez Canal was opened in 1999.,History
+Ultraviolet radiation comes from the Sun.,Ultraviolet radiation comes from the center of the Earth.,Science
+Lake Baikal in Russia is the world's deepest lake.,Lake Baikal is a shallow pond in Florida.,Geography
+The violin is a string instrument.,The violin is a percussion instrument.,Culture
+Thomas Jefferson was the main author of the Declaration of Independence.,Thomas Jefferson wrote the Communist Manifesto.,History
+Mercury is the smallest planet in the solar system.,Mercury is the largest planet in the solar system.,Science
+The Galapagos Islands are famous for their unique wildlife.,The Galapagos Islands are a barren desert with no animals.,Nature
+Buenos Aires is the capital of Argentina.,Buenos Aires is the capital of Italy.,Geography
+Friction is the force that opposes motion between two surfaces.,Friction is the force that accelerates motion.,Science
+The Panama Canal was completed by the United States.,The Panama Canal was completed by the Roman Empire.,History
+A leap year occurs every four years.,A leap year occurs every hundred years.,General
+Seawater contains a high concentration of dissolved salts.,Seawater is pure distilled water.,Science
+Mount Rushmore features the faces of four U.S. presidents.,Mount Rushmore features the faces of four British Kings.,History
+The Earth's crust is divided into several large plates.,"The Earth's crust is one solid, unbreakable piece.",Science
+Copenhagen is the capital of Denmark.,Copenhagen is the capital of Brazil.,Geography
+"Charles Darwin published ""On the Origin of Species.""","Charles Darwin published ""The Great Gatsby.""",Science
+The Great Wall of China was built to protect against invasions.,The Great Wall of China was built as a decorative garden fence.,History
+Platypuses are egg-laying mammals.,Platypuses are birds that lay eggs.,Nature
+The Sahara Desert spans across several North African countries.,The Sahara Desert is located in Canada.,Geography
+Static electricity is the result of an imbalance of electric charges.,Static electricity is caused by magnets.,Science
+Michelangelo painted the frescoes on the Sistine Chapel ceiling.,"Michelangelo painted the ""Mona Lisa.""",Culture
+Hydrogen is the most abundant element in the universe.,Hydrogen is the rarest element in the universe.,Science
+The Andes Mountains run through seven South American countries.,The Andes Mountains are located in Asia.,Geography
+"The Titanic was described as ""unsinkable"" before its maiden voyage.",The Titanic was considered the safest ship in history because it was made of wood.,History
+Mammoths are extinct relatives of modern elephants.,Mammoths are currently thriving in Africa.,Nature
+The ozone layer protects Earth from harmful UV rays.,The ozone layer attracts harmful UV rays to the Earth.,Science
+Santiago is the capital of Chile.,Santiago is the capital of Norway.,Geography
+The Cold War was a period of tension between the U.S. and USSR.,The Cold War was a period of great peace and cooperation.,History
+Blood carries oxygen from the lungs to the rest of the body.,Blood carries sand from the stomach to the feet.,Science
+The Eiffel Tower was built for the 1889 World's Fair.,The Eiffel Tower was built for the 2012 Olympics.,History
+A compass uses a magnetic needle to indicate direction.,A compass uses a laser to indicate direction.,General
+The speed of sound is faster in solids than in liquids.,The speed of sound is faster in a vacuum than in solids.,Science
+Madagascar is an island nation located off the coast of Africa.,Madagascar is a landlocked country in the middle of Asia.,Geography
+The Renaissance followed the Middle Ages.,The Renaissance preceded the Ancient World.,History
+Light behaves as both a particle and a wave.,Light behaves only as a solid particle.,Science
+Reindeer are also known as caribou in North America.,Reindeer are a type of marine fish.,Nature
+Amsterdam is the capital of the Netherlands.,Amsterdam is the capital of Switzerland.,Geography
+Marie Antoinette was the last Queen of France before the Revolution.,Marie Antoinette was the first President of France.,History
+Electrons orbit the nucleus of an atom in specific shells.,Electrons are found inside the nucleus of an atom.,Science
+The Strait of Gibraltar connects the Atlantic to the Mediterranean.,The Strait of Gibraltar connects the Indian Ocean to the Black Sea.,Geography
+A telescope is used to view distant objects in space.,A telescope is used to see microscopic bacteria.,Science
+The pyramids of Giza were built during the Old Kingdom of Egypt.,The pyramids of Giza were built last year.,History
+Dolphins are highly intelligent marine mammals.,Dolphins are a type of cold-blooded shark.,Nature
+An equilateral triangle has three equal angles of 60 degrees.,An equilateral triangle has three angles of 90 degrees.,Mathematics
+Sound frequency is measured in units called Hertz.,Sound frequency is measured in kilograms.,Science
+Prague is the capital of the Czech Republic.,Prague is the capital of Russia.,Geography
+The Steam Engine was a key invention of the Industrial Revolution.,The Steam Engine was invented during the Stone Age.,History
+Chloroplasts are found in plant cells but not animal cells.,Chloroplasts are found in every human cell.,Science
+The Dead Sea is so salty that people float easily in it.,The Dead Sea is so fresh that you can drink the water.,Geography
+Salmon migrate from the ocean to freshwater to spawn.,Salmon migrate from the mountains to the desert to spawn.,Nature
+The North Pole is located in the middle of the Arctic Ocean.,The North Pole is located on a massive continent of rock.,Geography
+Carbon dioxide is a greenhouse gas.,Carbon dioxide is a cooling gas that prevents global warming.,Science
+Pablo Picasso was a co-founder of the Cubist movement.,Pablo Picasso was a famous opera singer.,Culture
+A millisecond is one-thousandth of a second.,A millisecond is ten times longer than a second.,General
+The heart is located in the chest cavity.,The heart is located in the kneecap.,Science
+Manila is the capital of the Philippines.,Manila is the capital of Canada.,Geography
+The human body consists of approximately 60% water.,The human body consists of 0% water.,Science
+The Wright brothers achieved the first powered flight in North Carolina.,The Wright brothers flew the first airplane in 2003.,History
+A molecule of water contains two hydrogen atoms.,A molecule of water contains five carbon atoms.,Science
+The Mojave Desert is located in the Southwestern United States.,The Mojave Desert is located in the middle of the Atlantic Ocean.,Geography
+Dmitri Mendeleev is credited with creating the first periodic table.,Dmitri Mendeleev invented the telephone.,Science
+The Magna Carta was signed at Runnymede.,The Magna Carta was signed on the Moon.,History
+Iron turns to rust when exposed to water and oxygen.,Iron turns to gold when exposed to water.,Science
+The English Channel separates Southern England from Northern France.,The English Channel separates America from Asia.,Geography
+Tigers are the largest members of the cat family.,Tigers are the smallest known species of cat.,Nature
+The city of Jerusalem is considered holy by three major religions.,Jerusalem is a city that has never been associated with religion.,Culture
+Hemoglobin is the protein in red blood cells that carries oxygen.,Hemoglobin is the protein that turns skin green.,Science
+The American Civil War took place between 1861 and 1865.,The American Civil War took place in 1945.,History
+A circle's diameter is twice its radius.,A circle's diameter is half of its radius.,Mathematics
+The skull protects the human brain from injury.,The skull is made of soft tissue to allow the brain to expand.,Science
+Lake Tanganyika is the longest freshwater lake in the world.,Lake Tanganyika is a salt lake in the middle of Australia.,Geography
+Giant pandas are native to South Central China.,Giant pandas are native to the North Pole.,Nature
+The Apollo 17 mission was the last time humans walked on the moon.,The Apollo 17 mission was the first mission to the Sun.,History
+Argon is the third most abundant gas in Earth's atmosphere.,"Argon is the most abundant gas in the atmosphere, making up 90%.",Science
+The Parthenon was dedicated to the goddess Athena.,The Parthenon was dedicated to George Washington.,History
+Uranus is the seventh planet from the Sun.,Uranus is the planet closest to the Sun.,Science
+The Alps are the highest mountain range entirely in Europe.,The Alps are a mountain range in Florida.,Geography
+Ludwig van Beethoven continued to compose music after losing his hearing.,Beethoven stopped composing as soon as he became deaf.,Culture
+Stomata are small pores on the surface of plant leaves.,Stomata are large bones in the human leg.,Nature
+The Panama Canal was opened for traffic in 1914.,The Panama Canal was opened in 1776.,History
+An atom's mass is concentrated in its nucleus.,An atom's mass is located entirely in its electron cloud.,Science
+The Forbidden City served as the Chinese imperial palace.,The Forbidden City was a temporary campsite for nomads.,History
+White blood cells are part of the body's immune system.,White blood cells are responsible for carrying oxygen.,Science
+The Louisiana Purchase doubled the size of the United States in 1803.,The Louisiana Purchase decreased the size of the United States.,History
+Lions live in social groups called prides.,Lions live solitary lives and never form groups.,Nature
+Jakarta is the capital of Indonesia.,Jakarta is the capital of Mexico.,Geography
+Absolute zero is equivalent to -273.15 degrees Celsius.,Absolute zero is 100 degrees Fahrenheit.,Science
+Refraction is the bending of light as it passes between materials.,Refraction is the process of light reflecting off a mirror.,Science
+The Bastille was a fortress in Paris used as a state prison.,The Bastille was a luxury hotel in London.,History
+A decagon is a polygon with ten sides.,A decagon is a circle with no sides.,Mathematics
+The gallbladder stores bile produced by the liver.,The gallbladder produces insulin for the body.,Science
+The Rhine River begins in the Swiss Alps.,The Rhine River begins in the Sahara Desert.,Geography
+A standard year has 52 weeks.,A standard year has 10 weeks.,General
+Alexander Fleming discovered the properties of penicillin in 1928.,Alexander Fleming discovered America in 1492.,History
+Saturn's rings are composed mainly of ice and rock particles.,Saturn's rings are made of pure gold.,Science
+The Mekong River flows through Southeast Asia.,The Mekong River flows through Canada and the USA.,Geography
+Giraffes have the same number of neck vertebrae as humans.,Giraffes have fifty more neck vertebrae than humans.,Nature
+Brass is an alloy of copper and zinc.,Brass is a type of soft wood.,Science
+The Metropolitan Museum of Art is located in New York City.,The Metropolitan Museum of Art is located in a cave in Arizona.,Culture
+The human retina contains cells called rods and cones.,The human retina contains only nerves for smelling.,Science
+The Incan Empire was located along the western coast of South America.,The Incan Empire was located in Northern Europe.,History
+Reykjavik is the capital of Iceland.,Reykjavik is the capital of South Africa.,Geography
+Neptune is the farthest planet from the Sun in our solar system.,Neptune is the planet closest to the Sun.,Science
+The ancient Olympic Games were held in honor of Zeus.,The ancient Olympic Games were held to honor Napoleon.,History
+Nairobi is the capital of Kenya.,Nairobi is the capital of France.,Geography
+Viruses require a host cell to replicate.,Viruses can replicate on their own without a host.,Science
+The planet Mars has a thin atmosphere.,Mars has an atmosphere thicker than Earth's.,Science
+John F. Kennedy was the 35th President of the United States.,John F. Kennedy was the first President of the United States.,History
+The Yangtze is the longest river in Asia.,The Yangtze is a small stream in England.,Geography
+Silicon is widely used as a semiconductor in electronics.,Silicon is a metal that conducts heat better than copper.,Science
+Caterpillars undergo metamorphosis to become butterflies.,Caterpillars turn into frogs.,Nature
+The United Kingdom is an island nation.,The United Kingdom is a landlocked country.,Geography
+Edward Jenner developed the first successful vaccine for smallpox.,Edward Jenner invented the first telephone.,Science
+"The ceiling of the Sistine Chapel features ""The Creation of Adam.""",The Sistine Chapel features a painting of the first moon landing.,Culture
+Methane is a potent greenhouse gas.,Methane is a gas that smells like roses.,Science
+Mount Cook is the highest mountain in New Zealand.,Mount Cook is the highest mountain in Florida.,Geography
+The Mayan civilization developed a complex calendar system.,The Mayan civilization used a calendar with only 10 days.,History
+A nautical mile is longer than a land mile.,A nautical mile is much shorter than a land mile.,General
+The adrenal glands are located on top of the kidneys.,The adrenal glands are located in the feet.,Science
+Budapest is the capital of Hungary.,Budapest is the capital of Spain.,Geography
+The first telephone call was made by Alexander Graham Bell.,The first telephone call was made by George Washington.,History
+Great white sharks are apex predators.,Great white sharks are peaceful herbivores.,Nature
+Carbon-14 dating is used to determine the age of organic materials.,Carbon-14 dating is used to tell the future.,Science
+The Golden Gate Bridge is located in San Francisco.,The Golden Gate Bridge is located in New York City.,Geography
+Salvador Dali was a prominent Surrealist painter.,Salvador Dali was a famous realistic accountant.,Culture
+Radon is a naturally occurring radioactive gas.,Radon is a healthy gas that improves lung function.,Science
+The Cape of Good Hope is located in South Africa.,The Cape of Good Hope is in Northern Russia.,Geography
+The Korean War began in 1950.,The Korean War began in 1812.,History
+The thyroid gland regulates the body's metabolism.,The thyroid gland regulates the growth of fingernails only.,Science
+The Kalahari Desert is located in Southern Africa.,The Kalahari Desert is a tropical rainforest.,Geography
+The blue whale's tongue can weigh as much as an elephant.,A blue whale's tongue is as small as a grape.,Nature
+Rosa Parks is known for her role in the Montgomery bus boycott.,Rosa Parks is known for inventing the bus.,History
+Chlorine is used to disinfect swimming pool water.,Chlorine is used to make water more flammable.,Science
+Kuala Lumpur is the capital of Malaysia.,Kuala Lumpur is the capital of Brazil.,Geography
+The human ear converts sound waves into electrical impulses.,The human ear converts light into sound.,Science
+The Battle of Waterloo took place in 1815.,The Battle of Waterloo was a dance competition.,History
+Mount Rainier is an active volcano in Washington State.,Mount Rainier is a small hill in Florida.,Geography
+Ants are social insects that live in colonies.,Ants are solitary animals that never interact.,Nature
+Thermal energy is the energy of moving particles in matter.,Thermal energy is the energy of staying perfectly still.,Science
+Quito is the capital of Ecuador.,Quito is the capital of Japan.,Geography
+The United States entered World War II after the attack on Pearl Harbor.,The United States entered World War II after the sinking of the Titanic.,History
+Sulfur is a yellow nonmetal element.,Sulfur is a blue liquid element.,Science
+The Great Lakes contain about 21% of the world's surface fresh water.,The Great Lakes are filled with salt water.,Geography
+Yeasts are single-celled fungi used in baking.,Yeasts are multi-cellular mammals used in construction.,Nature
+The Treaty of Versailles ended World War I.,The Treaty of Versailles started World War I.,History
+The human femur is the longest bone in the body.,The human femur is the shortest bone in the body.,Science
+Brussels is known as the administrative center of the European Union.,Brussels is the capital of the United States.,Geography
+The vitreous humor is the clear gel that fills the eye.,The vitreous humor is a funny bone in the elbow.,Science
+"Jane Austen wrote the novel ""Pride and Prejudice.""","Jane Austen wrote ""The Origin of Species.""",Culture
+The Red Sea is an inlet of the Indian Ocean.,The Red Sea is a giant desert in Africa.,Geography
+The pituitary gland is often called the master gland of the endocrine system.,The pituitary gland is located in the stomach.,Science
+Hanoi is the capital of Vietnam.,Hanoi is the capital of Italy.,Geography
+Sir Francis Drake was the first Englishman to circumnavigate the globe.,Sir Francis Drake was the first person to fly around the world.,History
+Lake Titicaca is the highest navigable lake in the world.,Lake Titicaca is the lowest point in the ocean.,Geography
+A scalene triangle has three sides of different lengths.,A scalene triangle has three equal sides.,Mathematics
+The human respiratory system includes the trachea and bronchi.,The human respiratory system includes the liver and kidneys.,Science
+The Code of Hammurabi is one of the oldest deciphered writings of significant length.,The Code of Hammurabi is a secret recipe for bread.,History
+Electromagnetic waves can travel through the vacuum of space.,Electromagnetic waves cannot travel through space.,Science
+The city of Petra is an archaeological site in Jordan.,Petra is a modern city built in the 21st century.,History
+Graphene is a single layer of carbon atoms arranged in a hexagonal lattice.,Graphene is a type of heavy liquid metal.,Science
+The Bill of Rights consists of the first ten amendments to the U.S. Constitution.,The Bill of Rights is a document that lists all the taxes in the U.S.,History
+Scorpions are predatory arachnids with eight legs.,Scorpions are small mammals with six legs.,Nature
+The noble gases are located in Group 18 of the periodic table.,The noble gases are the most reactive elements.,Science
+Bogota is the capital of Colombia.,Bogota is the capital of Australia.,Geography
+The Han Dynasty was a golden age in Chinese history.,The Han Dynasty was a time of constant civil war and poverty.,History
+A sphere is a perfectly round geometrical object in three-dimensional space.,A sphere is a flat two-dimensional square.,Mathematics
+The cerebellum coordinates voluntary movements such as posture and balance.,The cerebellum is responsible for digestion.,Science
+The Hudson Bay is a large body of saltwater in northeastern Canada.,Hudson Bay is a freshwater pond in Florida.,Geography
+Toucans are birds recognized for their large and colorful bills.,Toucans use their bills to store water like a camel.,Nature
+The Rosetta Stone allowed for the translation of Egyptian hieroglyphs.,The Rosetta Stone is a type of precious jewel.,History
+An isotope is an atom with the same number of protons but different neutrons.,An isotope is an atom with a different number of protons.,Science
+The Sputnik 1 was the first artificial Earth satellite.,Sputnik 1 was a mission to land a man on the Sun.,History
+Bucharest is the capital of Romania.,Bucharest is the capital of Mexico.,Geography
+Kinetic energy is the energy an object possesses due to its motion.,Kinetic energy is the energy an object has when it is perfectly still.,Science
+"The Alhambra is a palace and fortress complex located in Granada, Spain.",The Alhambra is a skyscraper in New York.,History
+A chord is a straight line segment whose endpoints both lie on a circle.,A chord is a line that never touches a circle.,Mathematics
+Metamorphic rocks are formed from other rocks under high pressure and heat.,Metamorphic rocks are formed from ice and snow.,Science
+The Ural Mountains form a natural boundary between Europe and Asia.,The Ural Mountains separate North and South America.,Geography
+Fireflies produce light through a chemical reaction called bioluminescence.,Fireflies produce light by rubbing their wings together like crickets.,Nature
+Gregor Mendel is known as the father of modern genetics.,Gregor Mendel is the father of modern aviation.,Science
+The Dardanelles is a narrow strait in northwestern Turkey.,The Dardanelles is a large mountain in Africa.,Geography
+The Boxer Rebellion was an anti-foreign uprising in China.,The Boxer Rebellion was a sports tournament in China.,History
+Adenosine triphosphate (ATP) is the primary energy carrier in cells.,ATP is a type of sugar found in fruit.,Science
+Addis Ababa is the capital of Ethiopia.,Addis Ababa is the capital of Germany.,Geography
+A barometer is used to measure atmospheric pressure.,A barometer is used to measure the depth of the ocean.,Science
+The Earth's axis is tilted at an angle of approximately 23.5 degrees.,The Earth's axis has no tilt.,Science
+The Guggenheim Museum in Bilbao was designed by Frank Gehry.,The Guggenheim Museum was designed by George Washington.,Culture
+Alkali metals are highly reactive and found in Group 1 of the periodic table.,Alkali metals are found in the air and are very stable.,Science
+The Yucatan Peninsula separates the Gulf of Mexico from the Caribbean Sea.,The Yucatan Peninsula is in the middle of the Pacific Ocean.,Geography
+The Renaissance Man is a term used to describe polymaths like Leonardo da Vinci.,The Renaissance Man is a term for a man who lived in the year 2000.,History
+Convection is the transfer of heat through the movement of fluids.,Convection is the transfer of heat through a solid metal bar.,Science
+Sofia is the capital of Bulgaria.,Sofia is the capital of Japan.,Geography
+The human rib cage consists of 12 pairs of ribs.,The human rib cage consists of 100 pairs of ribs.,Science
+Orangutans are great apes native to the rainforests of Indonesia and Malaysia.,Orangutans are native to the North Pole.,Nature
+The Treaty of Tordesillas divided newly discovered lands between Spain and Portugal.,The Treaty of Tordesillas was an agreement to share a pizza.,History
+A tangent line touches a circle at exactly one point.,A tangent line passes through the center of a circle.,Mathematics
+The greenhouse effect traps heat in the Earth's atmosphere.,The greenhouse effect makes the Earth much colder.,Science
+Lake Ladoga is the largest lake located entirely in Europe.,Lake Ladoga is a small puddle in Africa.,Geography
+The cello is a member of the string family of musical instruments.,The cello is a type of woodwind instrument.,Culture
+Joan of Arc was a heroine of France during the Hundred Years' War.,Joan of Arc was a famous Italian chef.,History
+Jupiter's moon Ganymede is the largest moon in the solar system.,Ganymede is a small asteroid orbiting the Earth.,Science
+The Arctic Tundra is characterized by permafrost and low temperatures.,"The Arctic Tundra is a hot, sandy desert.",Nature
+Montevideo is the capital of Uruguay.,Montevideo is the capital of Russia.,Geography
+Inertia is the tendency of an object to resist changes in its state of motion.,Inertia is the tendency of an object to move faster when pushed.,Science
+The Great Fire of London occurred in 1666.,The Great Fire of London was a controlled campfire.,History
+A leap day is added to the month of February.,A leap day is added to the month of August.,General
+Magma is molten rock found beneath the Earth's surface.,Magma is a type of cold gas found in space.,Science
+The Valley of the Kings is a burial site for Egyptian pharaohs.,The Valley of the Kings is a modern amusement park.,History
+The Earth's magnetic field is generated by its outer core.,The Earth's magnetic field is generated by the Moon.,Science
+Belgrade is the capital of Serbia.,Belgrade is the capital of Australia.,Geography
+James Watt significantly improved the design of the steam engine.,James Watt invented the first airplane.,History
+The Forbidden City was the residence of the Ming and Qing dynasties.,The Forbidden City was the home of the French Kings.,History
+"A platypus is a monotreme, meaning it lays eggs but nurses its young.",A platypus is a type of reptile that gives birth to live young.,Nature
+The Sonoran Desert is located in North America.,The Sonoran Desert is located in Antarctica.,Geography
+An electric current is the flow of electric charge.,An electric current is the flow of liquid water.,Science
+"Pyotr Ilyich Tchaikovsky composed the music for ""The Nutcracker.""","Tchaikovsky composed the music for ""Star Wars.""",Culture
+Phosphorus is a chemical element essential for DNA structure.,Phosphorus is a metal used to build bridges.,Science
+The Atlas Mountains are located in Northwest Africa.,The Atlas Mountains are in South America.,Geography
+The Lusitania was a British ocean liner sunk by a German U-boat in 1915.,The Lusitania was a German spaceship.,History
+Corals are marine invertebrates that live in colonies.,Corals are a type of colorful rock with no living cells.,Nature
+A rhombus is a quadrilateral with four equal sides.,A rhombus is a circle with no corners.,Mathematics
+The stratosphere contains the majority of the Earth's ozone.,The stratosphere is the layer of the atmosphere where we live.,Science
+Lima is the capital of Peru.,Lima is the capital of Egypt.,Geography
+The Peloponnesian War was fought between Athens and Sparta.,The Peloponnesian War was fought between the USA and Russia.,History
+Blood pressure is the force of blood pushing against artery walls.,Blood pressure measures the amount of iron in the blood.,Science
+The Arc de Triomphe is a famous monument in Paris.,The Arc de Triomphe is a small hut in the desert.,History
+A protractor is a tool used to measure angles.,A protractor is used to measure the weight of an object.,General
+Radioactive decay is the process by which an unstable nucleus loses energy.,Radioactive decay is the process of an atom becoming larger.,Science
+The Sea of Japan lies between the Japanese archipelago and the Asian mainland.,The Sea of Japan is located in the middle of Africa.,Geography
+The Ottoman Empire was centered in modern-day Turkey.,The Ottoman Empire was based in Brazil.,History
+"Lasers produce a narrow, concentrated beam of light.",Lasers produce light that spreads out in all directions.,Science
+The bald eagle is the national bird of the United States.,The bald eagle is the national bird of Japan.,Nature
+Amman is the capital of Jordan.,Amman is the capital of Canada.,Geography
+The myelin sheath insulates nerve fibers to speed up signal transmission.,The myelin sheath is a type of muscle in the leg.,Science
+The Manhattan Project was the research project that produced the first nuclear weapons.,The Manhattan Project was a plan to build a bridge in New York.,History
+Mount Saint Helens erupted violently in 1980.,Mount Saint Helens is a dormant hill in England.,Geography
+Cicadas are insects known for their loud buzzing sounds.,Cicadas are birds that sing at night.,Nature
+Potential energy is energy stored in an object due to its position.,Potential energy is the energy of a moving car.,Science
+Kingston is the capital of Jamaica.,Kingston is the capital of Germany.,Geography
+The Emancipation Proclamation was issued by Abraham Lincoln.,The Emancipation Proclamation was issued by Napoleon.,History
+Zinc is a metallic element often used to galvanize steel.,Zinc is a type of gas used in balloons.,Science
+The Caspian Sea is bordered by five different countries.,The Caspian Sea is surrounded by land on only one side.,Geography
+"Mosses are small, non-vascular plants that absorb water through their leaves.",Mosses are tall trees with deep roots.,Nature
+The Berlin Airlift was a response to the Soviet blockade of West Berlin.,The Berlin Airlift was a commercial flight for tourists.,History
+The human patella is commonly known as the kneecap.,The human patella is the bone in the shoulder.,Science
+The European Union was established by the Maastricht Treaty.,The European Union was established by the Treaty of Versailles.,History
+A convex lens curves outward and converges light rays.,A convex lens curves inward and spreads light rays.,Science
+"George Frideric Handel composed the ""Messiah.""","Handel composed the ""Mona Lisa.""",Culture
+The Gulf Stream is a warm Atlantic ocean current.,The Gulf Stream is a cold current from the Arctic.,Geography
+A millennium consists of ten centuries.,A millennium is only 10 years long.,General
+The aorta is the largest artery in the human body.,The aorta is the smallest vein in the body.,Science
+Tashkent is the capital of Uzbekistan.,Tashkent is the capital of Norway.,Geography
+The Battle of Midway was a major naval battle in the Pacific Theater of WWII.,The Battle of Midway was a minor skirmish in the desert.,History
+Lake Victoria is the chief reservoir of the Nile River.,Lake Victoria is a small lake in the middle of London.,Geography
+A trapezoid is a quadrilateral with at least one pair of parallel sides.,A trapezoid is a triangle with no parallel sides.,Mathematics
+The human lymphatic system helps rid the body of toxins and waste.,The lymphatic system is responsible for pumping blood.,Science
+The Code of Justinian was a fundamental work in jurisprudence issued by the Byzantine Emperor.,The Code of Justinian was a secret code used in WWII.,History
+Infrared radiation has longer wavelengths than visible light.,Infrared radiation is visible to the human eye.,Science
+The city of Pompeii was buried under volcanic ash from Mount Vesuvius.,Pompeii was destroyed by a massive flood.,History
+Fullerenes are molecules composed entirely of carbon in the form of a hollow sphere or tube.,Fullerenes are large animals found in the ocean.,Science
+The United States Bill of Rights was influenced by the English Bill of Rights of 1689.,The U.S. Bill of Rights was influenced by the laws of Mars.,History
+Centipedes are predatory arthropods with one pair of legs per body segment.,Centipedes are mammals with two legs.,Nature
+The transition metals are found in the central block of the periodic table.,Transition metals are found at the bottom of the ocean.,Science
+Asuncion is the capital of Paraguay.,Asuncion is the capital of Russia.,Geography
+The Qin Dynasty was the first dynasty of Imperial China.,The Qin Dynasty was a modern era in Chinese history.,History
+A polyhedron is a three-dimensional solid with flat polygonal faces.,A polyhedron is a circle with no faces.,Mathematics
+The thalamus acts as a relay station for sensory information to the cerebral cortex.,The thalamus is a bone in the foot.,Science
+The Bay of Bengal is the largest bay in the world.,The Bay of Bengal is a small pond in England.,Geography
+Lemurs are primates endemic only to the island of Madagascar.,"Lemurs are found all over the world, especially in cities.",Nature
+The Hieroglyphic script was the formal writing system used in Ancient Egypt.,Hieroglyphics were used to write emails in Ancient Egypt.,History
+An ion is an atom or molecule with a net electric charge due to the loss or gain of electrons.,An ion is an atom that is perfectly neutral.,Science
+The Voyager 1 is the most distant human-made object from Earth.,Voyager 1 is a satellite currently orbiting the Earth.,Science
+Skopje is the capital of North Macedonia.,Skopje is the capital of Japan.,Geography
+Power is the rate at which work is done or energy is transformed.,Power is the measure of how much an object weighs.,Science
+The Palace of Versailles was the principal royal residence of France under Louis XIV.,The Palace of Versailles was a small cottage for peasants.,History
+A secant line intersects a circle at exactly two points.,A secant line never touches a circle.,Mathematics
+Sedimentary rocks are formed by the accumulation or deposition of mineral or organic particles.,Sedimentary rocks are formed from volcanic magma.,Science
+The Pyrenees mountain range forms a natural border between France and Spain.,The Pyrenees are a mountain range in Florida.,Geography
+Electric eels can generate high-voltage shocks to stun prey.,Electric eels generate light to attract mates.,Nature
+The double helix is the description of the molecular structure of DNA.,The double helix is the structure of a protein.,Science
+The Strait of Malacca is a primary shipping channel between the Indian and Pacific Oceans.,The Strait of Malacca is a highway in the USA.,Geography
+The Meiji Restoration was a period of rapid modernization in Japan.,The Meiji Restoration was a period of decline for Japan.,History
+Enzymes are biological catalysts that speed up chemical reactions in living things.,Enzymes slow down chemical reactions in the body.,Science
+Luanda is the capital of Angola.,Luanda is the capital of Spain.,Geography
+An anemometer is an instrument used to measure wind speed.,An anemometer measures the depth of the ocean.,Science
+The Earth's orbit around the sun is elliptical rather than perfectly circular.,The Earth's orbit is a perfect circle.,Science
+The Moai are monolithic human figures carved by the Rapa Nui people on Easter Island.,The Moai are modern statues made of plastic.,Culture
+Halogens are highly reactive nonmetals found in Group 17 of the periodic table.,Halogens are very stable gases that never react.,Science
+The Indochinese Peninsula lies between India and China.,The Indochinese Peninsula is in North America.,Geography
+The Age of Enlightenment emphasized reason and individualism over tradition.,The Enlightenment was a time of pure superstition.,History
+Conduction is the process by which heat is directly transmitted through a substance.,Conduction is the transfer of heat through light.,Science
+Tallinn is the capital of Estonia.,Tallinn is the capital of South Africa.,Geography
+The human skeleton is divided into the axial and appendicular skeletons.,The human skeleton is made of wood.,Science
+"Manatees are large, fully aquatic marine mammals often called sea cows.",Manatees are small birds that live in the desert.,Nature
+The Treaty of Westphalia ended the Thirty Years' War in Europe.,The Treaty of Westphalia started the Thirty Years' War.,History
+A diameter is the longest chord of a circle.,A diameter is the shortest line in a circle.,Mathematics
+The albedo of an object is the measure of how much light it reflects.,Albedo measures the weight of an object.,Science
+Lake Onega is the second largest lake in Europe.,Lake Onega is a small pond in Florida.,Geography
+The oboe is a double-reed woodwind instrument.,The oboe is a type of drum.,Culture
+Genghis Khan founded the Mongol Empire.,Genghis Khan founded the Roman Empire.,History
+Titan is the only moon in the solar system known to have a dense atmosphere.,Titan is a planet with no atmosphere.,Science
+The Taiga is the world's largest terrestrial biome.,The Taiga is a desert with no trees.,Nature
+Paramaribo is the capital of Suriname.,Paramaribo is the capital of France.,Geography
+Momentum is the product of the mass and velocity of an object.,Momentum is the product of mass and height.,Science
+The Great Smog of London occurred in 1952.,The Great Smog of London was caused by a giant campfire.,History
+The Gregorian calendar is the most widely used civil calendar in the world.,The Gregorian calendar is used only on Mars.,General
+Tsunamis are most often caused by underwater earthquakes.,Tsunamis are caused by high winds.,Science
+The Hanging Gardens of Babylon are one of the Seven Wonders of the Ancient World.,The Hanging Gardens of Babylon are a modern park in New York.,History
+Oceanic crust is thinner and denser than continental crust.,Continental crust is thinner than oceanic crust.,Science
+Tirana is the capital of Albania.,Tirana is the capital of Italy.,Geography
+"James Joyce wrote the landmark modernist novel ""Ulysses.""","James Joyce wrote ""The Cat in the Hat.""",Culture
+"The Forbidden City has 9,999 rooms according to legend.",The Forbidden City has only one room.,History
+Marsupials give birth to relatively undeveloped young that reside in a pouch.,Marsupials lay eggs like birds.,Nature
+The Atacama Desert is the driest non-polar place on Earth.,The Atacama Desert is the wettest place on Earth.,Geography
+A capacitor is a device used to store electrical energy in an electric field.,A capacitor is used to measure the weight of an atom.,Science
+Johann Sebastian Bach was a prolific composer of the Baroque period.,Bach was a famous pop singer in the 1990s.,Culture
+Nitrogen fixation is the process of converting atmospheric nitrogen into ammonia.,Nitrogen fixation is the process of making nitrogen gas from ammonia.,Science
+The Balkan Peninsula is located in Southeast Europe.,The Balkan Peninsula is in South America.,Geography
+The Hindenburg disaster occurred in 1937 in New Jersey.,The Hindenburg was a giant metal ship.,History
+Mollusks are a large phylum of invertebrate animals including snails and octopuses.,Mollusks are a type of bird.,Nature
+An obtuse angle is an angle that measures more than 90 degrees.,An obtuse angle is less than 10 degrees.,Mathematics
+The troposphere is the lowest layer of Earth's atmosphere.,The troposphere is the highest layer of the atmosphere.,Science
+La Paz is the administrative capital of Bolivia.,La Paz is the capital of Germany.,Geography
+The Punic Wars were fought between Rome and Carthage.,The Punic Wars were fought between Japan and China.,History
+Plasma is the liquid component of blood.,Plasma is a solid part of the blood.,Science
+The Brandenburg Gate is an 18th-century neoclassical monument in Berlin.,The Brandenburg Gate is a small wooden fence.,History
+A ruler is a tool used to measure the length of an object.,A ruler is used to measure the temperature of water.,General
+Nuclear fission is the splitting of a heavy atomic nucleus into smaller nuclei.,Nuclear fission is the process of combining atoms together.,Science
+The Persian Gulf is located between the Arabian Peninsula and Iran.,The Persian Gulf is in North America.,Geography
+The Safavid Dynasty was one of the most significant ruling dynasties of Iran.,The Safavid Dynasty ruled over England.,History
+Diffraction is the slight bending of light as it passes around the edge of an object.,Diffraction is the reflection of light off a surface.,Science
+The giant redwood is the tallest tree species on Earth.,The giant redwood is the smallest shrub on Earth.,Nature
+Muscat is the capital of Oman.,Muscat is the capital of Brazil.,Geography
+Synapses are the junctions where neurons communicate with each other.,Synapses are bones in the human hand.,Science
+The Manhattan Project was led by the United States with support from the UK and Canada.,The Manhattan Project was led by the Ancient Greeks.,History
+Krakatoa is a volcanic island in the Sunda Strait.,Krakatoa is a cold island in the Arctic.,Geography
+Dragonflies have large multifaceted eyes and two pairs of strong transparent wings.,Dragonflies have no wings and cannot fly.,Nature
+Total internal reflection occurs when light hits a medium boundary at a steep angle.,Total internal reflection happens only in space.,Science
+Phnom Penh is the capital of Cambodia.,Phnom Penh is the capital of Russia.,Geography
+The Gettysburg Address was delivered during the American Civil War.,The Gettysburg Address was delivered during World War II.,History
+"Cobalt is a hard, lustrous, silver-gray metal used in batteries.",Cobalt is a soft liquid used in food.,Science
+The Great Dividing Range is Australia's most substantial mountain range.,The Great Dividing Range is a desert in Africa.,Geography
+Lichen is a composite organism arising from algae or cyanobacteria living among filaments of fungi.,Lichen is a type of small mammal.,Nature
+The Council of Trent was an important ecumenical council of the Catholic Church.,The Council of Trent was a group of scientists who invented the car.,History
+The human clavicle is commonly known as the collarbone.,The human clavicle is located in the foot.,Science
+The Schengen Area allows for the abolition of internal border controls in much of Europe.,The Schengen Area requires passports for travel between every city.,History
+A concave mirror reflects light inward to one focal point.,A concave mirror reflects light outward.,Science
+"Igor Stravinsky was a Russian-born composer of ""The Rite of Spring.""",Stravinsky was a famous chef.,Culture
+The Kuroshio Current is a north-flowing ocean current in the western Pacific.,The Kuroshio Current is a cold current in the Atlantic.,Geography
