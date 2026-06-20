@@ -2,7 +2,13 @@ from __future__ import annotations
 
 import pytest
 
-from intelligent_liars.clients.openrouter_client import OpenRouterAPIError, OpenRouterClient, get_model_client
+from intelligent_liars.clients.openrouter_client import (
+    OpenRouterAPIError,
+    OpenRouterClient,
+    default_model_deployments_path,
+    fetch_openrouter_key_metadata,
+    get_model_client,
+)
 
 
 class FakeResponse:
@@ -29,6 +35,16 @@ class FakeSession:
         return FakeResponse()
 
 
+class FakeRequests:
+    def __init__(self, response):
+        self.response = response
+        self.calls = []
+
+    def get(self, url, *, headers=None, timeout=None):
+        self.calls.append({"url": url, "headers": headers, "timeout": timeout})
+        return self.response
+
+
 def test_openrouter_client_builds_chat_completion_request():
     session = FakeSession()
     client = OpenRouterClient(
@@ -50,6 +66,7 @@ def test_openrouter_client_builds_chat_completion_request():
     call = session.calls[0]
     assert call["url"] == "https://openrouter.ai/api/v1/chat/completions"
     assert call["headers"]["Authorization"] == "Bearer sk-test"
+    assert call["headers"]["X-OpenRouter-Title"] == "intelligent-liars"
     assert call["timeout"] == 7.0
     assert call["json"]["model"] == "test/provider-model"
     assert call["json"]["messages"] == [{"role": "user", "content": "hello"}]
@@ -59,6 +76,82 @@ def test_openrouter_client_builds_chat_completion_request():
     assert call["json"]["provider"]["data_collection"] == "deny"
     assert call["json"]["provider"]["sort"] == "price"
     assert call["json"]["provider"]["quantizations"] == []
+
+
+def test_openrouter_client_sends_only_explicit_defaults():
+    session = FakeSession()
+    client = OpenRouterClient("test/provider-model", api_key="sk-test")
+
+    client.generate([{"role": "user", "content": "hello"}], session=session)
+
+    payload = session.calls[0]["json"]
+    assert payload == {
+        "model": "test/provider-model",
+        "messages": [{"role": "user", "content": "hello"}],
+        "stream": False,
+        "provider": {
+            "require_parameters": False,
+            "allow_fallbacks": True,
+            "data_collection": "deny",
+        },
+    }
+
+
+def test_fetch_openrouter_key_metadata_validates_configured_key(monkeypatch):
+    class KeyResponse:
+        status_code = 200
+        headers = {}
+
+        def json(self):
+            return {"data": {"label": "test-key", "usage": 0, "limit": 1000}}
+
+    fake_requests = FakeRequests(KeyResponse())
+    monkeypatch.setattr("intelligent_liars.clients.openrouter_client._get_requests", lambda: fake_requests)
+
+    metadata = fetch_openrouter_key_metadata(api_key="sk-test", timeout=9.0)
+
+    assert metadata["label"] == "test-key"
+    assert fake_requests.calls == [
+        {
+            "url": "https://openrouter.ai/api/v1/key",
+            "headers": {
+                "Authorization": "Bearer sk-test",
+                "X-OpenRouter-Title": "intelligent-liars",
+            },
+            "timeout": 9.0,
+        }
+    ]
+
+
+def test_fetch_openrouter_key_metadata_raises_typed_auth_error(monkeypatch):
+    class UnauthorizedResponse:
+        status_code = 401
+        headers = {}
+
+        def json(self):
+            return {"error": {"message": "invalid key"}}
+
+    monkeypatch.setattr(
+        "intelligent_liars.clients.openrouter_client._get_requests",
+        lambda: FakeRequests(UnauthorizedResponse()),
+    )
+
+    with pytest.raises(OpenRouterAPIError) as exc_info:
+        fetch_openrouter_key_metadata(api_key="bad-key")
+
+    assert exc_info.value.status_code == 401
+    assert "invalid key" in str(exc_info.value)
+
+
+def test_default_model_deployments_path_walks_up_from_nested_cwd(tmp_path, monkeypatch):
+    nested = tmp_path / "src" / "intelligent_liars"
+    nested.mkdir(parents=True)
+    deployments = tmp_path / "prod_env" / "model_deployments.yaml"
+    deployments.parent.mkdir()
+    deployments.write_text("models: []\n")
+    monkeypatch.chdir(nested)
+
+    assert default_model_deployments_path() == deployments
 
 
 def test_get_model_client_loads_yaml_alias(tmp_path):
@@ -86,6 +179,63 @@ models:
     assert payload["max_tokens"] == 42
     assert payload["provider"]["sort"] == "price"
     assert session.calls[0]["timeout"] == 3.0
+
+
+def test_get_model_client_merges_provider_with_call_site_winning(tmp_path):
+    yaml_path = tmp_path / "model_deployments.yaml"
+    yaml_path.write_text(
+        """
+models:
+  - name: judge
+    model: example/judge-model:nitro
+    provider:
+      quantizations: []
+      require_parameters: false
+"""
+    )
+
+    session = FakeSession()
+    client = get_model_client(
+        "judge",
+        api_key="sk-test",
+        yaml_path=yaml_path,
+        provider={"require_parameters": True},
+    )
+
+    client.generate([{"role": "user", "content": "hi"}], session=session)
+
+    payload = session.calls[0]["json"]
+    assert payload["provider"]["quantizations"] == []
+    assert payload["provider"]["require_parameters"] is True
+
+
+def test_get_model_client_rejects_alias_typo_without_raw_model_shape(tmp_path):
+    yaml_path = tmp_path / "model_deployments.yaml"
+    yaml_path.write_text(
+        """
+models:
+  - name: judge
+    model: example/judge-model:nitro
+"""
+    )
+
+    with pytest.raises(ValueError, match="Model 'judeg' not found"):
+        get_model_client("judeg", api_key="sk-test", yaml_path=yaml_path)
+
+
+def test_get_model_client_allows_raw_openrouter_model_id_when_alias_missing(tmp_path):
+    yaml_path = tmp_path / "model_deployments.yaml"
+    yaml_path.write_text(
+        """
+models:
+  - name: judge
+    model: example/judge-model:nitro
+"""
+    )
+
+    client = get_model_client("z-ai/glm-5.2:floor", api_key="sk-test", yaml_path=yaml_path)
+
+    assert client.model == "z-ai/glm-5.2:floor"
 
 
 def test_openrouter_client_raises_typed_retryable_error():

@@ -15,6 +15,7 @@ class ModelLoadConfig:
     model_name: str = DEFAULT_MODEL_ID
     cache_dir: str | None = None
     gpu_ids: tuple[int, ...] | None = None
+    cuda_visible_devices: str | None = None
 
 
 @dataclass
@@ -40,13 +41,13 @@ def model_config_from_env(
     cache_dir: str | None = None,
     gpu_ids: Sequence[int] | str | None = None,
 ) -> ModelLoadConfig:
-    parsed_gpu_ids = _parse_gpu_ids(
-        gpu_ids if gpu_ids is not None else os.getenv("CUDA_VISIBLE_DEVICES")
-    )
+    parsed_gpu_ids = _parse_gpu_ids(gpu_ids) if gpu_ids is not None else []
+    cuda_visible_devices = ",".join(str(gpu_id) for gpu_id in parsed_gpu_ids) if parsed_gpu_ids else os.getenv("CUDA_VISIBLE_DEVICES")
     return ModelLoadConfig(
         model_name=resolve_model_id(model_name),
         cache_dir=cache_dir or os.getenv("HF_HOME") or None,
         gpu_ids=tuple(parsed_gpu_ids) if parsed_gpu_ids else None,
+        cuda_visible_devices=cuda_visible_devices or None,
     )
 
 
@@ -75,8 +76,8 @@ def load_model_and_processor(config: ModelLoadConfig | None = None) -> ModelBund
     config = config or model_config_from_env()
     model_id = resolve_model_id(config.model_name)
 
-    if config.gpu_ids:
-        os.environ["CUDA_VISIBLE_DEVICES"] = ",".join(str(gpu_id) for gpu_id in config.gpu_ids)
+    if config.cuda_visible_devices:
+        os.environ["CUDA_VISIBLE_DEVICES"] = config.cuda_visible_devices
 
     bundle = load_processor(config)
     from transformers import Qwen3VLForConditionalGeneration

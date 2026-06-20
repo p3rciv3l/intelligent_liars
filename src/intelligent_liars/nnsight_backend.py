@@ -125,8 +125,8 @@ def load_nnsight_bundle(config: ModelLoadConfig | None = None) -> NnsightBundle:
     config = config or model_config_from_env()
     model_id = resolve_model_id(config.model_name)
 
-    if config.gpu_ids:
-        os.environ["CUDA_VISIBLE_DEVICES"] = ",".join(str(gpu_id) for gpu_id in config.gpu_ids)
+    if config.cuda_visible_devices:
+        os.environ["CUDA_VISIBLE_DEVICES"] = config.cuda_visible_devices
 
     from nnsight import LanguageModel
 

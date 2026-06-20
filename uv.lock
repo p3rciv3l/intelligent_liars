@@ -628,18 +628,6 @@ wheels = [
 ]
 
 [[package]]
-name = "decord"
-version = "0.6.0"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "numpy" },
-]
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/11/79/936af42edf90a7bd4e41a6cac89c913d4b47fa48a26b042d5129a9242ee3/decord-0.6.0-py3-none-manylinux2010_x86_64.whl", hash = "sha256:51997f20be8958e23b7c4061ba45d0efcd86bffd5fe81c695d0befee0d442976", size = 13602299 },
-    { url = "https://files.pythonhosted.org/packages/6c/be/e15b5b866da452e62635a7b27513f31cb581fa2ea9cc9b768b535d62a955/decord-0.6.0-py3-none-win_amd64.whl", hash = "sha256:02665d7c4f1193a330205a791bc128f7e108eb6ae5b67144437a02f700943bad", size = 24733380 },
-]
-
-[[package]]
 name = "dill"
 version = "0.4.1"
 source = { registry = "https://pypi.org/simple" }
@@ -1052,7 +1040,7 @@ dependencies = [
     { name = "pillow" },
     { name = "python-dotenv" },
     { name = "pyyaml" },
-    { name = "qwen-vl-utils", extra = ["decord"] },
+    { name = "qwen-vl-utils" },
     { name = "requests" },
     { name = "rich" },
     { name = "safetensors" },
@@ -1086,7 +1074,7 @@ requires-dist = [
     { name = "pillow", specifier = ">=10.4" },
     { name = "python-dotenv", specifier = ">=1.0" },
     { name = "pyyaml", specifier = ">=6.0.2" },
-    { name = "qwen-vl-utils", extras = ["decord"], specifier = ">=0.0.14" },
+    { name = "qwen-vl-utils", specifier = ">=0.0.14" },
     { name = "requests", specifier = ">=2.32" },
     { name = "rich", specifier = ">=13.8" },
     { name = "safetensors", specifier = ">=0.4" },
@@ -2693,11 +2681,6 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/b6/b1/ad4fc2260a3badd278b38d642f3b987412f1f6682f0ef2b31b0572d5caa8/qwen_vl_utils-0.0.14.tar.gz", hash = "sha256:9c7cad5ae803b3a10f8bb7194deb12aeacdd032f92f4224e880c73587a7346ad", size = 8453 }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/c4/43/80f67e0336cb2fc725f8e06f7fe35c1d0fe946f4d2b8b2175e797e07349e/qwen_vl_utils-0.0.14-py3-none-any.whl", hash = "sha256:5e28657bfd031e56bd447c5901b58ddfc3835285ed100f4c56580e0ade054e96", size = 8120 },
-]
-
-[package.optional-dependencies]
-decord = [
-    { name = "decord" },
 ]
 
 [[package]]

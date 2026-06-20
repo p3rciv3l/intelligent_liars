@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any, Iterable, Literal, Mapping, Sequence
 
 from intelligent_liars.activation_backends import ActivationBackend, TransformersHookBackend, qwen_decoder_layers
-from intelligent_liars.models import ModelBundle
+from intelligent_liars.models import ModelBundle, ModelLoadConfig
 from intelligent_liars.rollouts import MODEL_SLUG, Message, parse_task_name, qwen_model_slug
 
 
@@ -291,8 +291,8 @@ def parse_layer_spec(layer_spec: str, num_layers: int) -> tuple[int, ...]:
         return tuple(range(num_layers))
     if layer_spec == "sparse":
         step = 5 if num_layers > 40 else 4
-        layers = tuple(range(min(3, num_layers - 1), num_layers, step))
-        return layers or (num_layers - 1,)
+        sparse_layers = tuple(range(min(3, num_layers - 1), num_layers, step))
+        return sparse_layers or (num_layers - 1,)
 
     layers: set[int] = set()
     for part in layer_spec.split(","):
@@ -649,6 +649,7 @@ def _load_sycophancy_examples(
         "mmlu_stem_conf_part_2",
     }:
         raise ValueError(f"Unsupported sycophancy variant: {variant}")
+    stem_tasks: Sequence[str]
     if "part_1" in variant:
         stem_tasks = STEM_TASKS_PART_1
     elif "part_2" in variant:
@@ -717,6 +718,7 @@ def _load_sycophancy_examples(
 
 
 def _load_geometry_of_truth_examples(task: str, variant: str, *, project_root: Path) -> list[ActivationExample]:
+    csv_names: Sequence[str]
     if variant == "best":
         csv_names = GOT_BEST_CSVS
     elif variant == "mixed":
@@ -1011,7 +1013,7 @@ def normalise_deception_label(value: Any, *, schema: LabelSchema | str | None = 
         except KeyError as exc:
             raise ValueError(f"Unknown {schema.value} label: {value!r}") from exc
     if isinstance(value, bool):
-        return DECEPTIVE if value else HONEST
+        raise ValueError(f"Boolean labels are not valid for {schema.value}.")
     raise ValueError(f"Unsupported graded_deception value: {value!r}")
 
 
@@ -1141,8 +1143,6 @@ def verify_decoded_masks(
     for idx, (expected, decoded) in enumerate(zip(expected_texts, decoded_texts, strict=True)):
         if _normalise_for_compare(expected) == _normalise_for_compare(decoded):
             continue
-        if _normalise_for_compare(expected) in _normalise_for_compare(decoded):
-            continue
         raise ValueError(
             f"Detection mask mismatch at batch row {idx}: expected {expected[:160]!r}, got {decoded[:160]!r}"
         )
@@ -1167,15 +1167,10 @@ def extract_dataset_activations(
     skipped_labels = len(selected_dataset) - len(usable_examples)
     task_name = usable_examples[0].task if usable_examples else dataset.task
     if not usable_examples:
-        return ActivationExtractionSummary(
-            task=task_name,
-            output_path=output_path,
-            examples_seen=len(selected_dataset),
-            examples_extracted=0,
-            skipped_labels=skipped_labels,
-            masked_tokens=0,
-            layers=settings.layers,
-            backend=backend.name,
+        raise ValueError(
+            f"No honest/deceptive examples available for activation extraction from {dataset.task!r}. "
+            f"Selected examples={len(selected_dataset)}, skipped_labels={skipped_labels}. "
+            "Run grading first or adjust the label schema."
         )
 
     activations_by_layer: dict[int, list[Any]] = {layer: [] for layer in settings.layers}
@@ -1193,6 +1188,12 @@ def extract_dataset_activations(
     detected_answer_texts: list[str] = []
     decoded_answer_texts: list[str] = []
     char_spans_json: list[str] = []
+    messages_json: list[str] = []
+    rendered_texts: list[str] = []
+    source_datasets: list[str] = []
+    raw_labels_json: list[str] = []
+    label_schemas: list[str] = []
+    example_metadata_json: list[str] = []
     preserved_input_keys: set[str] = set()
     example_splits = [0]
     processor_tokenizer = QwenProcessorTokenizer(
@@ -1223,15 +1224,22 @@ def extract_dataset_activations(
         if trace.logits is not None:
             logits_by_batch.append(trace.logits)
 
-        for example, positions, decoded_text, detected_text, char_spans in zip(
+        for example, positions, decoded_text, detected_text, char_spans, rendered_text in zip(
             batch,
             detection.token_positions,
             detection.decoded_texts,
             detection.detected_texts,
             detection.char_spans,
+            processor_batch.rendered_texts,
             strict=True,
         ):
             count = len(positions)
+            if count == 0:
+                raise ValueError(
+                    f"No answer tokens selected for labeled example "
+                    f"task={example.task!r} source_index={example.source_index} "
+                    f"output_index={example.output_index}."
+                )
             global_example_idx = len(example_token_counts)
             example_source_indices.append(example.source_index)
             example_output_indices.append(example.output_index)
@@ -1240,6 +1248,12 @@ def extract_dataset_activations(
             detected_answer_texts.append(detected_text)
             decoded_answer_texts.append(decoded_text)
             char_spans_json.append(json.dumps(list(char_spans)))
+            messages_json.append(json.dumps(_jsonable_value(example.messages), sort_keys=True))
+            rendered_texts.append(rendered_text)
+            source_datasets.append(example.source_dataset or "")
+            raw_labels_json.append(json.dumps(_jsonable_value(example.raw_label), sort_keys=True))
+            label_schemas.append(example.label_schema.value)
+            example_metadata_json.append(json.dumps(_jsonable_metadata(example.metadata or {}), sort_keys=True))
             source_indices.extend([example.source_index] * count)
             output_indices.extend([example.output_index] * count)
             labels.extend([int(example.label)] * count)
@@ -1248,6 +1262,9 @@ def extract_dataset_activations(
             if settings.capture_logits:
                 logit_positions.extend([position - 1 for position in positions if position > 0])
             example_splits.append(example_splits[-1] + count)
+
+    task_metadata_attrs = _task_metadata_attrs(usable_examples)
+    task_metadata_attrs.update(_extraction_settings_attrs(settings))
 
     write_activation_hdf5(
         output_path=output_path,
@@ -1269,13 +1286,19 @@ def extract_dataset_activations(
         detected_answer_texts=detected_answer_texts,
         decoded_answer_texts=decoded_answer_texts,
         char_spans_json=char_spans_json,
+        messages_json=messages_json,
+        rendered_texts=rendered_texts,
+        source_datasets=source_datasets,
+        raw_labels_json=raw_labels_json,
+        label_schemas=label_schemas,
+        example_metadata_json=example_metadata_json,
         model_id=bundle.model_id,
         backend_name=backend.name,
         surface_names={layer: backend.surface_for_decoder_layer(layer).name for layer in settings.layers},
         preserved_input_keys=tuple(sorted(preserved_input_keys)),
         dataset_id=dataset.dataset_id,
         processor_id=bundle.model_id,
-        task_metadata_attrs=_task_metadata_attrs(usable_examples),
+        task_metadata_attrs=task_metadata_attrs,
         overwrite=overwrite,
         resume=settings.resume,
     )
@@ -1327,7 +1350,7 @@ def extract_masked_decoder_activations(
         processor=None,
         tokenizer=None,
         model_id="unknown",
-        config=None,
+        config=ModelLoadConfig(model_name="unknown"),
     )
     result = TransformersHookBackend(bundle).capture(
         inputs=inputs,
@@ -1358,6 +1381,12 @@ def write_activation_hdf5(
     detected_answer_texts: Sequence[str] = (),
     decoded_answer_texts: Sequence[str] = (),
     char_spans_json: Sequence[str] = (),
+    messages_json: Sequence[str] = (),
+    rendered_texts: Sequence[str] = (),
+    source_datasets: Sequence[str] = (),
+    raw_labels_json: Sequence[str] = (),
+    label_schemas: Sequence[str] = (),
+    example_metadata_json: Sequence[str] = (),
     model_id: str,
     backend_name: str = "transformers-hooks",
     surface_names: Mapping[int, str] | None = None,
@@ -1400,6 +1429,12 @@ def write_activation_hdf5(
         detected_answer_texts=detected_answer_texts,
         decoded_answer_texts=decoded_answer_texts,
         char_spans_json=char_spans_json,
+        messages_json=messages_json,
+        rendered_texts=rendered_texts,
+        source_datasets=source_datasets,
+        raw_labels_json=raw_labels_json,
+        label_schemas=label_schemas,
+        example_metadata_json=example_metadata_json,
         model_id=model_id,
         backend_name=backend_name,
         surface_names=surface_names,
@@ -1442,6 +1477,12 @@ def _write_activation_shard(
     detected_answer_texts: Sequence[str],
     decoded_answer_texts: Sequence[str],
     char_spans_json: Sequence[str],
+    messages_json: Sequence[str],
+    rendered_texts: Sequence[str],
+    source_datasets: Sequence[str],
+    raw_labels_json: Sequence[str],
+    label_schemas: Sequence[str],
+    example_metadata_json: Sequence[str],
     model_id: str,
     backend_name: str,
     surface_names: Mapping[int, str],
@@ -1477,6 +1518,7 @@ def _write_activation_shard(
             task_metadata = metadata.create_group(task)
             task_metadata.attrs["dataset_id"] = dataset_id or ""
             task_metadata.attrs["label_convention"] = "HONEST=0, DECEPTIVE=1, SKIP=-1"
+            task_metadata.attrs["aggregation"] = "token_rows/no_pooling"
             task_metadata.attrs["layer_convention"] = "Qwen3-VL decoder block output; embeddings are not layer_0"
             task_metadata.attrs["backend"] = backend_name
             task_metadata.attrs["model_id"] = model_id
@@ -1531,6 +1573,19 @@ def _write_activation_shard(
                 data=np.asarray(list(char_spans_json), dtype=object),
                 dtype=string_dtype,
             )
+            for dataset_name, values in {
+                "messages_json": messages_json,
+                "rendered_texts": rendered_texts,
+                "source_datasets": source_datasets,
+                "raw_labels_json": raw_labels_json,
+                "label_schemas": label_schemas,
+                "example_metadata_json": example_metadata_json,
+            }.items():
+                task_metadata.create_dataset(
+                    dataset_name,
+                    data=np.asarray(list(values), dtype=object),
+                    dtype=string_dtype,
+                )
 
             token_rows = len(labels)
             for layer in sorted(layers):
@@ -1568,11 +1623,10 @@ def _merge_activation_shard(
     import h5py
 
     with h5py.File(shard_path, "r") as shard, h5py.File(output_path, "a") as target:
-        target.attrs["model_id"] = shard.attrs["model_id"]
-        target.attrs["processor_id"] = shard.attrs["processor_id"]
-        target.attrs["format"] = shard.attrs["format"]
-        target.attrs["backend"] = shard.attrs["backend"]
-        target.attrs["versions_json"] = shard.attrs["versions_json"]
+        if target.keys() and not overwrite:
+            _verify_root_attrs_compatible(target, shard)
+        if overwrite:
+            _delete_task_outputs(target, task)
 
         metadata = target.require_group("metadata")
         if task in metadata:
@@ -1580,6 +1634,7 @@ def _merge_activation_shard(
                 del metadata[task]
             elif resume:
                 _verify_metadata_compatible(metadata[task], shard[f"metadata/{task}"], task=task)
+                _merge_resume_metadata_attrs(metadata[task], shard[f"metadata/{task}"])
             else:
                 raise FileExistsError(f"{output_path} already contains metadata/{task}.")
         if task not in metadata:
@@ -1618,8 +1673,38 @@ def _merge_activation_shard(
                     raise FileExistsError(f"{output_path} already contains logits/{task}.")
             shard.copy(f"logits/{task}", logits_group, name=task)
 
+        _copy_root_attrs(target, shard)
+
+
+def _delete_task_outputs(handle: Any, task: str) -> None:
+    metadata = handle.get("metadata")
+    if metadata is not None and task in metadata:
+        del metadata[task]
+
+    for group_name in list(handle.keys()):
+        if group_name.startswith("layer_") and task in handle[group_name]:
+            del handle[group_name][task]
+
+    logits = handle.get("logits")
+    if logits is not None and task in logits:
+        del logits[task]
+
 
 def _verify_metadata_compatible(existing: Any, incoming: Any, *, task: str) -> None:
+    for attr_name in (
+        "dataset_id",
+        "model_id",
+        "processor_id",
+        "backend",
+        "preserved_input_keys_json",
+        "dataset_metadata_json",
+        "aggregation",
+    ):
+        if existing.attrs.get(attr_name) != incoming.attrs.get(attr_name):
+            raise FileExistsError(f"Cannot resume {task}: metadata attr {attr_name!r} differs.")
+
+    _verify_layer_metadata_compatible(existing, incoming, task=task)
+
     for dataset_name in (
         "source_indices",
         "output_indices",
@@ -1627,9 +1712,20 @@ def _verify_metadata_compatible(existing: Any, incoming: Any, *, task: str) -> N
         "example_splits",
         "example_indices",
         "token_positions",
+        "logit_positions",
+        "example_source_indices",
+        "example_output_indices",
+        "example_labels",
+        "example_token_counts",
         "detected_answer_texts",
         "decoded_answer_texts",
         "char_spans_json",
+        "messages_json",
+        "rendered_texts",
+        "source_datasets",
+        "raw_labels_json",
+        "label_schemas",
+        "example_metadata_json",
     ):
         if dataset_name not in existing or dataset_name not in incoming:
             raise FileExistsError(f"Cannot resume {task}: missing metadata/{task}/{dataset_name}.")
@@ -1642,11 +1738,69 @@ def _verify_metadata_compatible(existing: Any, incoming: Any, *, task: str) -> N
             raise FileExistsError(f"Cannot resume {task}: metadata/{dataset_name} differs.")
 
 
+def _verify_layer_metadata_compatible(existing: Any, incoming: Any, *, task: str) -> None:
+    existing_layers = set(json.loads(existing.attrs.get("layers_json", "[]")))
+    incoming_layers = set(json.loads(incoming.attrs.get("layers_json", "[]")))
+    existing_surfaces = json.loads(existing.attrs.get("surface_names_json", "{}"))
+    incoming_surfaces = json.loads(incoming.attrs.get("surface_names_json", "{}"))
+    for layer in existing_layers & incoming_layers:
+        key = str(layer)
+        if existing_surfaces.get(key) != incoming_surfaces.get(key):
+            raise FileExistsError(f"Cannot resume {task}: surface for layer {layer} differs.")
+
+
+def _merge_resume_metadata_attrs(existing: Any, incoming: Any) -> None:
+    existing_layers = set(json.loads(existing.attrs.get("layers_json", "[]")))
+    incoming_layers = set(json.loads(incoming.attrs.get("layers_json", "[]")))
+    merged_layers = sorted(int(layer) for layer in existing_layers | incoming_layers)
+    existing_surfaces = json.loads(existing.attrs.get("surface_names_json", "{}"))
+    incoming_surfaces = json.loads(incoming.attrs.get("surface_names_json", "{}"))
+    merged_surfaces = {**existing_surfaces, **incoming_surfaces}
+    existing.attrs["layers_json"] = json.dumps(merged_layers)
+    existing.attrs["surface_names_json"] = json.dumps(merged_surfaces, sort_keys=True)
+
+
 def _verify_dataset_shape_compatible(existing: Any, incoming: Any, *, dataset_name: str) -> None:
     if existing.shape != incoming.shape:
         raise FileExistsError(
             f"Cannot resume {dataset_name}: existing shape {existing.shape} != incoming shape {incoming.shape}."
         )
+    if existing.attrs.get("surface") != incoming.attrs.get("surface"):
+        raise FileExistsError(f"Cannot resume {dataset_name}: surface attr differs.")
+    if (existing[...] != incoming[...]).any():
+        raise FileExistsError(f"Cannot resume {dataset_name}: existing data differs from regenerated data.")
+
+
+def _verify_root_attrs_compatible(existing: Any, incoming: Any) -> None:
+    for attr_name in ("format", "model_id", "processor_id", "backend", "versions_json"):
+        if existing.attrs.get(attr_name) != incoming.attrs.get(attr_name):
+            raise FileExistsError(f"Cannot merge activation shard: root attr {attr_name!r} differs.")
+
+
+def _copy_root_attrs(target: Any, shard: Any) -> None:
+    for attr_name in (
+        "model_id",
+        "processor_id",
+        "format",
+        "backend",
+        "versions_json",
+        "created_at",
+        "source_output_path",
+    ):
+        target.attrs[attr_name] = shard.attrs[attr_name]
+
+
+def _extraction_settings_attrs(settings: ActivationExtractionSettings) -> dict[str, Any]:
+    return {
+        "extraction_layers_json": json.dumps(list(settings.layers)),
+        "extraction_batch_size": settings.batch_size,
+        "extraction_start": settings.start,
+        "extraction_limit": "" if settings.limit is None else settings.limit,
+        "extraction_verify_masks": settings.verify_masks,
+        "extraction_max_length": "" if settings.max_length is None else settings.max_length,
+        "extraction_capture_logits": settings.capture_logits,
+        "extraction_resume": settings.resume,
+    }
 
 
 def _task_metadata_attrs(examples: Sequence[ActivationExample]) -> dict[str, Any]:
@@ -2008,10 +2162,14 @@ def _normalise_rollout_input_message(message: Mapping[str, Any]) -> Message:
 
 
 def _normalise_output_message(message: Mapping[str, Any]) -> Message:
+    role = str(message["role"])
+    detect = bool(message.get("detect", role == "assistant"))
+    if detect and role != "assistant":
+        raise ValueError(f"Only assistant output messages may be marked detect=True, got role={role!r}.")
     return {
-        "role": str(message["role"]),
+        "role": role,
         "content": message.get("content", ""),
-        "detect": bool(message.get("detect", True)),
+        "detect": detect,
     }
 
 
@@ -2197,17 +2355,9 @@ def _build_qwen_inputs(
     merged_inputs = dict(inputs)
     tokenized_inputs = dict(tokenized)
     if not _same_token_ids(merged_inputs.get("input_ids"), tokenized_inputs.get("input_ids")):
-        extra_processor_keys = set(merged_inputs) - {"input_ids", "attention_mask"}
-        if extra_processor_keys:
-            raise ValueError(
-                "Processor and tokenizer input_ids differ, so offset mappings cannot be aligned with "
-                f"processor-only keys: {sorted(extra_processor_keys)}."
-            )
-        merged_inputs = {
-            key: value
-            for key, value in tokenized_inputs.items()
-            if key in {"input_ids", "attention_mask", "offset_mapping"}
-        }
+        raise ValueError(
+            "Processor and tokenizer input_ids differ, so offset mappings cannot be aligned safely."
+        )
     else:
         merged_inputs["offset_mapping"] = tokenized_inputs["offset_mapping"]
         if "attention_mask" not in merged_inputs and "attention_mask" in tokenized_inputs:

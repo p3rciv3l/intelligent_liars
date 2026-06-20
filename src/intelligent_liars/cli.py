@@ -1,16 +1,11 @@
 from __future__ import annotations
 
-import importlib.metadata
-import os
-import platform
-import sys
+import json
 from pathlib import Path
-from typing import cast
 
 import typer
 from dotenv import load_dotenv
 from rich.console import Console
-from rich.table import Table
 
 from intelligent_liars.activations import (
     ActivationDataset,
@@ -20,47 +15,52 @@ from intelligent_liars.activations import (
     extract_rollout_activations,
     parse_layer_spec,
 )
+from intelligent_liars.activation_backends import ActivationBackend, TransformersHookBackend
+from intelligent_liars.environment import check_environment
+from intelligent_liars.insider_trading import (
+    LabelMode,
+    generate_insider_trading_transcripts,
+    validate_insider_trading_generation_resume,
+)
 from intelligent_liars.judging import (
+    DEFAULT_INSIDER_GRADING_FLUSH_EVERY,
+    DEFAULT_JUDGE_CONFIG,
+    DEFAULT_ROLLOUT_GRADING_FLUSH_EVERY,
+    DEFAULT_ROLLOUT_GRADING_MAX_WORKERS,
     JudgeConfig,
-    JudgeProvider,
     grade_insider_trading_transcripts as grade_insider_trading_transcripts_with_judge,
     grade_rollout_file,
+    infer_rollout_task,
+    preflight_judge_config,
 )
 from intelligent_liars.models import (
+    ModelBundle,
     load_model_and_processor,
-    load_processor,
     model_config_from_env,
-    qwen_model_load_description,
     resolve_model_id,
 )
-from intelligent_liars.activation_backends import TransformersHookBackend
 from intelligent_liars.nnsight_backend import (
     NnsightActivationBackend,
     load_nnsight_bundle,
-    trace_text_decoder_layer_once,
 )
 from intelligent_liars.rollouts import (
+    DEFAULT_INSIDER_GENERATION_SETTINGS,
+    DEFAULT_ROLLOUT_PROMPT_SET,
     DEFAULT_ROLLOUT_TASKS,
+    DEFAULT_ROLLOUT_GENERATION_SETTINGS,
     GenerationSettings,
-    LabelMode,
     MODEL_SLUG,
-    generate_insider_trading_transcripts,
     generate_rollout_task,
     load_rollout_prompt_examples,
+    parse_task_name,
     qwen_model_slug,
     seed_everything,
+    validate_rollout_generation_resume,
 )
 
 
 app = typer.Typer(no_args_is_help=True)
 console = Console()
-
-
-def _version(package: str) -> str:
-    try:
-        return importlib.metadata.version(package)
-    except importlib.metadata.PackageNotFoundError:
-        return "not installed"
 
 
 def _judge_config_from_options(
@@ -74,10 +74,31 @@ def _judge_config_from_options(
     require_structured_outputs: bool,
     mock_response: str | None,
 ) -> JudgeConfig:
+    """Build a `JudgeConfig` from Typer option values.
+
+    Args:
+        provider: Judge transport name. The CLI currently supports only
+            `openrouter`.
+        judge_model: OpenRouter model alias or raw model id.
+        max_tokens: Maximum generated tokens requested from the judge.
+        max_retries: Retry count for transient judge/API failures.
+        timeout: Request timeout in seconds.
+        structured_outputs: Whether to request JSON-schema judge responses.
+        require_structured_outputs: Whether OpenRouter routing must support the
+            structured output parameters.
+        mock_response: Optional literal judge response for tests/smoke checks.
+
+    Returns:
+        Judge configuration consumed by `judging.py`.
+
+    Raises:
+        typer.BadParameter: If a non-supported provider is requested.
+    """
+
     if provider != "openrouter":
         raise typer.BadParameter('provider must be "openrouter". Use --judge-model for OpenRouter aliases or raw model IDs.')
     return JudgeConfig(
-        provider=cast(JudgeProvider, provider),
+        provider="openrouter",
         model=judge_model,
         max_tokens=max_tokens,
         max_retries=max_retries,
@@ -86,6 +107,127 @@ def _judge_config_from_options(
         require_structured_outputs=require_structured_outputs,
         mock_response=mock_response,
     )
+
+
+def _project_path(project_root: Path, path: Path) -> Path:
+    """Resolve a CLI path relative to the project root when needed.
+
+    Args:
+        project_root: Absolute repository root selected by `--project-root`.
+        path: User-provided path. Absolute paths are left unchanged.
+
+    Returns:
+        Absolute path for local project-relative inputs/outputs.
+    """
+
+    return path if path.is_absolute() else project_root / path
+
+
+def _find_project_root(start: Path | None = None) -> Path:
+    """Find the nearest checkout root from a start directory."""
+
+    current = (start or Path.cwd()).resolve()
+    for candidate in (current, *current.parents):
+        if (candidate / "pyproject.toml").exists() and (candidate / "src" / "intelligent_liars").exists():
+            return candidate
+    return current
+
+
+def _resolve_project_root(project_root: Path | None) -> Path:
+    """Resolve an optional CLI project root with repo-root auto-detection."""
+
+    if project_root is None:
+        return _find_project_root()
+    resolved = project_root.resolve()
+    if (resolved / "pyproject.toml").exists():
+        return resolved
+    return _find_project_root(resolved)
+
+
+def _generation_settings(
+    *,
+    batch_size: int,
+    max_new_tokens: int,
+    do_sample: bool,
+    temperature: float,
+    top_p: float,
+    top_k: int | None,
+    seed: int,
+    flush_every: int,
+) -> GenerationSettings:
+    """Collect repeated generation CLI options into one settings object.
+
+    Args:
+        batch_size: Number of prompts per `model.generate` batch.
+        max_new_tokens: Maximum assistant tokens per completion.
+        do_sample: Whether to sample instead of greedy decoding.
+        temperature: Sampling temperature used only with `do_sample`.
+        top_p: Nucleus sampling cutoff used only with `do_sample`.
+        top_k: Top-k sampling cutoff used only with `do_sample`.
+        seed: Random seed used by `seed_everything`.
+        flush_every: Number of new generations between JSON checkpoints.
+
+    Returns:
+        `GenerationSettings` passed to rollout and insider-trading generation.
+    """
+
+    return GenerationSettings(
+        batch_size=batch_size,
+        max_new_tokens=max_new_tokens,
+        do_sample=do_sample,
+        temperature=temperature,
+        top_p=top_p,
+        top_k=top_k,
+        seed=seed,
+        flush_every=flush_every,
+    )
+
+
+def _rollout_task_needs_llm_judge(task: str) -> bool:
+    base, _ = parse_task_name(task)
+    return base == "roleplaying"
+
+
+def _infer_rollout_task_from_path(path: Path) -> str:
+    data = json.loads(path.read_text())
+    if not isinstance(data, dict):
+        raise ValueError(f"Rollout JSON file must contain an object: {path}")
+    return infer_rollout_task(path, data)
+
+
+def _selected_source_indices(examples, *, start: int, limit: int | None) -> set[int]:
+    selected = list(examples[start:])
+    if limit is not None:
+        selected = selected[:limit]
+    return {int(example.source_index) for example in selected}
+
+
+def _source_index_filter(
+    *,
+    source_indices: list[int] | None,
+    source_start: int | None,
+    source_limit: int | None,
+    record_start: int,
+    record_limit: int | None,
+) -> set[int] | None:
+    selected = set(source_indices or [])
+    if any(source_index < 0 for source_index in selected):
+        raise typer.BadParameter("--source-index values must be >= 0.")
+    if source_start is not None or source_limit is not None:
+        if source_limit is None:
+            raise typer.BadParameter("--source-limit is required when using --source-start.")
+        start = source_start or 0
+        selected.update(range(start, start + source_limit))
+    if selected and (record_start != 0 or record_limit is not None):
+        raise typer.BadParameter("Use either record --start/--limit or source-index filters, not both.")
+    return selected or None
+
+
+def _validate_insider_prompt_glob(project_root: Path, prompt_glob: str) -> None:
+    if not sorted(project_root.glob(prompt_glob)):
+        raise typer.BadParameter(
+            f"No insider-trading prompt YAML files matched {prompt_glob!r} under {project_root}"
+        )
 
 
 @app.command("check-env")
@@ -103,78 +245,38 @@ def check_env(
         False,
         help="Load Qwen3-VL through NNsight and trace one text decoder layer.",
     ),
+    check_openrouter: bool = typer.Option(
+        False,
+        help="Validate OpenRouter API key, judge alias resolution, and structured-output support.",
+    ),
     nnsight_layer: int = typer.Option(
         0,
         help="Decoder layer index to trace for --check-nnsight.",
     ),
 ) -> None:
-    """Print the runtime state needed before running activation experiments."""
-    load_dotenv()
-    model_config = model_config_from_env()
-    model_id = resolve_model_id(model_config.model_name)
+    """Print and optionally validate the local/remote Qwen runtime environment.
 
-    table = Table(title="Intelligent Liars environment")
-    table.add_column("Check")
-    table.add_column("Value")
+    Args:
+        require_cuda: Fail if Torch reports no CUDA device.
+        check_processor: Load only the Qwen processor/tokenizer.
+        check_model: Load the full Qwen model through Transformers.
+        check_nnsight: Load and trace one decoder layer through NNsight.
+        nnsight_layer: Decoder layer index for the NNsight trace.
 
-    table.add_row("python", sys.version.split()[0])
-    table.add_row("platform", platform.platform())
-    table.add_row("model_name", model_config.model_name)
-    table.add_row("model_id", model_id)
-    table.add_row("hf_home", model_config.cache_dir or "default")
-    table.add_row("hf_token", "set" if os.getenv("HF_TOKEN") else "not set")
-    table.add_row("model_load", qwen_model_load_description())
-    table.add_row(
-        "gpu_ids",
-        ",".join(str(gpu_id) for gpu_id in model_config.gpu_ids)
-        if model_config.gpu_ids
-        else "default",
+    References:
+        Delegates implementation to `environment.check_environment`; this CLI
+        wrapper exists to keep Typer option definitions in one file.
+    """
+
+    check_environment(
+        console=console,
+        require_cuda=require_cuda,
+        check_processor=check_processor,
+        check_model=check_model,
+        check_nnsight=check_nnsight,
+        check_openrouter=check_openrouter,
+        nnsight_layer=nnsight_layer,
     )
-    table.add_row("torch", _version("torch"))
-    table.add_row("transformers", _version("transformers"))
-    table.add_row("accelerate", _version("accelerate"))
-    table.add_row("flash-attn", _version("flash-attn"))
-    table.add_row("nnsight", _version("nnsight"))
-    table.add_row("qwen-vl-utils", _version("qwen-vl-utils"))
-
-    cuda_available = False
-    try:
-        import torch
-
-        cuda_available = torch.cuda.is_available()
-        table.add_row("cuda", str(cuda_available))
-        if cuda_available:
-            table.add_row("cuda_device_count", str(torch.cuda.device_count()))
-            table.add_row("cuda_device_0", torch.cuda.get_device_name(0))
-            table.add_row("cuda_version", torch.version.cuda or "unknown")
-    except Exception as exc:  # pragma: no cover - diagnostic path
-        table.add_row("cuda", f"unavailable: {exc}")
-
-    console.print(table)
-
-    if require_cuda and not cuda_available:
-        raise typer.BadParameter("CUDA is required for this run but is unavailable.")
-
-    if check_processor:
-        console.print(f"Loading processor for [bold]{model_id}[/bold]...")
-        load_processor(model_config)
-        console.print("[green]Processor loaded.[/green]")
-
-    if check_model:
-        console.print(f"Loading full model for [bold]{model_id}[/bold]...")
-        load_model_and_processor(model_config)
-        console.print("[green]Model loaded.[/green]")
-
-    if check_nnsight:
-        console.print(f"Loading NNsight wrapper for [bold]{model_id}[/bold]...")
-        bundle = load_nnsight_bundle(model_config)
-        console.print(f"Tracing decoder layer [bold]{nnsight_layer}[/bold]...")
-        result = trace_text_decoder_layer_once(bundle, layer_idx=nnsight_layer)
-        console.print(
-            "[green]NNsight trace succeeded.[/green] "
-            f"input_shape={result.input_shape} "
-            f"layer_output_shape={result.layer_output_shape}"
-        )
 
 
 @app.command("generate-rollouts")
@@ -185,56 +287,131 @@ def generate_rollouts(
         "-t",
         help="Truth Spec rollout task to generate. Repeatable. Defaults to roleplaying and sandbagging.",
     ),
-    project_root: Path = typer.Option(
-        Path("."),
-        help="Project root containing data/ and references/truth_spec/.",
+    project_root: Path | None = typer.Option(
+        None,
+        help="Project root containing data/. Defaults to the nearest checkout root.",
     ),
     output_dir: Path = typer.Option(
         Path("data/rollouts"),
         help="Directory for Truth Spec-compatible rollout JSON files.",
     ),
-    prompt_source_model: str | None = typer.Option(
-        None,
-        help="Optional reference rollout source model. Defaults to auto-discovery when only one source file matches.",
+    prompt_set: str | None = typer.Option(
+        DEFAULT_ROLLOUT_PROMPT_SET,
+        "--prompt-set",
+        help="Cleaned prompt set id. Use an explicit value when comparing prompt sources.",
     ),
-    batch_size: int = typer.Option(1, min=1, help="Generation batch size."),
-    max_new_tokens: int = typer.Option(512, min=1, help="Maximum new tokens per completion."),
-    do_sample: bool = typer.Option(False, help="Use sampling instead of greedy decoding."),
-    temperature: float = typer.Option(0.6, min=0.0, help="Sampling temperature."),
-    top_p: float = typer.Option(0.95, min=0.0, max=1.0, help="Sampling nucleus top-p."),
-    seed: int = typer.Option(0, help="Random seed for reproducible sampling."),
+    batch_size: int = typer.Option(
+        DEFAULT_ROLLOUT_GENERATION_SETTINGS.batch_size,
+        min=1,
+        help="Generation batch size.",
+    ),
+    max_new_tokens: int = typer.Option(
+        DEFAULT_ROLLOUT_GENERATION_SETTINGS.max_new_tokens,
+        min=1,
+        help="Maximum new tokens per completion.",
+    ),
+    do_sample: bool = typer.Option(
+        DEFAULT_ROLLOUT_GENERATION_SETTINGS.do_sample,
+        help="Use sampling instead of greedy decoding.",
+    ),
+    temperature: float = typer.Option(
+        DEFAULT_ROLLOUT_GENERATION_SETTINGS.temperature,
+        min=0.0,
+        help="Sampling temperature.",
+    ),
+    top_p: float = typer.Option(
+        DEFAULT_ROLLOUT_GENERATION_SETTINGS.top_p,
+        min=0.0,
+        max=1.0,
+        help="Sampling nucleus top-p. Used only with --do-sample.",
+    ),
+    top_k: int | None = typer.Option(
+        DEFAULT_ROLLOUT_GENERATION_SETTINGS.top_k,
+        min=0,
+        help="Sampling top-k. Used only with --do-sample.",
+    ),
+    seed: int = typer.Option(
+        DEFAULT_ROLLOUT_GENERATION_SETTINGS.seed,
+        help="Random seed for reproducible sampling.",
+    ),
     start: int = typer.Option(0, min=0, help="Start source index."),
     limit: int | None = typer.Option(None, min=1, help="Limit examples per task."),
-    flush_every: int = typer.Option(10, min=1, help="Write JSON after this many new completions."),
+    flush_every: int = typer.Option(
+        DEFAULT_ROLLOUT_GENERATION_SETTINGS.flush_every,
+        min=1,
+        help="Write JSON after this many new completions.",
+    ),
     overwrite: bool = typer.Option(False, help="Replace an existing output file instead of resuming."),
 ) -> None:
-    """Generate Qwen rollouts on a GPU box and write Truth Spec-compatible JSON."""
+    """Generate Qwen rollouts and write resumable Truth Spec-compatible JSON.
+
+    Args:
+        tasks: Repeatable task ids. Defaults to `DEFAULT_ROLLOUT_TASKS`.
+        project_root: Repository root containing `data/` and prompt sets.
+        output_dir: Directory for generated rollout JSON files.
+        prompt_set: Cleaned prompt-set id such as `truth-spec-llama-70b`.
+        batch_size: Number of prompts per generation batch.
+        max_new_tokens: Maximum tokens per generated assistant completion.
+        do_sample: Enable stochastic decoding; otherwise generation is greedy.
+        temperature: Sampling temperature used only with `do_sample`.
+        top_p: Nucleus sampling cutoff used only with `do_sample`.
+        top_k: Top-k sampling cutoff used only with `do_sample`.
+        seed: Random seed used when sampling.
+        start: Source prompt index offset.
+        limit: Optional number of prompts per task after `start`.
+        flush_every: Number of new completions between JSON checkpoints.
+        overwrite: Replace existing rollout files instead of resuming.
+
+    References:
+        Inputs come from `data/roleplaying/dataset.yaml` or
+        `data/rollout_prompts/*.json`. Outputs are written to
+        `data/rollouts/{task}__{qwen_model_slug}.json` by default.
+    """
+
     load_dotenv()
-    project_root = project_root.resolve()
-    output_dir = output_dir if output_dir.is_absolute() else project_root / output_dir
+    project_root = _resolve_project_root(project_root)
+    output_dir = _project_path(project_root, output_dir)
     task_list = tuple(tasks) if tasks else DEFAULT_ROLLOUT_TASKS
 
-    settings = GenerationSettings(
+    # One settings object is stored in each rollout record for reproducibility.
+    settings = _generation_settings(
         batch_size=batch_size,
         max_new_tokens=max_new_tokens,
         do_sample=do_sample,
         temperature=temperature,
         top_p=top_p,
+        top_k=top_k,
         seed=seed,
         flush_every=flush_every,
     )
     seed_everything(seed)
 
-    model_config = model_config_from_env()
-    bundle = load_model_and_processor(model_config)
-    model_slug = qwen_model_slug(bundle.model_id)
-
-    for task in task_list:
-        examples = load_rollout_prompt_examples(
+    examples_by_task = {
+        task: load_rollout_prompt_examples(
             task,
             project_root=project_root,
-            prompt_source_model=prompt_source_model,
+            prompt_set=prompt_set,
         )
+        for task in task_list
+    }
+
+    model_config = model_config_from_env()
+    model_id = resolve_model_id(model_config.model_name)
+    model_slug = qwen_model_slug(model_id)
+    for task, examples in examples_by_task.items():
+        validate_rollout_generation_resume(
+            task=task,
+            output_path=output_dir / f"{task}__{model_slug}.json",
+            model_id=model_id,
+            examples=examples,
+            settings=settings,
+            overwrite=overwrite,
+        )
+    bundle = load_model_and_processor(model_config)
+
+    for task in task_list:
+        # Fixed prompts are preloaded before model load; Qwen creates fresh completions.
+        examples = examples_by_task[task]
         output_path = output_dir / f"{task}__{model_slug}.json"
         summary = generate_rollout_task(
             bundle=bundle,
@@ -263,36 +440,111 @@ def grade_rollouts(
         "-p",
         help="Rollout JSON path to grade. Repeatable. Defaults to generated Qwen roleplaying/sandbagging files.",
     ),
-    project_root: Path = typer.Option(
-        Path("."),
-        help="Project root containing data/ grading templates.",
-    ),
-    provider: str = typer.Option("openrouter", help='Judge transport. Currently only "openrouter" is supported.'),
-    judge_model: str | None = typer.Option(
+    project_root: Path | None = typer.Option(
         None,
+        help="Project root containing data/ grading templates. Defaults to the nearest checkout root.",
+    ),
+    provider: str = typer.Option(
+        DEFAULT_JUDGE_CONFIG.provider,
+        help='Judge transport. Currently only "openrouter" is supported.',
+    ),
+    judge_model: str | None = typer.Option(
+        DEFAULT_JUDGE_CONFIG.model,
         help="OpenRouter model alias from prod_env/model_deployments.yaml or raw OpenRouter model ID.",
     ),
-    max_workers: int = typer.Option(8, min=1, help="Concurrent judge calls for LLM-graded rollouts."),
-    max_tokens: int = typer.Option(1000, min=1, help="Maximum judge output tokens."),
-    max_retries: int = typer.Option(4, min=1, help="Judge API/parse retries."),
-    timeout: float = typer.Option(120.0, min=1.0, help="OpenRouter request timeout in seconds."),
-    structured_outputs: bool = typer.Option(True, help="Request JSON schema outputs for LLM judges."),
+    max_workers: int = typer.Option(
+        DEFAULT_ROLLOUT_GRADING_MAX_WORKERS,
+        min=1,
+        help="Concurrent judge calls for LLM-graded rollouts.",
+    ),
+    max_tokens: int = typer.Option(
+        DEFAULT_JUDGE_CONFIG.max_tokens,
+        min=1,
+        help="Maximum judge output tokens.",
+    ),
+    max_retries: int = typer.Option(
+        DEFAULT_JUDGE_CONFIG.max_retries,
+        min=1,
+        help="Judge API/parse retries.",
+    ),
+    timeout: float = typer.Option(
+        DEFAULT_JUDGE_CONFIG.timeout,
+        min=1.0,
+        help="OpenRouter request timeout in seconds.",
+    ),
+    structured_outputs: bool = typer.Option(
+        DEFAULT_JUDGE_CONFIG.structured_outputs,
+        help="Request JSON schema outputs for LLM judges.",
+    ),
     require_structured_outputs: bool = typer.Option(
-        True,
+        DEFAULT_JUDGE_CONFIG.require_structured_outputs,
         help="Require routed OpenRouter providers to support structured output parameters.",
     ),
     start: int = typer.Option(0, min=0, help="Start rollout index."),
     limit: int | None = typer.Option(None, min=1, help="Limit rollout records to grade per file."),
-    flush_every: int = typer.Option(25, min=1, help="Write JSON after this many completed judge calls."),
+    source_indices: list[int] | None = typer.Option(
+        None,
+        "--source-index",
+        help="Specific metadata.source_index value to grade. Repeatable; cannot be combined with --start/--limit.",
+    ),
+    source_start: int | None = typer.Option(
+        None,
+        min=0,
+        help="First metadata.source_index to grade. Requires --source-limit.",
+    ),
+    source_limit: int | None = typer.Option(
+        None,
+        min=1,
+        help="Number of source indices to grade from --source-start.",
+    ),
+    flush_every: int = typer.Option(
+        DEFAULT_ROLLOUT_GRADING_FLUSH_EVERY,
+        min=1,
+        help="Write JSON after this many completed judge calls.",
+    ),
+    output_dir: Path | None = typer.Option(
+        None,
+        "--output-dir",
+        help="Optional directory for graded copies. Defaults to in-place grading.",
+    ),
     overwrite: bool = typer.Option(False, help="Re-grade already populated labels."),
     mock_response: str | None = typer.Option(
         None,
         help="Testing hook: use this literal judge response instead of calling an API.",
     ),
 ) -> None:
-    """Grade generated rollout JSON files with the local Apollo judge port."""
+    """Grade generated roleplaying/sandbagging rollout JSON files.
+
+    Args:
+        paths: Optional repeatable rollout paths. Defaults to generated Qwen
+            files for `DEFAULT_ROLLOUT_TASKS`.
+        project_root: Repository root containing grading templates.
+        provider: Judge provider; currently only `openrouter`.
+        judge_model: OpenRouter judge alias or raw model id.
+        max_workers: Concurrent roleplaying judge calls.
+        max_tokens: Maximum judge response tokens.
+        max_retries: Judge retry count.
+        timeout: Judge request timeout in seconds.
+        structured_outputs: Request JSON-schema judge output where supported.
+        require_structured_outputs: Require routed providers to support schema
+            output parameters.
+        start: First rollout index to grade.
+        limit: Optional number of records to grade per file.
+        source_indices: Explicit source example indices to grade.
+        source_start: First source example index to grade.
+        source_limit: Number of source example indices to grade.
+        flush_every: Number of completed judge calls between writes.
+        overwrite: Regrade records that already have labels.
+        mock_response: Literal judge response for tests/smoke runs.
+
+    References:
+        Roleplaying grades use `data/roleplaying/grading_template.txt`.
+        Sandbagging grades use the deterministic parser in `judging.py`.
+    """
+
     load_dotenv()
-    project_root = project_root.resolve()
+    project_root = _resolve_project_root(project_root)
+    output_dir = _project_path(project_root, output_dir) if output_dir is not None else None
     judge_config = _judge_config_from_options(
         provider=provider,
         judge_model=judge_model,
@@ -303,20 +555,36 @@ def grade_rollouts(
         require_structured_outputs=require_structured_outputs,
         mock_response=mock_response,
     )
-    rollout_paths = paths or [
-        project_root / "data" / "rollouts" / f"{task}__{MODEL_SLUG}.json"
-        for task in DEFAULT_ROLLOUT_TASKS
+    # Resolve defaults lazily after project_root is known.
+    rollout_paths = [
+        _project_path(project_root, path)
+        for path in (
+            paths
+            or [Path("data") / "rollouts" / f"{task}__{MODEL_SLUG}.json" for task in DEFAULT_ROLLOUT_TASKS]
+        )
     ]
+    rollout_tasks = {path: _infer_rollout_task_from_path(path) for path in rollout_paths}
+    if any(_rollout_task_needs_llm_judge(task) for task in rollout_tasks.values()):
+        preflight_judge_config(judge_config)
+    source_index_filter = _source_index_filter(
+        source_indices=source_indices,
+        source_start=source_start,
+        source_limit=source_limit,
+        record_start=start,
+        record_limit=limit,
+    )
 
     for path in rollout_paths:
-        path = path if path.is_absolute() else project_root / path
         summary = grade_rollout_file(
             path,
             project_root=project_root,
             config=judge_config,
+            task=rollout_tasks[path],
+            output_path=(output_dir / path.name) if output_dir is not None else None,
             overwrite=overwrite,
             start=start,
             limit=limit,
+            source_indices=source_index_filter,
             flush_every=flush_every,
             max_workers=max_workers,
         )
@@ -329,11 +597,159 @@ def grade_rollouts(
         )
 
 
+@app.command("run-qwen-sweep")
+def run_qwen_sweep(
+    tasks: list[str] | None = typer.Option(
+        None,
+        "--task",
+        "-t",
+        help="Truth Spec rollout task to generate and grade. Defaults to roleplaying and sandbagging.",
+    ),
+    project_root: Path | None = typer.Option(
+        None,
+        help="Project root containing data/. Defaults to the nearest checkout root.",
+    ),
+    output_dir: Path = typer.Option(
+        Path("data/rollouts"),
+        help="Directory for generated rollout JSON files.",
+    ),
+    prompt_set: str | None = typer.Option(
+        DEFAULT_ROLLOUT_PROMPT_SET,
+        "--prompt-set",
+        help="Cleaned prompt set id used for rollout prompts.",
+    ),
+    batch_size: int = typer.Option(DEFAULT_ROLLOUT_GENERATION_SETTINGS.batch_size, min=1),
+    max_new_tokens: int = typer.Option(DEFAULT_ROLLOUT_GENERATION_SETTINGS.max_new_tokens, min=1),
+    do_sample: bool = typer.Option(DEFAULT_ROLLOUT_GENERATION_SETTINGS.do_sample),
+    temperature: float = typer.Option(DEFAULT_ROLLOUT_GENERATION_SETTINGS.temperature, min=0.0),
+    top_p: float = typer.Option(DEFAULT_ROLLOUT_GENERATION_SETTINGS.top_p, min=0.0, max=1.0),
+    top_k: int | None = typer.Option(DEFAULT_ROLLOUT_GENERATION_SETTINGS.top_k, min=0),
+    seed: int = typer.Option(DEFAULT_ROLLOUT_GENERATION_SETTINGS.seed),
+    start: int = typer.Option(0, min=0),
+    limit: int | None = typer.Option(None, min=1),
+    flush_every: int = typer.Option(DEFAULT_ROLLOUT_GENERATION_SETTINGS.flush_every, min=1),
+    overwrite_generation: bool = typer.Option(False, help="Regenerate rollout files instead of resuming."),
+    overwrite_grading: bool = typer.Option(False, help="Re-grade already populated labels."),
+    provider: str = typer.Option(DEFAULT_JUDGE_CONFIG.provider),
+    judge_model: str | None = typer.Option(DEFAULT_JUDGE_CONFIG.model),
+    max_workers: int = typer.Option(DEFAULT_ROLLOUT_GRADING_MAX_WORKERS, min=1),
+    max_tokens: int = typer.Option(DEFAULT_JUDGE_CONFIG.max_tokens, min=1),
+    max_retries: int = typer.Option(DEFAULT_JUDGE_CONFIG.max_retries, min=1),
+    timeout: float = typer.Option(DEFAULT_JUDGE_CONFIG.timeout, min=1.0),
+    structured_outputs: bool = typer.Option(DEFAULT_JUDGE_CONFIG.structured_outputs),
+    require_structured_outputs: bool = typer.Option(DEFAULT_JUDGE_CONFIG.require_structured_outputs),
+    grading_flush_every: int = typer.Option(DEFAULT_ROLLOUT_GRADING_FLUSH_EVERY, min=1),
+    mock_response: str | None = typer.Option(
+        None,
+        help="Testing hook: use this literal judge response instead of calling OpenRouter.",
+    ),
+) -> None:
+    """Generate Qwen rollouts and grade them in one preflighted sweep."""
+
+    load_dotenv()
+    project_root = _resolve_project_root(project_root)
+    output_dir = _project_path(project_root, output_dir)
+    task_list = tuple(tasks) if tasks else DEFAULT_ROLLOUT_TASKS
+    settings = _generation_settings(
+        batch_size=batch_size,
+        max_new_tokens=max_new_tokens,
+        do_sample=do_sample,
+        temperature=temperature,
+        top_p=top_p,
+        top_k=top_k,
+        seed=seed,
+        flush_every=flush_every,
+    )
+    judge_config = _judge_config_from_options(
+        provider=provider,
+        judge_model=judge_model,
+        max_tokens=max_tokens,
+        max_retries=max_retries,
+        timeout=timeout,
+        structured_outputs=structured_outputs,
+        require_structured_outputs=require_structured_outputs,
+        mock_response=mock_response,
+    )
+    examples_by_task = {
+        task: load_rollout_prompt_examples(
+            task,
+            project_root=project_root,
+            prompt_set=prompt_set,
+        )
+        for task in task_list
+    }
+    source_indices_by_task = {
+        task: _selected_source_indices(examples, start=start, limit=limit)
+        for task, examples in examples_by_task.items()
+    }
+
+    if any(_rollout_task_needs_llm_judge(task) for task in task_list):
+        preflight = preflight_judge_config(judge_config)
+        console.print(
+            "[green]OpenRouter judge preflight passed[/green] "
+            f"alias={preflight.alias} resolved_model={preflight.resolved_model}"
+        )
+
+    seed_everything(seed)
+    model_config = model_config_from_env()
+    model_id = resolve_model_id(model_config.model_name)
+    model_slug = qwen_model_slug(model_id)
+    for task, examples in examples_by_task.items():
+        validate_rollout_generation_resume(
+            task=task,
+            output_path=output_dir / f"{task}__{model_slug}.json",
+            model_id=model_id,
+            examples=examples,
+            settings=settings,
+            overwrite=overwrite_generation,
+        )
+    bundle = load_model_and_processor(model_config)
+
+    generated_paths: list[tuple[str, Path]] = []
+    for task in task_list:
+        examples = examples_by_task[task]
+        output_path = output_dir / f"{task}__{model_slug}.json"
+        summary = generate_rollout_task(
+            bundle=bundle,
+            task=task,
+            examples=examples,
+            output_path=output_path,
+            settings=settings,
+            overwrite=overwrite_generation,
+            start=start,
+            limit=limit,
+        )
+        generated_paths.append((task, output_path))
+        console.print(
+            "[green]Generated rollouts[/green] "
+            f"task={summary.task} new={summary.generated_examples} "
+            f"skipped={summary.skipped_existing} path={summary.output_path}"
+        )
+
+    for task, path in generated_paths:
+        grading_summary = grade_rollout_file(
+            path,
+            project_root=project_root,
+            config=judge_config,
+            overwrite=overwrite_grading,
+            start=0,
+            limit=None,
+            source_indices=source_indices_by_task[task],
+            flush_every=grading_flush_every,
+            max_workers=max_workers,
+        )
+        console.print(
+            "[green]Graded rollout file[/green] "
+            f"task={grading_summary.task} graded={grading_summary.graded_items} "
+            f"skipped={grading_summary.skipped_items} path={grading_summary.output_path}"
+        )
+
+
 @app.command("generate-insider-trading")
 def generate_insider_trading(
-    project_root: Path = typer.Option(
-        Path("."),
-        help="Project root containing data/insider_trading/prompts.",
+    project_root: Path | None = typer.Option(
+        None,
+        help="Project root containing data/insider_trading/prompts. Defaults to the nearest checkout root.",
     ),
     output_path: Path | None = typer.Option(
         None,
@@ -344,43 +760,116 @@ def generate_insider_trading(
         help="Glob, relative to project root, for insider-trading prompt YAML files.",
     ),
     samples_per_prompt: int = typer.Option(1, min=1, help="Number of sampled transcripts per prompt file."),
-    batch_size: int = typer.Option(1, min=1, help="Generation batch size. Insider flow uses sequential turns."),
-    max_new_tokens: int = typer.Option(512, min=1, help="Maximum new tokens per assistant turn."),
-    do_sample: bool = typer.Option(True, help="Use sampling. Recommended for multiple transcripts per prompt."),
-    temperature: float = typer.Option(0.6, min=0.0, help="Sampling temperature."),
-    top_p: float = typer.Option(0.95, min=0.0, max=1.0, help="Sampling nucleus top-p."),
-    seed: int = typer.Option(0, help="Random seed for reproducible sampling."),
-    flush_every: int = typer.Option(5, min=1, help="Write JSON after this many new transcripts."),
+    batch_size: int = typer.Option(
+        DEFAULT_INSIDER_GENERATION_SETTINGS.batch_size,
+        min=1,
+        help="Generation batch size. Insider flow uses sequential turns.",
+    ),
+    max_new_tokens: int = typer.Option(
+        DEFAULT_INSIDER_GENERATION_SETTINGS.max_new_tokens,
+        min=1,
+        help="Maximum new tokens per assistant turn.",
+    ),
+    do_sample: bool = typer.Option(
+        DEFAULT_INSIDER_GENERATION_SETTINGS.do_sample,
+        help="Use sampling. Recommended for multiple transcripts per prompt.",
+    ),
+    temperature: float = typer.Option(
+        DEFAULT_INSIDER_GENERATION_SETTINGS.temperature,
+        min=0.0,
+        help="Sampling temperature.",
+    ),
+    top_p: float = typer.Option(
+        DEFAULT_INSIDER_GENERATION_SETTINGS.top_p,
+        min=0.0,
+        max=1.0,
+        help="Sampling nucleus top-p. Used only with --do-sample.",
+    ),
+    top_k: int | None = typer.Option(
+        DEFAULT_INSIDER_GENERATION_SETTINGS.top_k,
+        min=0,
+        help="Sampling top-k. Used only with --do-sample.",
+    ),
+    seed: int = typer.Option(
+        DEFAULT_INSIDER_GENERATION_SETTINGS.seed,
+        help="Random seed for reproducible sampling.",
+    ),
+    flush_every: int = typer.Option(
+        DEFAULT_INSIDER_GENERATION_SETTINGS.flush_every,
+        min=1,
+        help="Write JSON after this many new transcripts.",
+    ),
     label_mode: str = typer.Option(
         "unknown",
         help='Use "unknown" for ungraded data or "heuristic" only for smoke/debug labels.',
     ),
     overwrite: bool = typer.Option(False, help="Replace an existing output file instead of resuming."),
 ) -> None:
-    """Generate Qwen insider-trading transcripts from local prompt YAML files."""
-    if label_mode not in {"unknown", "heuristic"}:
+    """Generate Qwen insider-trading transcripts from local prompt YAML files.
+
+    Args:
+        project_root: Repository root containing insider-trading prompt YAMLs.
+        output_path: Optional transcript JSON output path.
+        prompt_glob: Project-relative glob for YAML prompt configs.
+        samples_per_prompt: Number of transcript samples per YAML config.
+        batch_size: Generation batch size; insider flow mostly generates one
+            sequential assistant turn at a time.
+        max_new_tokens: Maximum tokens for each assistant turn.
+        do_sample: Enable stochastic decoding. Defaults true for transcript
+            diversity.
+        temperature: Sampling temperature used only with `do_sample`.
+        top_p: Nucleus sampling cutoff used only with `do_sample`.
+        top_k: Top-k sampling cutoff used only with `do_sample`.
+        seed: Random seed for sampling.
+        flush_every: Number of new transcripts between JSON checkpoints.
+        label_mode: `unknown` for ungraded data or `heuristic` for debug labels.
+        overwrite: Replace existing transcript file instead of resuming.
+
+    References:
+        Prompt configs live under `data/insider_trading/prompts/**/*.yaml`.
+        Generation implementation lives in `insider_trading.py`.
+    """
+
+    if label_mode == "unknown":
+        validated_label_mode: LabelMode = "unknown"
+    elif label_mode == "heuristic":
+        validated_label_mode = "heuristic"
+    else:
         raise typer.BadParameter('label-mode must be "unknown" or "heuristic".')
-    validated_label_mode = cast(LabelMode, label_mode)
 
     load_dotenv()
-    project_root = project_root.resolve()
-    settings = GenerationSettings(
+    project_root = _resolve_project_root(project_root)
+    _validate_insider_prompt_glob(project_root, prompt_glob)
+    settings = _generation_settings(
         batch_size=batch_size,
         max_new_tokens=max_new_tokens,
         do_sample=do_sample,
         temperature=temperature,
         top_p=top_p,
+        top_k=top_k,
         seed=seed,
         flush_every=flush_every,
     )
     seed_everything(seed)
 
     model_config = model_config_from_env()
+    model_id = resolve_model_id(model_config.model_name)
+    model_slug = qwen_model_slug(model_id)
+    output_path = _project_path(
+        project_root,
+        output_path or Path("data") / "insider_trading" / f"{model_slug}-generations.json",
+    )
+    validate_insider_trading_generation_resume(
+        project_root=project_root,
+        output_path=output_path,
+        prompt_glob=prompt_glob,
+        model_id=model_id,
+        settings=settings,
+        samples_per_prompt=samples_per_prompt,
+        label_mode=validated_label_mode,
+        overwrite=overwrite,
+    )
     bundle = load_model_and_processor(model_config)
-    model_slug = qwen_model_slug(bundle.model_id)
-    output_path = output_path or project_root / "data" / "insider_trading" / f"{model_slug}-generations.json"
-    if not output_path.is_absolute():
-        output_path = project_root / output_path
 
     summary = generate_insider_trading_transcripts(
         bundle=bundle,
@@ -402,9 +891,9 @@ def generate_insider_trading(
 
 @app.command("grade-insider-trading")
 def grade_insider_trading(
-    project_root: Path = typer.Option(
-        Path("."),
-        help="Project root containing data/insider_trading grading prompts.",
+    project_root: Path | None = typer.Option(
+        None,
+        help="Project root containing data/insider_trading grading prompts. Defaults to the nearest checkout root.",
     ),
     input_path: Path | None = typer.Option(
         None,
@@ -414,36 +903,83 @@ def grade_insider_trading(
         None,
         help="Output path. Defaults to in-place grading of input-path.",
     ),
-    provider: str = typer.Option("openrouter", help='Judge transport. Currently only "openrouter" is supported.'),
+    provider: str = typer.Option(
+        DEFAULT_JUDGE_CONFIG.provider,
+        help='Judge transport. Currently only "openrouter" is supported.',
+    ),
     judge_model: str | None = typer.Option(
-        None,
+        DEFAULT_JUDGE_CONFIG.model,
         help="OpenRouter model alias from prod_env/model_deployments.yaml or raw OpenRouter model ID.",
     ),
-    max_tokens: int = typer.Option(1000, min=1, help="Maximum judge output tokens."),
-    max_retries: int = typer.Option(4, min=1, help="Judge API/parse retries."),
-    timeout: float = typer.Option(120.0, min=1.0, help="OpenRouter request timeout in seconds."),
-    structured_outputs: bool = typer.Option(True, help="Request JSON schema outputs for LLM judges."),
+    max_tokens: int = typer.Option(
+        DEFAULT_JUDGE_CONFIG.max_tokens,
+        min=1,
+        help="Maximum judge output tokens.",
+    ),
+    max_retries: int = typer.Option(
+        DEFAULT_JUDGE_CONFIG.max_retries,
+        min=1,
+        help="Judge API/parse retries.",
+    ),
+    timeout: float = typer.Option(
+        DEFAULT_JUDGE_CONFIG.timeout,
+        min=1.0,
+        help="OpenRouter request timeout in seconds.",
+    ),
+    structured_outputs: bool = typer.Option(
+        DEFAULT_JUDGE_CONFIG.structured_outputs,
+        help="Request JSON schema outputs for LLM judges.",
+    ),
     require_structured_outputs: bool = typer.Option(
-        True,
+        DEFAULT_JUDGE_CONFIG.require_structured_outputs,
         help="Require routed OpenRouter providers to support structured output parameters.",
     ),
     start: int = typer.Option(0, min=0, help="Start transcript index."),
     limit: int | None = typer.Option(None, min=1, help="Limit transcript records to grade."),
-    flush_every: int = typer.Option(10, min=1, help="Write JSON after this many graded transcripts."),
+    flush_every: int = typer.Option(
+        DEFAULT_INSIDER_GRADING_FLUSH_EVERY,
+        min=1,
+        help="Write JSON after this many graded transcripts.",
+    ),
     overwrite: bool = typer.Option(False, help="Re-grade transcripts that already have labels."),
     mock_response: str | None = typer.Option(
         None,
         help="Testing hook: use this literal judge response instead of calling an API.",
     ),
 ) -> None:
-    """Grade generated insider-trading transcripts with Apollo's task-specific judge prompts."""
+    """Grade generated insider-trading transcripts with task-specific judges.
+
+    Args:
+        project_root: Repository root containing insider-trading grading prompts.
+        input_path: Transcript JSON to grade. Defaults to the Qwen generation
+            output path.
+        output_path: Optional separate graded output path. If omitted, grading
+            is in-place.
+        provider: Judge provider; currently only `openrouter`.
+        judge_model: OpenRouter judge alias or raw model id.
+        max_tokens: Maximum judge output tokens.
+        max_retries: Judge retry count.
+        timeout: Judge request timeout in seconds.
+        structured_outputs: Request JSON-schema judge output where supported.
+        require_structured_outputs: Require routed providers to support schema
+            output parameters.
+        start: First transcript index to grade.
+        limit: Optional number of transcripts to grade.
+        flush_every: Number of graded transcripts between writes.
+        overwrite: Regrade transcripts that already have labels.
+        mock_response: Literal judge response for tests/smoke runs.
+
+    References:
+        Judge prompt files live in `data/insider_trading/`.
+    """
+
     load_dotenv()
-    project_root = project_root.resolve()
-    input_path = input_path or project_root / "data" / "insider_trading" / f"{MODEL_SLUG}-generations.json"
-    if not input_path.is_absolute():
-        input_path = project_root / input_path
-    if output_path is not None and not output_path.is_absolute():
-        output_path = project_root / output_path
+    project_root = _resolve_project_root(project_root)
+    input_path = _project_path(
+        project_root,
+        input_path or Path("data") / "insider_trading" / f"{MODEL_SLUG}-generations.json",
+    )
+    output_path = _project_path(project_root, output_path) if output_path is not None else None
 
     judge_config = _judge_config_from_options(
         provider=provider,
@@ -455,6 +991,7 @@ def grade_insider_trading(
         require_structured_outputs=require_structured_outputs,
         mock_response=mock_response,
     )
+    preflight_judge_config(judge_config)
     summary = grade_insider_trading_transcripts_with_judge(
         input_path,
         project_root=project_root,
@@ -473,6 +1010,131 @@ def grade_insider_trading(
     )
 
 
+@app.command("run-insider-trading-sweep")
+def run_insider_trading_sweep(
+    project_root: Path | None = typer.Option(
+        None,
+        help="Project root containing data/insider_trading. Defaults to the nearest checkout root.",
+    ),
+    output_path: Path | None = typer.Option(
+        None,
+        help="Transcript JSON path. Defaults to data/insider_trading/{model_slug}-generations.json.",
+    ),
+    prompt_glob: str = typer.Option(
+        "data/insider_trading/prompts/**/*.yaml",
+        help="Glob, relative to project root, for insider-trading prompt YAML files.",
+    ),
+    samples_per_prompt: int = typer.Option(1, min=1, help="Number of sampled transcripts per prompt file."),
+    batch_size: int = typer.Option(DEFAULT_INSIDER_GENERATION_SETTINGS.batch_size, min=1),
+    max_new_tokens: int = typer.Option(DEFAULT_INSIDER_GENERATION_SETTINGS.max_new_tokens, min=1),
+    do_sample: bool = typer.Option(DEFAULT_INSIDER_GENERATION_SETTINGS.do_sample),
+    temperature: float = typer.Option(DEFAULT_INSIDER_GENERATION_SETTINGS.temperature, min=0.0),
+    top_p: float = typer.Option(DEFAULT_INSIDER_GENERATION_SETTINGS.top_p, min=0.0, max=1.0),
+    top_k: int | None = typer.Option(DEFAULT_INSIDER_GENERATION_SETTINGS.top_k, min=0),
+    seed: int = typer.Option(DEFAULT_INSIDER_GENERATION_SETTINGS.seed),
+    generation_flush_every: int = typer.Option(DEFAULT_INSIDER_GENERATION_SETTINGS.flush_every, min=1),
+    grading_start: int = typer.Option(0, min=0, help="Start transcript index for grading."),
+    grading_limit: int | None = typer.Option(None, min=1, help="Limit transcripts to grade after generation."),
+    overwrite_generation: bool = typer.Option(False, help="Regenerate transcript file instead of resuming."),
+    overwrite_grading: bool = typer.Option(False, help="Re-grade already populated transcript labels."),
+    provider: str = typer.Option(DEFAULT_JUDGE_CONFIG.provider),
+    judge_model: str | None = typer.Option(DEFAULT_JUDGE_CONFIG.model),
+    max_tokens: int = typer.Option(DEFAULT_JUDGE_CONFIG.max_tokens, min=1),
+    max_retries: int = typer.Option(DEFAULT_JUDGE_CONFIG.max_retries, min=1),
+    timeout: float = typer.Option(DEFAULT_JUDGE_CONFIG.timeout, min=1.0),
+    structured_outputs: bool = typer.Option(DEFAULT_JUDGE_CONFIG.structured_outputs),
+    require_structured_outputs: bool = typer.Option(DEFAULT_JUDGE_CONFIG.require_structured_outputs),
+    grading_flush_every: int = typer.Option(DEFAULT_INSIDER_GRADING_FLUSH_EVERY, min=1),
+    mock_response: str | None = typer.Option(
+        None,
+        help="Testing hook: use this literal judge response instead of calling OpenRouter.",
+    ),
+) -> None:
+    """Generate Qwen insider-trading transcripts and judge them in one sweep."""
+
+    load_dotenv()
+    project_root = _resolve_project_root(project_root)
+    _validate_insider_prompt_glob(project_root, prompt_glob)
+    settings = _generation_settings(
+        batch_size=batch_size,
+        max_new_tokens=max_new_tokens,
+        do_sample=do_sample,
+        temperature=temperature,
+        top_p=top_p,
+        top_k=top_k,
+        seed=seed,
+        flush_every=generation_flush_every,
+    )
+    judge_config = _judge_config_from_options(
+        provider=provider,
+        judge_model=judge_model,
+        max_tokens=max_tokens,
+        max_retries=max_retries,
+        timeout=timeout,
+        structured_outputs=structured_outputs,
+        require_structured_outputs=require_structured_outputs,
+        mock_response=mock_response,
+    )
+    preflight = preflight_judge_config(judge_config)
+    console.print(
+        "[green]OpenRouter judge preflight passed[/green] "
+        f"alias={preflight.alias} resolved_model={preflight.resolved_model}"
+    )
+
+    seed_everything(seed)
+    model_config = model_config_from_env()
+    model_id = resolve_model_id(model_config.model_name)
+    model_slug = qwen_model_slug(model_id)
+    output_path = _project_path(
+        project_root,
+        output_path or Path("data") / "insider_trading" / f"{model_slug}-generations.json",
+    )
+    validate_insider_trading_generation_resume(
+        project_root=project_root,
+        output_path=output_path,
+        prompt_glob=prompt_glob,
+        model_id=model_id,
+        settings=settings,
+        samples_per_prompt=samples_per_prompt,
+        label_mode="unknown",
+        overwrite=overwrite_generation,
+    )
+    bundle = load_model_and_processor(model_config)
+
+    generation_summary = generate_insider_trading_transcripts(
+        bundle=bundle,
+        project_root=project_root,
+        output_path=output_path,
+        prompt_glob=prompt_glob,
+        settings=settings,
+        samples_per_prompt=samples_per_prompt,
+        label_mode="unknown",
+        overwrite=overwrite_generation,
+    )
+    console.print(
+        "[green]Generated insider-trading transcripts[/green] "
+        f"new={generation_summary.generated_examples} "
+        f"skipped={generation_summary.skipped_existing} "
+        f"path={generation_summary.output_path}"
+    )
+
+    grading_summary = grade_insider_trading_transcripts_with_judge(
+        output_path,
+        project_root=project_root,
+        config=judge_config,
+        overwrite=overwrite_grading,
+        start=grading_start,
+        limit=grading_limit,
+        flush_every=grading_flush_every,
+    )
+    console.print(
+        "[green]Graded insider-trading transcripts[/green] "
+        f"graded={grading_summary.graded_items} "
+        f"skipped={grading_summary.skipped_items} "
+        f"path={grading_summary.output_path}"
+    )
+
+
 @app.command("extract-activations")
 def extract_activations(
     paths: list[Path] | None = typer.Option(
@@ -487,9 +1149,9 @@ def extract_activations(
         "-t",
         help="Named activation dataset task, e.g. claims__definitional_gemini_600_full. Repeatable.",
     ),
-    project_root: Path = typer.Option(
-        Path("."),
-        help="Project root containing data/ and references/truth_spec/.",
+    project_root: Path | None = typer.Option(
+        None,
+        help="Project root containing data/. Defaults to the nearest checkout root.",
     ),
     generated_model: str = typer.Option(
         MODEL_SLUG,
@@ -515,7 +1177,7 @@ def extract_activations(
     overwrite: bool = typer.Option(False, help="Replace existing task datasets in the HDF5 file."),
     resume: bool = typer.Option(
         False,
-        help="Reuse compatible existing task metadata/layers and write only missing requested layers.",
+        help="Reuse compatible existing task metadata/layers and skip replacing already-written requested layers.",
     ),
     backend_name: str = typer.Option(
         "transformers",
@@ -527,49 +1189,81 @@ def extract_activations(
         help="Also store next-token logits at answer-token scoring positions.",
     ),
 ) -> None:
-    """Extract decoder activations from rollout JSON paths or named Truth Spec datasets."""
+    """Extract decoder activations from rollouts or named source datasets.
+
+    Args:
+        paths: Repeatable rollout JSON paths. Mutually exclusive with `tasks`.
+        tasks: Repeatable named activation dataset ids. Mutually exclusive with
+            `paths`.
+        project_root: Repository root containing data and output directories.
+        generated_model: Model slug used to find generated rollout filenames.
+        output_path: Optional HDF5 output path.
+        layers: Layer spec accepted by `parse_layer_spec`.
+        batch_size: Examples per activation extraction batch.
+        start: First source example/record index.
+        limit: Optional number of records per source.
+        max_length: Optional tokenizer truncation length.
+        verify_masks: Decode masked tokens and verify answer alignment.
+        overwrite: Replace existing task datasets in the HDF5 file.
+        resume: Reuse compatible existing layers and skip replacing already-written requested layers.
+        backend_name: Activation backend, either `transformers` or `nnsight`.
+        capture_logits: Store next-token logits at answer-token positions.
+
+    References:
+        Rollout inputs default to `data/rollouts/{task}__{MODEL_SLUG}.json`.
+        Named dataset loaders and HDF5 writing live in `activations.py`.
+    """
+
     load_dotenv()
-    project_root = project_root.resolve()
+    project_root = _resolve_project_root(project_root)
 
     if paths and tasks:
         raise typer.BadParameter("Use either --path rollout files or --task named datasets, not both.")
 
-    rollout_paths = paths or []
-    if not tasks and not rollout_paths:
-        rollout_paths = [
-            project_root / "data" / "rollouts" / f"{task}__{MODEL_SLUG}.json"
-            for task in DEFAULT_ROLLOUT_TASKS
-        ]
+    # Build named datasets before any model load; tests rely on source-data
+    # validation failing early when a named task is unavailable.
+    named_datasets = [
+        ActivationDataset.from_named_task(
+            task,
+            project_root=project_root,
+            generated_model=generated_model,
+        )
+        for task in tasks or []
+    ]
+    # When named tasks are provided, rollout paths are intentionally ignored.
     rollout_paths = [
-        path if path.is_absolute() else project_root / path
-        for path in rollout_paths
+        _project_path(project_root, path)
+        for path in (
+            []
+            if tasks
+            else paths
+            or [Path("data") / "rollouts" / f"{task}__{MODEL_SLUG}.json" for task in DEFAULT_ROLLOUT_TASKS]
+        )
     ]
 
-    named_datasets: list[ActivationDataset] = []
-    if tasks:
-        for task in tasks:
-            named_datasets.append(
-                ActivationDataset.from_named_task(
-                    task,
-                    project_root=project_root,
-                    generated_model=generated_model,
-                )
-            )
-
     model_config = model_config_from_env()
+    activation_backend: ActivationBackend
     if backend_name == "transformers":
         bundle = load_model_and_processor(model_config)
         activation_backend = TransformersHookBackend(bundle)
     elif backend_name == "nnsight":
-        bundle = load_nnsight_bundle(model_config)
-        activation_backend = NnsightActivationBackend(bundle)
+        nnsight_bundle = load_nnsight_bundle(model_config)
+        bundle = ModelBundle(
+            model=nnsight_bundle.model,
+            processor=nnsight_bundle.processor,
+            tokenizer=nnsight_bundle.tokenizer,
+            model_id=nnsight_bundle.model_id,
+            config=nnsight_bundle.config,
+        )
+        activation_backend = NnsightActivationBackend(nnsight_bundle)
     else:
         raise typer.BadParameter('backend must be "transformers" or "nnsight".')
 
     layer_indices = parse_layer_spec(layers, activation_backend.decoder_layer_count())
-    output_path = output_path or default_activation_output_path(bundle.model_id)
-    if not output_path.is_absolute():
-        output_path = project_root / output_path
+    output_path = _project_path(
+        project_root,
+        output_path or default_activation_output_path(activation_backend.model_id),
+    )
 
     settings = ActivationExtractionSettings(
         layers=layer_indices,

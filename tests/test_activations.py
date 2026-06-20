@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -8,20 +9,26 @@ import pytest
 import intelligent_liars.activations as activations_module
 from intelligent_liars.activations import (
     ActivationDataset,
+    ActivationExample,
     ActivationExtractionSettings,
     DECEPTIVE,
     HONEST,
     LabelSchema,
+    RenderedDetectionExample,
     STEM_TASKS_PART_2,
     SKIP,
     build_answer_detection_mask,
+    default_activation_output_path,
     extract_rollout_activations,
+    extract_dataset_activations,
     load_named_activation_examples,
     load_rollout_activation_examples,
     normalise_deception_label,
     parse_layer_spec,
     render_activation_example,
+    verify_decoded_masks,
     write_activation_hdf5,
+    _build_qwen_inputs,
     _build_message_detection_mask_detail,
 )
 from intelligent_liars.activation_backends import prepare_model_inputs, qwen3_vl_decoder_surface
@@ -38,6 +45,13 @@ def test_parse_layer_spec_supports_all_sparse_lists_and_ranges():
         parse_layer_spec("8", 8)
 
 
+def test_default_activation_output_path_matches_project_contract():
+    assert (
+        default_activation_output_path(DEFAULT_MODEL_ID)
+        == Path("results/extracted_feats_all_layers_qwen3-vl-8b-thinking.h5")
+    )
+
+
 def test_normalise_deception_label_matches_truth_spec_rollout_labels():
     assert normalise_deception_label("honest") == HONEST
     assert normalise_deception_label("deceptive") == DECEPTIVE
@@ -52,6 +66,8 @@ def test_normalise_deception_label_matches_truth_spec_rollout_labels():
         normalise_deception_label(7)
     with pytest.raises(ValueError):
         normalise_deception_label(1)
+    with pytest.raises(ValueError):
+        normalise_deception_label(True, schema=LabelSchema.STRING_DECEPTION)
     with pytest.raises(ValueError):
         normalise_deception_label("concealed", schema=LabelSchema.STRING_DECEPTION)
 
@@ -173,6 +189,53 @@ def test_load_rollout_activation_examples_selects_matching_output_message(tmp_pa
     assert [example.messages[-1]["content"] for example in examples] == ["first", "second"]
     assert [example.raw_label for example in examples] == [7, 1]
     assert [example.label for example in examples] == [DECEPTIVE, HONEST]
+
+
+def test_load_rollout_activation_examples_rejects_detected_non_assistant_output(tmp_path):
+    rollout_path = tmp_path / "roleplaying__plain__qwen3-vl-8b-thinking.json"
+    rollout_path.write_text(
+        json.dumps(
+            {
+                "rollouts": [
+                    {
+                        "input_messages": [{"role": "user", "content": "question", "detect": False}],
+                        "output_strs": ["answer"],
+                        "output_messages": [{"role": "user", "content": "not an answer", "detect": True}],
+                        "graded_deception": [7],
+                    }
+                ]
+            }
+        )
+    )
+
+    with pytest.raises(ValueError, match="Only assistant output messages"):
+        load_rollout_activation_examples(rollout_path)
+
+
+def test_load_rollout_activation_examples_defaults_non_assistant_output_to_not_detected(tmp_path):
+    rollout_path = tmp_path / "roleplaying__plain__qwen3-vl-8b-thinking.json"
+    rollout_path.write_text(
+        json.dumps(
+            {
+                "rollouts": [
+                    {
+                        "input_messages": [{"role": "user", "content": "question", "detect": False}],
+                        "output_strs": ["answer"],
+                        "output_messages": [
+                            {"role": "user", "content": "followup"},
+                            {"role": "assistant", "content": "answer"},
+                        ],
+                        "graded_deception": [7],
+                    }
+                ]
+            }
+        )
+    )
+
+    example = load_rollout_activation_examples(rollout_path)[0]
+
+    assert example.messages[-2] == {"role": "user", "content": "followup", "detect": False}
+    assert example.messages[-1] == {"role": "assistant", "content": "answer", "detect": True}
 
 
 def test_load_rollout_activation_examples_reconstructs_each_output_str(tmp_path):
@@ -393,7 +456,7 @@ def test_doubledown_rollout_labels_do_not_use_report_schema(tmp_path):
     assert examples[0].label_schema == LabelSchema.STRING_DECEPTION
 
 
-def test_extract_rollout_activations_skips_ungraded_rollouts_without_writing(tmp_path):
+def test_extract_rollout_activations_fails_on_all_ungraded_rollouts_without_writing(tmp_path):
     rollout_path = tmp_path / "roleplaying__plain__qwen3-vl-8b-thinking.json"
     output_path = tmp_path / "acts.h5"
     rollout_path.write_text(
@@ -417,16 +480,81 @@ def test_extract_rollout_activations_skips_ungraded_rollouts_without_writing(tmp
         config=ModelLoadConfig(),
     )
 
-    summary = extract_rollout_activations(
-        bundle=bundle,
-        rollout_path=rollout_path,
-        output_path=output_path,
-        settings=ActivationExtractionSettings(layers=(0,)),
+    with pytest.raises(ValueError, match="Run grading first"):
+        extract_rollout_activations(
+            bundle=bundle,
+            rollout_path=rollout_path,
+            output_path=output_path,
+            settings=ActivationExtractionSettings(layers=(0,)),
+        )
+
+    assert not output_path.exists()
+
+
+def test_extract_rollout_activations_rejects_empty_detected_answer_for_labeled_example(tmp_path):
+    output_path = tmp_path / "acts.h5"
+    dataset = ActivationDataset(
+        task="roleplaying__plain",
+        examples=(
+            ActivationExample(
+                task="roleplaying__plain",
+                source_index=0,
+                output_index=0,
+                messages=[{"role": "assistant", "content": "", "detect": True}],
+                label=DECEPTIVE,
+                label_schema=LabelSchema.ROLEPLAYING_1_TO_7,
+                raw_label=7,
+            ),
+        ),
+    )
+    bundle = ModelBundle(
+        model=None,
+        processor=object(),
+        tokenizer=object(),
+        model_id=DEFAULT_MODEL_ID,
+        config=ModelLoadConfig(),
+    )
+    backend = SimpleNamespace(
+        name="fake-backend",
+        capture=lambda **kwargs: SimpleNamespace(activations_by_layer={0: []}, logits=None),
+        surface_for_decoder_layer=lambda layer: SimpleNamespace(name=f"layer_{layer}"),
     )
 
-    assert summary.examples_seen == 1
-    assert summary.examples_extracted == 0
-    assert summary.skipped_labels == 1
+    def fake_build_batch(self, examples, max_length=None):
+        del self, max_length
+        return SimpleNamespace(
+            examples=tuple(examples),
+            inputs={"input_ids": "ids"},
+            preserved_input_keys=(),
+            rendered_texts=("",),
+        )
+
+    def fake_build_mask(self, batch):
+        del self, batch
+        return SimpleNamespace(
+            tensor="mask",
+            decoded_texts=("",),
+            detected_texts=("",),
+            char_spans=((),),
+            token_positions=((),),
+        )
+
+    monkeypatch = pytest.MonkeyPatch()
+    monkeypatch.setattr(activations_module.QwenProcessorTokenizer, "build_batch", fake_build_batch)
+    monkeypatch.setattr(activations_module.DetectionMaskBuilder, "build", fake_build_mask)
+
+    try:
+        with pytest.raises(ValueError, match="No answer tokens selected"):
+            extract_dataset_activations(
+                bundle=bundle,
+                dataset=dataset,
+                output_path=output_path,
+                settings=ActivationExtractionSettings(layers=(0,)),
+                backend=backend,
+            )
+    finally:
+        monkeypatch.undo()
+
     assert not output_path.exists()
 
 
@@ -548,6 +676,43 @@ def test_message_detection_mask_uses_char_spans_not_first_matching_tokens():
     assert mask.tolist() == [[False, False, False, True, False]]
     assert positions == [[3]]
     assert decoded == ["answer"]
+
+
+def test_verify_decoded_masks_rejects_extra_decoded_text():
+    with pytest.raises(ValueError, match="Detection mask mismatch"):
+        verify_decoded_masks(expected_texts=["."], decoded_texts=[")."])
+
+
+def test_build_qwen_inputs_rejects_processor_tokenizer_mismatch():
+    class FakeTokenizer:
+        def __call__(self, texts, **kwargs):
+            del texts, kwargs
+            return {
+                "input_ids": [[1, 2]],
+                "attention_mask": [[1, 1]],
+                "offset_mapping": [[(0, 1), (1, 2)]],
+            }
+
+    class FakeProcessor:
+        def apply_chat_template(self, messages, **kwargs):
+            del messages, kwargs
+            return {"input_ids": [[1, 99]], "attention_mask": [[1, 1]]}
+
+    with pytest.raises(ValueError, match="Processor and tokenizer input_ids differ"):
+        _build_qwen_inputs(
+            processor=FakeProcessor(),
+            tokenizer=FakeTokenizer(),
+            examples=[],
+            rendered_examples=[
+                RenderedDetectionExample(
+                    messages=({"role": "user", "content": "hi", "detect": False},),
+                    rendered_text="hi",
+                    detected_text="i",
+                    char_spans=((1, 2),),
+                )
+            ],
+            max_length=None,
+        )
 
 
 def test_qwen_decoder_surface_names_canonical_decoder_answer_tokens():
@@ -699,6 +864,12 @@ def test_write_activation_hdf5_stages_metadata_and_resumes_missing_layers(tmp_pa
         "example_output_indices": [0, 0],
         "example_labels": [HONEST, DECEPTIVE],
         "example_token_counts": [1, 1],
+        "messages_json": ['[{"role": "user", "content": "q"}]', '[{"role": "user", "content": "q2"}]'],
+        "rendered_texts": ["<user>q<assistant>yes", "<user>q2<assistant>no"],
+        "source_datasets": ["roleplaying__plain", "roleplaying__plain"],
+        "raw_labels_json": ["1", "7"],
+        "label_schemas": [LabelSchema.ROLEPLAYING_1_TO_7.value, LabelSchema.ROLEPLAYING_1_TO_7.value],
+        "example_metadata_json": ['{"source_index": 10}', '{"source_index": 11}'],
         "decoded_answer_texts": ["yes", "no"],
         "model_id": DEFAULT_MODEL_ID,
         "backend_name": "unit-test",
@@ -729,6 +900,8 @@ def test_write_activation_hdf5_stages_metadata_and_resumes_missing_layers(tmp_pa
 
     with h5py.File(output_path, "r") as handle:
         assert handle.attrs["format"] == "qwen_answer_token_activations_v2"
+        assert handle.attrs["source_output_path"] == str(output_path)
+        assert handle.attrs["created_at"]
         assert handle["layer_0/roleplaying__plain"].shape == (2, 3)
         assert handle["layer_1/roleplaying__plain"].shape == (2, 3)
         assert handle["metadata/roleplaying__plain/token_positions"][...].tolist() == [4, 7]
@@ -738,6 +911,113 @@ def test_write_activation_hdf5_stages_metadata_and_resumes_missing_layers(tmp_pa
         )
         assert handle["metadata/roleplaying__plain"].attrs["sycophancy_source_kind"] == "generated"
         assert handle["metadata/roleplaying__plain"].attrs["sycophancy_generated_model"] == "qwen3-vl-8b-thinking"
+        assert handle["metadata/roleplaying__plain"].attrs["aggregation"] == "token_rows/no_pooling"
+        assert handle["metadata/roleplaying__plain/messages_json"][0].decode() == '[{"role": "user", "content": "q"}]'
+        assert handle["metadata/roleplaying__plain/label_schemas"][1].decode() == "roleplaying_1_to_7"
+
+
+def test_write_activation_hdf5_resume_rejects_changed_existing_layer_data(tmp_path):
+    torch = pytest.importorskip("torch")
+
+    output_path = tmp_path / "acts.h5"
+    common_kwargs = {
+        "output_path": output_path,
+        "task": "roleplaying__plain",
+        "source_indices": [10],
+        "output_indices": [0],
+        "labels": [HONEST],
+        "example_indices": [0],
+        "token_positions": [4],
+        "example_splits": [0, 1],
+        "example_source_indices": [10],
+        "example_output_indices": [0],
+        "example_labels": [HONEST],
+        "example_token_counts": [1],
+        "messages_json": ['[{"role": "assistant", "content": "yes"}]'],
+        "rendered_texts": ["<assistant>yes"],
+        "source_datasets": ["roleplaying__plain"],
+        "raw_labels_json": ["1"],
+        "label_schemas": [LabelSchema.ROLEPLAYING_1_TO_7.value],
+        "example_metadata_json": ['{"source_index": 10}'],
+        "decoded_answer_texts": ["yes"],
+        "model_id": DEFAULT_MODEL_ID,
+        "backend_name": "unit-test",
+        "surface_names": {0: "decoder_layer_0_answer_tokens", 1: "decoder_layer_1_answer_tokens"},
+        "preserved_input_keys": ("attention_mask", "input_ids"),
+        "dataset_id": "rollouts.json",
+        "processor_id": DEFAULT_MODEL_ID,
+    }
+
+    write_activation_hdf5(
+        layers=(0,),
+        activations_by_layer={0: [torch.ones(1, 3)]},
+        overwrite=False,
+        **common_kwargs,
+    )
+
+    with pytest.raises(FileExistsError, match="existing data differs"):
+        write_activation_hdf5(
+            layers=(0, 1),
+            activations_by_layer={0: [torch.zeros(1, 3)], 1: [torch.zeros(1, 3)]},
+            overwrite=False,
+            resume=True,
+            **common_kwargs,
+        )
+
+
+def test_write_activation_hdf5_overwrite_removes_stale_task_outputs(tmp_path):
+    torch = pytest.importorskip("torch")
+    h5py = pytest.importorskip("h5py")
+
+    output_path = tmp_path / "acts.h5"
+    common_kwargs = {
+        "output_path": output_path,
+        "task": "roleplaying__plain",
+        "source_indices": [10],
+        "output_indices": [0],
+        "labels": [HONEST],
+        "example_indices": [0],
+        "token_positions": [4],
+        "example_splits": [0, 1],
+        "example_source_indices": [10],
+        "example_output_indices": [0],
+        "example_labels": [HONEST],
+        "example_token_counts": [1],
+        "messages_json": ['[{"role": "assistant", "content": "yes"}]'],
+        "rendered_texts": ["<assistant>yes"],
+        "source_datasets": ["roleplaying__plain"],
+        "raw_labels_json": ["1"],
+        "label_schemas": [LabelSchema.ROLEPLAYING_1_TO_7.value],
+        "example_metadata_json": ['{"source_index": 10}'],
+        "decoded_answer_texts": ["yes"],
+        "model_id": DEFAULT_MODEL_ID,
+        "backend_name": "unit-test",
+        "surface_names": {0: "decoder_layer_0_answer_tokens", 1: "decoder_layer_1_answer_tokens"},
+        "preserved_input_keys": ("attention_mask", "input_ids"),
+        "dataset_id": "rollouts.json",
+        "processor_id": DEFAULT_MODEL_ID,
+    }
+
+    write_activation_hdf5(
+        layers=(0, 1),
+        activations_by_layer={0: [torch.ones(1, 3)], 1: [torch.zeros(1, 3)]},
+        logits_by_batch=[torch.ones(1, 5)],
+        overwrite=False,
+        **common_kwargs,
+    )
+
+    write_activation_hdf5(
+        layers=(0,),
+        activations_by_layer={0: [torch.full((1, 3), 2.0)]},
+        overwrite=True,
+        **common_kwargs,
+    )
+
+    with h5py.File(output_path, "r") as handle:
+        assert "roleplaying__plain" in handle["layer_0"]
+        assert "roleplaying__plain" not in handle["layer_1"]
+        assert "roleplaying__plain" not in handle.get("logits", {})
+        assert handle["layer_0/roleplaying__plain"][...].tolist() == [[2.0, 2.0, 2.0]]
 
 
 class FakeSaveTensor:

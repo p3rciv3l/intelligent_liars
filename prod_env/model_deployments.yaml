@@ -73,6 +73,12 @@ models:
 
   # judge models
   # Z.ai
+  - name: glm-5.2
+    model: z-ai/glm-5.2:floor
+    temperature: 0.1
+    top_p: 0.95
+    max_tokens: 2048
+
   - name: glm-4.5-air
     model: z-ai/glm-4.5-air:floor
     temperature: 0.1

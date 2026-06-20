@@ -21,6 +21,22 @@ def test_model_name_env_does_not_override_hardcoded_model(monkeypatch: pytest.Mo
     assert model_config_from_env().model_name == DEFAULT_MODEL_ID
 
 
+def test_cuda_visible_devices_env_is_preserved_without_integer_parsing(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "GPU-abc123")
+
+    config = model_config_from_env()
+
+    assert config.gpu_ids is None
+    assert config.cuda_visible_devices == "GPU-abc123"
+
+
+def test_explicit_gpu_ids_are_serialized_to_cuda_visible_devices() -> None:
+    config = model_config_from_env(gpu_ids=(0, 2))
+
+    assert config.gpu_ids == (0, 2)
+    assert config.cuda_visible_devices == "0,2"
+
+
 def test_explicit_unsupported_model_name_fails() -> None:
     with pytest.raises(ValueError, match="Only Qwen/Qwen3-VL-8B-Thinking is supported"):
         resolve_model_id("some/other-model")

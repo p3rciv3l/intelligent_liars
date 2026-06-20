@@ -35,6 +35,8 @@ RETRYABLE_ERROR_TYPES = {
     "server",
     "unmapped",
 }
+DEFAULT_OPENROUTER_APP_TITLE = "intelligent-liars"
+OPENROUTER_API_BASE = "https://openrouter.ai/api/v1"
 
 
 class OpenRouterAPIError(RuntimeError):
@@ -92,6 +94,32 @@ def _get_requests():
                 "requests package is required. Install with: pip install requests"
             )
     return _requests
+
+
+def _openrouter_api_key(api_key: str | None = None) -> str:
+    """Resolve an OpenRouter API key from an explicit value or `.env`/env."""
+
+    load_dotenv()
+    resolved = api_key or os.getenv("OPENROUTER_API_KEY")
+    if not resolved:
+        raise ValueError(
+            "OpenRouter API key not provided. Set OPENROUTER_API_KEY environment "
+            "variable or pass api_key parameter."
+        )
+    return resolved
+
+
+def _openrouter_headers(api_key: str) -> dict[str, str]:
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+    }
+    referer = os.getenv("OPENROUTER_HTTP_REFERER")
+    title = os.getenv("OPENROUTER_APP_TITLE") or DEFAULT_OPENROUTER_APP_TITLE
+    if referer:
+        headers["HTTP-Referer"] = referer
+    if title:
+        headers["X-OpenRouter-Title"] = title
+    return headers
 
 
 # =============================================================================
@@ -173,26 +201,26 @@ class OpenRouterClient:
         api_key: str | None = None,
         timeout: float | None = 30.0,
         # Sampling parameters
-        temperature: float | None = 1.0,
-        top_p: float | None = 1.0,
-        top_k: int | None = 0,
-        frequency_penalty: float | None = 0.0,
-        presence_penalty: float | None = 0.0,
-        repetition_penalty: float | None = 1.0,
-        min_p: float | None = 0.0,
-        top_a: float | None = 0.0,
+        temperature: float | None = None,
+        top_p: float | None = None,
+        top_k: int | None = None,
+        frequency_penalty: float | None = None,
+        presence_penalty: float | None = None,
+        repetition_penalty: float | None = None,
+        min_p: float | None = None,
+        top_a: float | None = None,
         # Generation control
-        seed: int | None = 42069,
-        max_tokens: int | None = 5120,
+        seed: int | None = None,
+        max_tokens: int | None = None,
         logit_bias: dict[str, float] | None = None,
         logprobs: bool | None = None,
         top_logprobs: int | None = None,
         response_format: dict[str, Any] | None = None,
-        verbosity: Literal["low", "medium", "high"] | None = "medium",
+        verbosity: Literal["low", "medium", "high"] | None = None,
         # Tool configuration
         tools: list[dict[str, Any]] | None = None,
         tool_choice: Any | None = None,
-        parallel_tool_calls: bool | None = True,
+        parallel_tool_calls: bool | None = None,
         plugins: list[dict[str, Any]] | None = None,
         # Provider routing
         provider: ProviderPreferences | dict[str, Any] | None = None,
@@ -209,30 +237,30 @@ class OpenRouterClient:
             timeout: Request timeout in seconds (default: 30.0, None for no timeout)
             
             # Sampling (OpenAI-compatible)
-            temperature: Controls randomness (0.0-2.0). Default: 1.0
-            top_p: Nucleus sampling threshold (0.0-1.0). Default: 1.0
-            top_k: Top-k sampling (0=disabled). Default: 0
-            frequency_penalty: Penalize frequent tokens (-2.0-2.0). Default: 0.0
-            presence_penalty: Penalize repeated tokens (-2.0-2.0). Default: 0.0
+            temperature: Controls randomness (0.0-2.0). None means omit it.
+            top_p: Nucleus sampling threshold (0.0-1.0). None means omit it.
+            top_k: Top-k sampling. None means omit it.
+            frequency_penalty: Penalize frequent tokens (-2.0-2.0). None means omit it.
+            presence_penalty: Penalize repeated tokens (-2.0-2.0). None means omit it.
             
             # Sampling (OpenRouter-specific)
-            repetition_penalty: Alternative repetition control (0.0-2.0). Default: 1.0
-            min_p: Minimum probability threshold (0.0-1.0). Default: 0.0
-            top_a: Dynamic top-p based on max probability (0.0-1.0). Default: 0.0
+            repetition_penalty: Alternative repetition control (0.0-2.0). None means omit it.
+            min_p: Minimum probability threshold (0.0-1.0). None means omit it.
+            top_a: Dynamic top-p based on max probability (0.0-1.0). None means omit it.
             
             # Generation
-            seed: Random seed for deterministic outputs. Default: 42069
-            max_tokens: Maximum tokens to generate. Default: 1000
+            seed: Random seed for deterministic outputs. None means omit it.
+            max_tokens: Maximum tokens to generate. None means omit it.
             logit_bias: Token bias mapping
             logprobs: Whether to return log probabilities
             top_logprobs: Number of top logprobs to return (0-20)
             response_format: Output format specification
-            verbosity: Response verbosity ("low", "medium", "high"). Default: "medium"
-            reasoning: Reasoning configuration (e.g., {"effort": "low/medium/high"}). Default: {"effort": "medium"}           
+            verbosity: Response verbosity ("low", "medium", "high"). None means omit it.
+            reasoning: Reasoning configuration (e.g., {"effort": "low/medium/high"}). None means omit it.
             # Tools
             tools: Tool definitions for function calling
             tool_choice: Tool selection mode ("none", "auto", "required", or specific)
-            parallel_tool_calls: Allow parallel function calls. Default: True
+            parallel_tool_calls: Allow parallel function calls. None means omit it.
             
             # Provider Routing
             provider: Provider routing preferences (see ProviderPreferences)
@@ -240,12 +268,7 @@ class OpenRouterClient:
         """
         load_dotenv()
         # Resolve API key
-        self._api_key = api_key or os.getenv("OPENROUTER_API_KEY")
-        if not self._api_key:
-            raise ValueError(
-                "OpenRouter API key not provided. Set OPENROUTER_API_KEY environment "
-                "variable or pass api_key parameter."
-            )
+        self._api_key = _openrouter_api_key(api_key)
         
         # Store model name and HTTP settings
         self.model = model
@@ -272,7 +295,7 @@ class OpenRouterClient:
             "tool_choice": tool_choice,
             "parallel_tool_calls": parallel_tool_calls,
             "plugins": plugins,
-            "reasoning": reasoning if reasoning is not None else {"effort": "medium"},
+            "reasoning": reasoning,
         }
         
         # Build provider configuration with defaults
@@ -351,19 +374,9 @@ class OpenRouterClient:
         # Use provided session or fall back to lazy-loaded requests module
         requester = session if session is not None else _get_requests()
         
-        headers = {
-            "Authorization": f"Bearer {self._api_key}",
-        }
-        referer = os.getenv("OPENROUTER_HTTP_REFERER")
-        title = os.getenv("OPENROUTER_APP_TITLE")
-        if referer:
-            headers["HTTP-Referer"] = referer
-        if title:
-            headers["X-OpenRouter-Title"] = title
-
         response = requester.post(
             "https://openrouter.ai/api/v1/chat/completions",
-            headers=headers,
+            headers=_openrouter_headers(self._api_key),
             json=params,
             timeout=self.timeout,
         )
@@ -428,16 +441,70 @@ def default_model_deployments_path() -> Path:
         return Path(env_path).expanduser()
 
     client_path = Path(__file__).resolve()
-    repo_root = client_path.parents[3]
+    cwd = Path.cwd().resolve()
     candidates = [
-        Path.cwd() / "prod_env" / "model_deployments.yaml",
-        repo_root / "prod_env" / "model_deployments.yaml",
-        client_path.with_name("model_deployments.yaml"),
+        parent / "prod_env" / "model_deployments.yaml"
+        for parent in (cwd, *cwd.parents)
     ]
+    if len(client_path.parents) > 3:
+        candidates.append(client_path.parents[3] / "prod_env" / "model_deployments.yaml")
+    candidates.append(client_path.with_name("model_deployments.yaml"))
     for candidate in candidates:
         if candidate.exists():
             return candidate
     return candidates[0]
+
+
+def normalize_openrouter_model_id(model: str) -> str:
+    """Remove OpenRouter routing suffixes such as :floor, :nitro, or :free."""
+
+    return model.split(":", maxsplit=1)[0]
+
+
+def fetch_openrouter_model_endpoint_metadata(
+    model: str,
+    *,
+    timeout: float = 20.0,
+) -> dict[str, Any]:
+    """Fetch live OpenRouter endpoint metadata for one model id."""
+
+    requester = _get_requests()
+    model_id = normalize_openrouter_model_id(model)
+    response = requester.get(f"{OPENROUTER_API_BASE}/models/{model_id}/endpoints", timeout=timeout)
+    payload = response.json()
+    status_code = getattr(response, "status_code", 200)
+    if status_code >= 400:
+        raise _build_openrouter_error(payload, status_code=status_code, response=response)
+    if not isinstance(payload, dict) or not isinstance(payload.get("data"), dict):
+        raise RuntimeError(f"OpenRouter returned unexpected model metadata payload: {payload!r}")
+    return payload["data"]
+
+
+def fetch_openrouter_key_metadata(
+    *,
+    api_key: str | None = None,
+    timeout: float = 20.0,
+) -> dict[str, Any]:
+    """Fetch metadata for the configured OpenRouter API key.
+
+    This is a cheap authenticated preflight. It verifies that the key is present
+    and accepted before any Qwen generation or judge-file mutation starts.
+    """
+
+    requester = _get_requests()
+    resolved_key = _openrouter_api_key(api_key)
+    response = requester.get(
+        f"{OPENROUTER_API_BASE}/key",
+        headers=_openrouter_headers(resolved_key),
+        timeout=timeout,
+    )
+    payload = response.json()
+    status_code = getattr(response, "status_code", 200)
+    if status_code >= 400:
+        raise _build_openrouter_error(payload, status_code=status_code, response=response)
+    if not isinstance(payload, dict) or not isinstance(payload.get("data"), dict):
+        raise RuntimeError(f"OpenRouter returned unexpected key metadata payload: {payload!r}")
+    return payload["data"]
 
 
 def load_model_deployments(
@@ -562,13 +629,22 @@ def get_model_client(
         # Extract name (not needed for client)
         config.pop("name", None)
         
+        override_provider = override_params.pop("provider", None)
+
         # Merge YAML config with override params (override_params take precedence)
         client_params = {**config, **override_params}
-        
-        # Add provider back if it exists
-        if provider is not None:
-            client_params["provider"] = provider
-    except (ValueError, FileNotFoundError):
+
+        # Provider routing is nested; call-site values should override YAML.
+        if provider is not None or override_provider is not None:
+            client_params["provider"] = {**(provider or {}), **(override_provider or {})}
+    except FileNotFoundError:
+        if "/" not in name:
+            raise
+        model = name
+        client_params = override_params
+    except ValueError:
+        if "/" not in name:
+            raise
         # Fallback: If name is not an alias in YAML, treat it as a raw model ID
         model = name
         client_params = override_params
