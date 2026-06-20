@@ -10,9 +10,9 @@ logprobs without collapsing outputs.
 This repo uses `uv`.
 
 ```bash
-uv sync
+uv sync --dev --no-editable
 cp .env.example .env
-uv run intelligent-liars check-env
+uv run --no-sync intelligent-liars check-env
 ```
 
 On the A100 80GB or H100 box:
@@ -20,43 +20,66 @@ On the A100 80GB or H100 box:
 ```bash
 git clone git@github.com:p3rciv3l/intelligent_liars.git
 cd intelligent_liars
-uv sync --frozen
+uv sync --frozen --no-editable
+uv pip install flash-attn --no-build-isolation
 cp .env.example .env
-# edit .env and set HF_TOKEN if the model download requires it
-uv run intelligent-liars check-env --require-cuda
+# edit .env and set OPENROUTER_API_KEY; set HF_TOKEN only if model download requires it
+uv run --no-sync intelligent-liars check-env --require-cuda --check-openrouter
 ```
+
+If you rent the GPU through Vast.ai, use an image with CUDA, Python 3.11, and a
+recent PyTorch-compatible driver. The operational checklist is:
+
+```bash
+# on the remote instance
+git clone git@github.com:p3rciv3l/intelligent_liars.git
+cd intelligent_liars
+uv sync --frozen --dev --no-editable
+uv pip install flash-attn --no-build-isolation
+cp .env.example .env
+# set OPENROUTER_API_KEY in .env or the shell; set HF_TOKEN only if needed
+uv run --no-sync intelligent-liars check-env --require-cuda --check-openrouter --check-model
+uv run --no-sync intelligent-liars run-qwen-sweep --batch-size 1 --max-new-tokens 512
+uv run --no-sync intelligent-liars run-insider-trading-sweep --samples-per-prompt 1 --max-new-tokens 512
+
+# from your local machine, fetch artifacts before destroying the instance
+rsync -avP remote:/path/to/intelligent_liars/data/rollouts/ ./data/rollouts/
+rsync -avP remote:/path/to/intelligent_liars/data/insider_trading/*generations.json ./data/insider_trading/
+rsync -avP remote:/path/to/intelligent_liars/results/ ./results/
+```
+
+After artifacts are copied off the box, stop or destroy the Vast instance from
+the Vast dashboard or CLI so it does not keep billing.
 
 To verify that the Hugging Face processor is reachable without loading the full
 model:
 
 ```bash
-uv run intelligent-liars check-env --check-processor
+uv run --no-sync intelligent-liars check-env --check-processor
 ```
 
 To verify full model loading on the remote GPU box:
 
 ```bash
-uv run intelligent-liars check-env --require-cuda --check-model
+uv run --no-sync intelligent-liars check-env --require-cuda --check-model
 ```
 
 To verify that NNsight can wrap Qwen3-VL and capture a text-decoder activation:
 
 ```bash
-uv run intelligent-liars check-env --require-cuda --check-nnsight --nnsight-layer 0
+uv run --no-sync intelligent-liars check-env --require-cuda --check-nnsight --nnsight-layer 0
 ```
 
 ## Qwen Rollout Generation
 
-Run generation on the Vast GPU instance after `uv sync --frozen` and the
+Run generation on the Vast GPU instance after `uv sync --frozen --no-editable` and the
 environment checks pass. The generator uses the stock Transformers Qwen3-VL
 load path and writes resumable Truth Spec-compatible JSON.
 
-For the default generated-rollout tasks:
+For the default generated-rollout tasks and OpenRouter grading in one sweep:
 
 ```bash
-uv run intelligent-liars generate-rollouts \
-  --task roleplaying__plain \
-  --task sandbagging_v2__wmdp_mmlu \
+uv run --no-sync intelligent-liars run-qwen-sweep \
   --batch-size 1 \
   --max-new-tokens 512
 ```
@@ -68,21 +91,35 @@ data/rollouts/roleplaying__plain__qwen3-vl-8b-thinking.json
 data/rollouts/sandbagging_v2__wmdp_mmlu__qwen3-vl-8b-thinking.json
 ```
 
-The roleplaying prompts come from `data/roleplaying/dataset.yaml`. Sandbagging
-uses a selected `references/truth_spec/data/rollouts/*.json` file only as a
-prompt seed source; reference completions are stripped and not reused.
-
-Then grade the generated rollouts:
+By default, both roleplaying and sandbagging use the cleaned
+`truth-spec-llama-70b` prompt set from `data/rollout_prompts/`. If you omit
+`--prompt-set` for roleplaying in lower-level API calls, it can fall back to
+`data/roleplaying/dataset.yaml`.
+The prompt sets in `data/rollout_prompts/` are prepared from Truth Spec reference rollouts with:
 
 ```bash
-uv run intelligent-liars grade-rollouts
+for source in references/truth_spec/data/rollouts/*.json; do
+  uv run --no-sync python scripts/prepare_rollout_prompt_sets.py "$source"
+done
+```
+
+The cleaning step strips reference completions and old chat-template strings
+before Qwen generation.
+
+To run generation and grading as separate steps instead:
+
+```bash
+uv run --no-sync intelligent-liars generate-rollouts \
+  --batch-size 1 \
+  --max-new-tokens 512
+uv run --no-sync intelligent-liars grade-rollouts
 ```
 
 This fills `graded_deception` and `grader_reasoning` in-place. Roleplaying uses
 the Apollo LLM judge prompt from `data/roleplaying/grading_template.txt` and
 keeps the 1-7 numeric judge scores. Sandbagging uses Apollo's deterministic tag
 parser, not an LLM judge. The default LLM judge runs through OpenRouter using
-the `glm-4.5-air` alias from `prod_env/model_deployments.yaml`, so set
+the `glm-5.2` alias from `prod_env/model_deployments.yaml`, so set
 `OPENROUTER_API_KEY` before grading roleplaying rollouts. You can pass any
 OpenRouter alias from that YAML, or a raw OpenRouter model ID, with
 `--judge-model`.
@@ -91,7 +128,7 @@ Then extract answer-token decoder activations into the Truth Spec-compatible
 HDF5 layout:
 
 ```bash
-uv run intelligent-liars extract-activations \
+uv run --no-sync intelligent-liars extract-activations \
   --layers sparse \
   --batch-size 1
 ```
@@ -104,17 +141,18 @@ results/extracted_feats_all_layers_qwen3-vl-8b-thinking.h5
 
 Inside the file, activations are stored at `layer_{idx}/{task}` with shape
 `[masked_answer_tokens, hidden_dim]`. The extractor also writes
-`metadata/{task}` with labels, source indices, output indices, and per-example
-token splits. `graded_deception="unknown"` and other non-binary labels are
-skipped because the first probe path expects honest vs. deceptive labels.
+`metadata/{task}` with labels, source indices, output indices, rendered prompts,
+messages, raw labels, label schemas, source datasets, per-example metadata, and
+token splits. `graded_deception="unknown"` and other non-binary labels now fail
+fast if they leave no honest/deceptive examples, because the first probe path
+expects usable binary labels.
 
 For insider trading transcripts:
 
 ```bash
-uv run intelligent-liars generate-insider-trading \
+uv run --no-sync intelligent-liars run-insider-trading-sweep \
   --samples-per-prompt 1 \
-  --max-new-tokens 512 \
-  --label-mode unknown
+  --max-new-tokens 512
 ```
 
 Output:
@@ -123,11 +161,16 @@ Output:
 data/insider_trading/qwen3-vl-8b-thinking-generations.json
 ```
 
-Use `--label-mode unknown` for real data collection. After generation, run the
-Apollo task-specific judge prompts:
+This command preflights the OpenRouter judge before loading Qwen, generates the
+transcripts with unknown labels, then runs the Apollo task-specific judge
+prompts on the generated file. To run generation and grading as separate steps:
 
 ```bash
-uv run intelligent-liars grade-insider-trading
+uv run --no-sync intelligent-liars generate-insider-trading \
+  --samples-per-prompt 1 \
+  --max-new-tokens 512 \
+  --label-mode unknown
+uv run --no-sync intelligent-liars grade-insider-trading
 ```
 
 `--label-mode heuristic` exists only for smoke tests because it uses string
@@ -135,15 +178,13 @@ heuristics, not the paper's grader.
 
 ## Environment
 
-`.env` is ignored by git. Commit changes to `.env.example` when adding a new
-configuration variable.
+`.env` is ignored by git. The only required value for the current judge path is
+`OPENROUTER_API_KEY`. `HF_TOKEN` is optional and only needed if Hugging Face
+requires authentication for model downloads.
 
-Important defaults:
-
-- `MODEL_NAME=Qwen/Qwen3-VL-8B-Thinking`
-- `HF_HUB_ENABLE_HF_TRANSFER=1`
-- `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True`
-- `TOKENIZERS_PARALLELISM=false`
+Do not put remote-GPU tuning in the default `.env`. Set values like `HF_HOME`,
+`CUDA_VISIBLE_DEVICES`, `PYTORCH_CUDA_ALLOC_CONF`, or `TOKENIZERS_PARALLELISM`
+per machine/run when needed.
 
 ## Model Loading
 
@@ -167,11 +208,12 @@ dependency because it is hardware-specific.
 ## External References
 
 The Apollo and Truth Spec repos are useful local references, but they are not
-vendored here. Clone them next to the code when needed:
+vendored here. Clone them under `references/` when needed:
 
 ```bash
-git clone --depth 1 https://github.com/ApolloResearch/deception-detection
-git clone --depth 1 https://github.com/zfying/truth_spec
+mkdir -p references
+git clone --depth 1 https://github.com/ApolloResearch/deception-detection references/deception-detection
+git clone --depth 1 https://github.com/zfying/truth_spec references/truth_spec
 ```
 
 Current local reference commits when this repo was initialized:
