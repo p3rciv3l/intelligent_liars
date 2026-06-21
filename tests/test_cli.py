@@ -608,7 +608,8 @@ def test_run_qwen_sweep_default_tasks_use_default_rollout_paths(tmp_path, monkey
     [
         (["check-env"], ["--check-openrouter", "--require-cuda"]),
         (["generate-rollouts"], ["--prompt-set", "--output-dir"]),
-        (["grade-rollouts"], ["structured", "require"]),
+        (["grade-rollouts"], ["structured", "require", "continue"]),
+        (["merge-rollouts"], ["--output-path"]),
         (["run-qwen-sweep"], ["--prompt-set", "overwrite"]),
     ],
 )
@@ -717,6 +718,58 @@ def test_grade_rollouts_accepts_source_index_filter(tmp_path, monkeypatch):
     assert captured["kwargs"]["source_indices"] == {3, 5, 6}
     assert captured["kwargs"]["start"] == 0
     assert captured["kwargs"]["limit"] is None
+
+
+def test_grade_rollouts_passes_continue_on_error(tmp_path, monkeypatch):
+    rollout_path = tmp_path / "roleplaying.json"
+    rollout_path.write_text(
+        '{"base_name":"roleplaying","variant":"plain","rollouts":[]}\n'
+    )
+    captured = {}
+
+    monkeypatch.setattr(
+        "intelligent_liars.cli.preflight_judge_config",
+        lambda config: JudgePreflight(
+            provider=config.provider,
+            alias="mock",
+            resolved_model="mock",
+            structured_outputs=config.structured_outputs,
+            require_structured_outputs=config.require_structured_outputs,
+            checked_api_key=False,
+            checked_live_metadata=False,
+        ),
+    )
+
+    def fake_grade(path, **kwargs):
+        captured["path"] = path
+        captured["kwargs"] = kwargs
+        return GradingSummary(
+            task="roleplaying__plain",
+            input_path=path,
+            output_path=path,
+            total_items=0,
+            graded_items=0,
+            skipped_items=0,
+        )
+
+    monkeypatch.setattr("intelligent_liars.cli.grade_rollout_file", fake_grade)
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "grade-rollouts",
+            "--project-root",
+            str(tmp_path),
+            "--path",
+            str(rollout_path),
+            "--continue-on-error",
+            "--mock-response",
+            '{"reasoning":"ok","judgement":7}',
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert captured["kwargs"]["continue_on_error"] is True
 
 
 def test_extract_activations_nnsight_backend_passes_bundle_to_extractor(tmp_path, monkeypatch):

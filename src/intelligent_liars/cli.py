@@ -53,6 +53,7 @@ from intelligent_liars.rollouts import (
     MODEL_SLUG,
     generate_rollout_task,
     load_rollout_prompt_examples,
+    merge_rollout_files,
     parse_task_name,
     pending_rollout_source_indices,
     qwen_model_slug,
@@ -540,6 +541,10 @@ def grade_rollouts(
         help="Optional directory for graded copies. Defaults to in-place grading.",
     ),
     overwrite: bool = typer.Option(False, help="Re-grade already populated labels."),
+    continue_on_error: bool = typer.Option(
+        False,
+        help="Keep grading roleplaying files when one judge item fails; failed items are labelled skip.",
+    ),
     mock_response: str | None = typer.Option(
         None,
         help="Testing hook: use this literal judge response instead of calling an API.",
@@ -567,6 +572,8 @@ def grade_rollouts(
         source_limit: Number of source example indices to grade.
         flush_every: Number of completed judge calls between writes.
         overwrite: Regrade records that already have labels.
+        continue_on_error: Label failed roleplaying judge calls as skip instead
+            of aborting the whole file.
         mock_response: Literal judge response for tests/smoke runs.
 
     References:
@@ -620,6 +627,7 @@ def grade_rollouts(
             source_indices=source_index_filter,
             flush_every=flush_every,
             max_workers=max_workers,
+            continue_on_error=continue_on_error,
         )
         console.print(
             "[green]Graded rollout file[/green] "
@@ -628,6 +636,32 @@ def grade_rollouts(
             f"skipped={summary.skipped_items} "
             f"path={summary.output_path}"
         )
+
+
+@app.command("merge-rollouts")
+def merge_rollouts(
+    paths: list[Path] = typer.Argument(..., help="Shard rollout JSON files to merge."),
+    output_path: Path = typer.Option(..., "--output-path", "-o", help="Final rollout JSON path."),
+    no_existing_output: bool = typer.Option(
+        False,
+        "--no-existing-output",
+        help="Do not merge an existing output path before writing the merged file.",
+    ),
+) -> None:
+    """Merge sharded rollout JSON files into one normal rollout file."""
+
+    summary = merge_rollout_files(
+        paths,
+        output_path=output_path,
+        include_existing_output=not no_existing_output,
+    )
+    console.print(
+        "[green]Merged rollout shards[/green] "
+        f"task={summary.task} "
+        f"examples={summary.merged_examples} "
+        f"duplicates={summary.duplicate_examples} "
+        f"path={summary.output_path}"
+    )
 
 
 @app.command("run-qwen-sweep")
@@ -672,6 +706,10 @@ def run_qwen_sweep(
     structured_outputs: bool = typer.Option(DEFAULT_JUDGE_CONFIG.structured_outputs),
     require_structured_outputs: bool = typer.Option(DEFAULT_JUDGE_CONFIG.require_structured_outputs),
     grading_flush_every: int = typer.Option(DEFAULT_ROLLOUT_GRADING_FLUSH_EVERY, min=1),
+    continue_on_error: bool = typer.Option(
+        False,
+        help="Keep roleplaying judging running when one judge item fails.",
+    ),
     mock_response: str | None = typer.Option(
         None,
         help="Testing hook: use this literal judge response instead of calling OpenRouter.",
@@ -784,6 +822,7 @@ def run_qwen_sweep(
             source_indices=source_indices_by_task[task],
             flush_every=grading_flush_every,
             max_workers=max_workers,
+            continue_on_error=continue_on_error,
         )
         console.print(
             "[green]Graded rollout file[/green] "

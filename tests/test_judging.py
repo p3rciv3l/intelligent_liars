@@ -421,6 +421,62 @@ def test_roleplaying_grading_flushes_completed_work_on_later_failure(tmp_path, m
     assert payload["rollouts"][1]["graded_deception"] == ["unknown"]
 
 
+def test_roleplaying_grading_can_continue_on_item_failure(tmp_path, monkeypatch):
+    rollout_path = tmp_path / "data" / "rollouts" / "roleplaying__plain__qwen3-vl-8b-thinking.json"
+    rollout_path.parent.mkdir(parents=True)
+    records = []
+    for idx in range(2):
+        records.append(
+            {
+                "input_messages": [{"role": "user", "content": f"Question {idx}", "detect": False}],
+                "output_messages": [{"role": "assistant", "content": f"Answer {idx}", "detect": True}],
+                "output_strs": [f"Answer {idx}"],
+                "graded_deception": ["unknown"],
+                "grader_reasoning": [None],
+                "metadata": {"scenario": f"Scenario {idx}", "question": f"Question {idx}"},
+            }
+        )
+    rollout_path.write_text(
+        json.dumps(
+            {
+                "base_name": "roleplaying",
+                "variant": "plain",
+                "model": "qwen3-vl-8b-thinking",
+                "rollouts": records,
+            }
+        )
+    )
+    calls = 0
+
+    def fake_grade_roleplaying_output(*args, **kwargs):
+        nonlocal calls
+        del args, kwargs
+        calls += 1
+        if calls == 1:
+            raise RuntimeError("bad judge item")
+        return 7, "second ok"
+
+    monkeypatch.setattr(
+        "intelligent_liars.judging._grade_roleplaying_output",
+        fake_grade_roleplaying_output,
+    )
+
+    summary = grade_rollout_file(
+        rollout_path,
+        project_root=tmp_path,
+        config=JudgeConfig(structured_outputs=False),
+        max_workers=1,
+        flush_every=1,
+        continue_on_error=True,
+    )
+
+    payload = json.loads(rollout_path.read_text())
+    assert summary.graded_items == 2
+    assert payload["rollouts"][0]["graded_deception"] == ["skip"]
+    assert "bad judge item" in payload["rollouts"][0]["grader_reasoning"][0]
+    assert payload["rollouts"][1]["graded_deception"] == [7]
+
+
 def test_grade_roleplaying_rollout_file_prefers_structured_judge_output(tmp_path, monkeypatch):
     template_dir = tmp_path / "data" / "roleplaying"
     template_dir.mkdir(parents=True)

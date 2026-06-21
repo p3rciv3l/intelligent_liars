@@ -359,16 +359,11 @@ def grade_single_dialogue_for_deception(
     except Exception as exc:
         raise RuntimeError(f"Could not build grading prompt: {exc}") from exc
 
-    try:
-        response_text = call_judge(
-            system_prompt=prompt.get("system"),
-            user_prompt=prompt["user"],
-            config=config,
-        )
-    except Exception as exc:
-        raise RuntimeError(f"Grader API error: {exc}") from exc
-
-    return _parse_required_judgement(response_text)
+    return _run_tagged_judge(
+        system_prompt=prompt.get("system"),
+        user_prompt=prompt["user"],
+        config=config,
+    )
 
 
 def grade_rollout_file(
@@ -384,6 +379,7 @@ def grade_rollout_file(
     source_indices: set[int] | None = None,
     flush_every: int = DEFAULT_ROLLOUT_GRADING_FLUSH_EVERY,
     max_workers: int = DEFAULT_ROLLOUT_GRADING_MAX_WORKERS,
+    continue_on_error: bool = False,
 ) -> GradingSummary:
     """Grade a Truth Spec-style rollout JSON file in-place by default."""
     input_path = input_path.resolve()
@@ -406,6 +402,7 @@ def grade_rollout_file(
             source_indices=source_indices,
             flush_every=flush_every,
             max_workers=max_workers,
+            continue_on_error=continue_on_error,
         )
     elif base == "sandbagging_v2":
         summary = _grade_sandbagging_rollout_data(
@@ -483,16 +480,38 @@ def grade_roleplaying_dialogue(
             if config.require_structured_outputs:
                 raise RuntimeError(f"Structured grader error: {exc}") from exc
 
-    try:
-        response_text = call_judge(
-            system_prompt=prompt.get("system"),
-            user_prompt=prompt["user"],
-            config=config,
-        )
-    except Exception as exc:
-        raise RuntimeError(f"Grader API error: {exc}") from exc
+    return _run_tagged_judge(
+        system_prompt=prompt.get("system"),
+        user_prompt=prompt["user"],
+        config=config,
+    )
 
-    return _parse_required_judgement(response_text)
+
+def _run_tagged_judge(
+    *,
+    system_prompt: str | None,
+    user_prompt: str,
+    config: JudgeConfig,
+) -> tuple[Judgement, str]:
+    """Call a `<judgement>` grader and retry malformed judge text."""
+
+    last_error: Exception | None = None
+    for attempt in range(config.max_retries):
+        try:
+            response_text = call_judge(
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
+                config=config,
+            )
+        except Exception as exc:
+            raise RuntimeError(f"Grader API error: {exc}") from exc
+        try:
+            return _parse_required_judgement(response_text)
+        except ValueError as exc:
+            last_error = exc
+            if attempt < config.max_retries - 1:
+                logger.warning("Judge parse error on attempt %s: %s", attempt, exc.__class__.__name__)
+    raise ValueError(f"Invalid tagged judge response after retries: {last_error}") from last_error
 
 
 def extract_tag_content(message: str, tag: str) -> str | None:
@@ -793,6 +812,7 @@ def _grade_roleplaying_rollout_data(
     source_indices: set[int] | None,
     flush_every: int,
     max_workers: int,
+    continue_on_error: bool,
 ) -> GradingSummary:
     records = data.get("rollouts", [])
     selected_indices = _selected_rollout_record_indices(records, start=start, limit=limit, source_indices=source_indices)
@@ -812,6 +832,7 @@ def _grade_roleplaying_rollout_data(
         return GradingSummary(task, input_path, output_path, 0, 0, skipped)
 
     completed = 0
+    failed = 0
     workers = max(max_workers, 1)
     data["grading_metadata"] = {
         "provider": config.provider,
@@ -838,9 +859,13 @@ def _grade_roleplaying_rollout_data(
                     try:
                         judgement, reasoning = future.result()
                     except Exception as exc:  # pragma: no cover - defensive diagnostic
-                        raise RuntimeError(
-                            f"Roleplaying judge failed for record {record_idx} output {output_idx}: {exc}"
-                        ) from exc
+                        if not continue_on_error:
+                            raise RuntimeError(
+                                f"Roleplaying judge failed for record {record_idx} output {output_idx}: {exc}"
+                            ) from exc
+                        judgement = "skip"
+                        reasoning = f"judge_error: {exc}"
+                        failed += 1
 
                     record = records[record_idx]
                     record["graded_deception"][output_idx] = judgement
@@ -850,7 +875,9 @@ def _grade_roleplaying_rollout_data(
                     progress.update(1)
                     if completed % max(flush_every, 1) == 0:
                         write_json_atomic(output_path, data)
-                        progress.set_postfix_str(f"flushed={completed} skipped={skipped}")
+                        progress.set_postfix_str(
+                            f"flushed={completed} skipped={skipped} failed={failed}"
+                        )
     except Exception:
         if completed:
             write_json_atomic(output_path, data)

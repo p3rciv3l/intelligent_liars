@@ -12,6 +12,7 @@ from intelligent_liars.rollouts import (
     generate_rollout_task,
     load_rollout_prompt_set_examples,
     load_roleplaying_prompt_examples,
+    merge_rollout_files,
     pending_rollout_source_indices,
     split_qwen_thinking,
     _generation_kwargs,
@@ -300,3 +301,43 @@ def test_generate_rollout_task_writes_and_resumes(tmp_path, monkeypatch):
     assert "flush_every" not in payload["run_metadata"]["generation_settings"]
     assert len(payload["rollouts"]) == 2
     assert payload["rollouts"][0]["graded_deception"] == ["unknown"]
+
+
+def test_merge_rollout_files_dedupes_and_keeps_more_graded_record(tmp_path):
+    base_payload = {
+        "dataset_class": "qwen_generated_rollout",
+        "base_name": "roleplaying",
+        "variant": "plain",
+        "model": "qwen3-vl-8b-thinking",
+        "model_id": DEFAULT_MODEL_ID,
+        "run_metadata": {"task": "roleplaying__plain"},
+        "rollouts": [],
+    }
+
+    def record(source_index: int, grade):
+        return {
+            "input_messages": [],
+            "output_messages": [{"role": "assistant", "content": f"answer {source_index}"}],
+            "output_strs": [f"answer {source_index}"],
+            "graded_deception": [grade],
+            "grader_reasoning": [None if grade == "unknown" else "graded"],
+            "metadata": {"source_index": source_index},
+        }
+
+    shard_a = tmp_path / "shard-a.json"
+    shard_b = tmp_path / "shard-b.json"
+    output_path = tmp_path / "merged.json"
+    payload_a = dict(base_payload)
+    payload_a["rollouts"] = [record(0, "unknown"), record(1, "unknown")]
+    payload_b = dict(base_payload)
+    payload_b["rollouts"] = [record(1, 7), record(2, "unknown")]
+    shard_a.write_text(json.dumps(payload_a))
+    shard_b.write_text(json.dumps(payload_b))
+
+    summary = merge_rollout_files([shard_a, shard_b], output_path=output_path)
+
+    merged = json.loads(output_path.read_text())
+    assert summary.merged_examples == 3
+    assert summary.duplicate_examples == 1
+    assert [row["metadata"]["source_index"] for row in merged["rollouts"]] == [0, 1, 2]
+    assert merged["rollouts"][1]["graded_deception"] == [7]

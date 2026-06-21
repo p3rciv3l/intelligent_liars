@@ -112,6 +112,16 @@ class GenerationSummary:
 
 
 @dataclass(frozen=True)
+class MergeSummary:
+    """Counts for merging rollout shards into one resumable rollout file."""
+
+    task: str
+    output_path: Path
+    merged_examples: int
+    duplicate_examples: int
+
+
+@dataclass(frozen=True)
 class GeneratedCompletion:
     """Decoded Qwen completion split into hidden thinking and final answer."""
 
@@ -565,6 +575,72 @@ def pending_rollout_source_indices(
     return selected_indices - _existing_rollout_source_indices(output_data)
 
 
+def merge_rollout_files(
+    paths: Sequence[Path],
+    *,
+    output_path: Path,
+    include_existing_output: bool = True,
+) -> MergeSummary:
+    """Merge non-overlapping rollout shard JSON files into one rollout file.
+
+    Args:
+        paths: Shard JSON files produced by `generate-rollouts`.
+        output_path: Final rollout JSON path to write.
+        include_existing_output: When true, an existing `output_path` is also
+            read and merged. This preserves copied partial work and already
+            graded rows when adding new shards.
+
+    Returns:
+        Merge counts. Duplicated source indices keep the record with the most
+        populated grades, so merging generated shards into a partially graded
+        final file does not discard judging work.
+    """
+
+    input_paths = [Path(path).resolve() for path in paths]
+    output_path = output_path.resolve()
+    if include_existing_output and output_path.exists() and output_path not in input_paths:
+        input_paths.insert(0, output_path)
+    if not input_paths:
+        raise ValueError("At least one rollout shard path is required.")
+
+    merged_data: dict[str, Any] | None = None
+    records_by_source_index: dict[int, dict[str, Any]] = {}
+    duplicates = 0
+    for path in input_paths:
+        data = json.loads(path.read_text())
+        if not isinstance(data, dict):
+            raise ValueError(f"Rollout shard must contain a JSON object: {path}")
+        if merged_data is None:
+            merged_data = _rollout_payload_without_records(data)
+        else:
+            _validate_merge_compatible(path, data, merged_data)
+
+        for record in data.get("rollouts", []):
+            source_index = _rollout_record_source_index(record, path)
+            existing = records_by_source_index.get(source_index)
+            if existing is not None:
+                duplicates += 1
+                record = _choose_rollout_record(existing, record)
+            records_by_source_index[source_index] = record
+
+    if merged_data is None:
+        raise ValueError("No rollout shard data was loaded.")
+
+    merged_data["rollouts"] = [
+        records_by_source_index[source_index]
+        for source_index in sorted(records_by_source_index)
+    ]
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    write_json_atomic(output_path, merged_data)
+    task = f"{merged_data.get('base_name')}__{merged_data.get('variant')}"
+    return MergeSummary(
+        task=task,
+        output_path=output_path,
+        merged_examples=len(records_by_source_index),
+        duplicate_examples=duplicates,
+    )
+
+
 def generation_content_settings(settings: GenerationSettings) -> dict[str, Any]:
     """Return generation settings that can affect model outputs."""
 
@@ -603,6 +679,42 @@ def _validate_rollout_resume_metadata(
             f"Existing rollout file was produced with different run metadata: {output_path}. "
             "Use --overwrite to regenerate it."
         )
+
+
+def _rollout_payload_without_records(data: dict[str, Any]) -> dict[str, Any]:
+    payload = dict(data)
+    payload["rollouts"] = []
+    return payload
+
+
+def _validate_merge_compatible(path: Path, data: dict[str, Any], expected: dict[str, Any]) -> None:
+    for key in ("dataset_class", "base_name", "variant", "model", "model_id", "run_metadata"):
+        if data.get(key) != expected.get(key):
+            raise ValueError(
+                f"Rollout shard metadata key {key!r} differs for {path}. "
+                "Only shards from the same task/model/settings can be merged."
+            )
+
+
+def _rollout_record_source_index(record: dict[str, Any], path: Path) -> int:
+    source_index = record.get("metadata", {}).get("source_index")
+    if source_index is None:
+        raise ValueError(f"Rollout record missing metadata.source_index in {path}")
+    return int(source_index)
+
+
+def _choose_rollout_record(existing: dict[str, Any], candidate: dict[str, Any]) -> dict[str, Any]:
+    if _graded_output_count(candidate) > _graded_output_count(existing):
+        return candidate
+    return existing
+
+
+def _graded_output_count(record: dict[str, Any]) -> int:
+    return sum(
+        1
+        for value in record.get("graded_deception", [])
+        if not (value is None or (isinstance(value, str) and value.lower() in {"", "unknown"}))
+    )
 
 
 def _sha256_file(path: Path) -> str | None:
