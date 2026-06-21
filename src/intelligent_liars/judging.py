@@ -20,6 +20,7 @@ from intelligent_liars.clients.openrouter_client import (
     fetch_openrouter_model_endpoint_metadata,
     get_model_client,
 )
+from intelligent_liars.progress import progress_bar
 from intelligent_liars.rollouts import parse_task_name, write_json_atomic
 
 
@@ -829,22 +830,27 @@ def _grade_roleplaying_rollout_data(
                 ): (record_idx, output_idx)
                 for record_idx, output_idx in jobs
             }
-            for future in as_completed(future_to_job):
-                record_idx, output_idx = future_to_job[future]
-                try:
-                    judgement, reasoning = future.result()
-                except Exception as exc:  # pragma: no cover - defensive diagnostic
-                    raise RuntimeError(
-                        f"Roleplaying judge failed for record {record_idx} output {output_idx}: {exc}"
-                    ) from exc
+            with progress_bar(total=len(jobs), desc=f"judge {task}", unit="output") as progress:
+                if skipped:
+                    progress.set_postfix_str(f"skipped={skipped}")
+                for future in as_completed(future_to_job):
+                    record_idx, output_idx = future_to_job[future]
+                    try:
+                        judgement, reasoning = future.result()
+                    except Exception as exc:  # pragma: no cover - defensive diagnostic
+                        raise RuntimeError(
+                            f"Roleplaying judge failed for record {record_idx} output {output_idx}: {exc}"
+                        ) from exc
 
-                record = records[record_idx]
-                record["graded_deception"][output_idx] = judgement
-                record["grader_reasoning"][output_idx] = reasoning
-                _set_deception_percentage(record)
-                completed += 1
-                if completed % max(flush_every, 1) == 0:
-                    write_json_atomic(output_path, data)
+                    record = records[record_idx]
+                    record["graded_deception"][output_idx] = judgement
+                    record["grader_reasoning"][output_idx] = reasoning
+                    _set_deception_percentage(record)
+                    completed += 1
+                    progress.update(1)
+                    if completed % max(flush_every, 1) == 0:
+                        write_json_atomic(output_path, data)
+                        progress.set_postfix_str(f"flushed={completed} skipped={skipped}")
     except Exception:
         if completed:
             write_json_atomic(output_path, data)
@@ -892,23 +898,27 @@ def _grade_sandbagging_rollout_data(
     skipped = 0
     reasoning = "Computed from Apollo SandbaggingV2Dataset.label_response"
 
-    for record_idx in selected_indices:
-        record = records[record_idx]
-        _ensure_output_grading_lists(record)
-        labels: list[str] = []
-        reasonings: list[str | None] = []
-        for output_idx, output_str in enumerate(record["output_strs"]):
-            if not overwrite and not _is_ungraded(record["graded_deception"][output_idx]):
-                labels.append(record["graded_deception"][output_idx])
-                reasonings.append(record["grader_reasoning"][output_idx])
-                skipped += 1
-                continue
-            labels.append(label_sandbagging_response(str(output_str)))
-            reasonings.append(reasoning)
-            graded += 1
-        record["graded_deception"] = labels
-        record["grader_reasoning"] = reasonings
-        _set_deception_percentage(record)
+    with progress_bar(total=len(selected_indices), desc=f"parse {task}", unit="record") as progress:
+        for record_idx in selected_indices:
+            record = records[record_idx]
+            _ensure_output_grading_lists(record)
+            labels: list[str] = []
+            reasonings: list[str | None] = []
+            for output_idx, output_str in enumerate(record["output_strs"]):
+                if not overwrite and not _is_ungraded(record["graded_deception"][output_idx]):
+                    labels.append(record["graded_deception"][output_idx])
+                    reasonings.append(record["grader_reasoning"][output_idx])
+                    skipped += 1
+                    continue
+                labels.append(label_sandbagging_response(str(output_str)))
+                reasonings.append(reasoning)
+                graded += 1
+            record["graded_deception"] = labels
+            record["grader_reasoning"] = reasonings
+            _set_deception_percentage(record)
+            progress.update(1)
+        if skipped:
+            progress.set_postfix_str(f"graded={graded} skipped={skipped}")
 
     data["grading_metadata"] = {
         "provider": "deterministic",

@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any, Iterable, Sequence, TypeVar
 
 from intelligent_liars.models import DEFAULT_MODEL_ID, ModelBundle
+from intelligent_liars.progress import progress_bar
 
 
 MODEL_SLUG = "qwen3-vl-8b-thinking"
@@ -440,23 +441,28 @@ def generate_rollout_task(
         )
     generated = 0
 
-    for batch in _chunks(pending, settings.batch_size):
-        completions = generate_completions(
-            bundle=bundle,
-            conversations=[example.input_messages for example in batch],
-            settings=settings,
-        )
-        for example, completion in zip(batch, completions, strict=True):
-            output_data["rollouts"].append(
-                build_rollout_record(
-                    example=example,
-                    completion=completion,
-                    generation_settings=settings,
-                )
+    with progress_bar(total=len(pending), desc=f"qwen {task}", unit="completion") as progress:
+        if skipped := len(selected_examples) - len(pending):
+            progress.set_postfix_str(f"skipped={skipped}")
+        for batch in _chunks(pending, settings.batch_size):
+            completions = generate_completions(
+                bundle=bundle,
+                conversations=[example.input_messages for example in batch],
+                settings=settings,
             )
-            generated += 1
-        if generated % settings.flush_every == 0:
-            write_json_atomic(output_path, output_data)
+            for example, completion in zip(batch, completions, strict=True):
+                output_data["rollouts"].append(
+                    build_rollout_record(
+                        example=example,
+                        completion=completion,
+                        generation_settings=settings,
+                    )
+                )
+                generated += 1
+            progress.update(len(batch))
+            if generated % settings.flush_every == 0:
+                write_json_atomic(output_path, output_data)
+                progress.set_postfix_str(f"flushed={generated}")
 
     write_json_atomic(output_path, output_data)
     return GenerationSummary(
