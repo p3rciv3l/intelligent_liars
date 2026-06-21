@@ -52,6 +52,7 @@ data/internal_state/*
 results/
 artifacts/
 checkpoints/
+lessons/
 models/
 wandb/
 .cache/
