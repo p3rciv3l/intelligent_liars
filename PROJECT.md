@@ -148,9 +148,13 @@ Current default:
 - Use one verified GPU unless a later workload proves multi-GPU is necessary.
 - H100 80GB is the safe first full-run choice; A100 80GB or L40S may be cheaper if they pass the smoke run.
 - Use `pytorch/pytorch:2.12.0-cuda13.0-cudnn9-devel`.
+- Do not run Qwen3-VL on a 16 GB container filesystem with the default Hugging Face cache. The model weights do not fit next to the project `.venv`; either rent enough disk up front or put the cache on a larger mount. On Vast images where `/workspace` is not a volume but `/dev/shm` is large, run with `HF_HOME=/dev/shm/hf_home TMPDIR=/dev/shm/tmp HF_HUB_DISABLE_XET=1`.
+- Install the Qwen runtime extras in the project `.venv` before the model smoke test: `uv pip install torchvision --index-url https://download.pytorch.org/whl/cu130` and `uv pip install decord`. Verify `torch`, `torchvision`, `flash_attn`, and `flash_attn_2_cuda` still import after any torch/torchvision change.
 - If `flash-attn` must be built on an A100 instance, pin the FlashAttention CUDA architectures to avoid compiling unused H100 / newer-GPU kernels:
   `FLASH_ATTN_CUDA_ARCHS=80 MAX_JOBS=4 uv pip install flash-attn --no-build-isolation`.
   A100 is `sm_80`; remove or adjust this pin when building for a different GPU family.
+- Long cloud runs must be launched inside remote `tmux` or another detached remote runner. Local SSH, browser terminals, and Codex-side polling can disconnect when the Mac sleeps; the remote `tmux` job keeps running. Use `logs/cloud-autorun.status` for the latest heartbeat and `logs/cloud-autorun.latest.log` for full output.
+- For unattended rollout generation plus judging, sync `OPENROUTER_API_KEY` to the remote `.env`, start the remote runner with `POLL_SECONDS=60 JUDGE_MAX_WORKERS=50`, and confirm `tmux ls` shows `cloud_autorun`. The runner should wait for `flash-attn`, run `check-env --require-cuda --check-model --check-openrouter`, smoke generate, full generate, grade sandbagging, then grade roleplaying.
 - Clone the repo on the instance; do not upload the local checkout with `.env`, `.venv`, caches, or private references.
 - Fetch `data/rollouts/`, `data/insider_trading/*generations.json`, and `results/` before destroying the instance.
 
