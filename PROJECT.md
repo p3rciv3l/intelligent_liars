@@ -157,7 +157,7 @@ Current default:
 - For unattended rollout generation plus judging, sync `OPENROUTER_API_KEY` to the remote `.env`, start the remote runner with `POLL_SECONDS=60 JUDGE_MAX_WORKERS=50`, and confirm `tmux ls` shows `cloud_autorun`. The runner should wait for `flash-attn`, run `check-env --require-cuda --check-model --check-openrouter`, smoke generate, full generate, grade sandbagging, then grade roleplaying.
 - On multi-GPU instances, do not expect one `generate-rollouts` process to use every GPU. Use one Qwen worker per GPU with separate shard output directories, then merge. The checked-in helper is:
   `GPUS=0,1,2,3 BATCH_SIZE=2 FLUSH_EVERY=1 scripts/run_qwen_sharded_4gpu.sh`.
-  It writes shard logs to `logs/qwen-shard-*.log`, shard JSONs to `data/rollout_shards/`, and merged files to `data/rollouts/`.
+  It writes shard logs to `logs/qwen-shard-*.log`, shard JSONs to `data/rollout_shards/`, and merged files to `data/rollouts/`. Use `TASKS=sandbagging_v2__wmdp_mmlu` to skip already recovered roleplaying output.
 - Roleplaying judging is API/network-bound, not GPU-bound. After generation merge, run it separately with structured outputs and conservative concurrency, e.g. `uv run --no-sync intelligent-liars grade-rollouts -p data/rollouts/roleplaying__plain__qwen3-vl-8b-thinking.json --max-workers 10 --continue-on-error`. Sandbagging grading is deterministic and local.
 - Clone the repo on the instance; do not upload the local checkout with `.env`, `.venv`, caches, or private references.
 - Fetch `data/rollouts/`, `data/insider_trading/*generations.json`, and `results/` before destroying the instance.

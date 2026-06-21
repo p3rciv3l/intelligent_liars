@@ -7,6 +7,8 @@ mkdir -p logs data/rollout_shards data/rollouts
 
 GPUS_CSV="${GPUS:-0,1,2,3}"
 IFS=',' read -r -a GPUS_ARRAY <<< "$GPUS_CSV"
+TASKS_CSV="${TASKS:-roleplaying__plain,sandbagging_v2__wmdp_mmlu}"
+IFS=',' read -r -a TASKS_ARRAY <<< "$TASKS_CSV"
 SHARDS="${SHARDS:-${#GPUS_ARRAY[@]}}"
 BATCH_SIZE="${BATCH_SIZE:-2}"
 FLUSH_EVERY="${FLUSH_EVERY:-1}"
@@ -22,20 +24,18 @@ if [ "${#GPUS_ARRAY[@]}" -ne "$SHARDS" ]; then
 fi
 
 mapfile -t SHARD_LINES < <(
-  SHARDS="$SHARDS" PROMPT_SET="$PROMPT_SET" PYTHONPATH=src uv run --no-sync python - <<'PY'
+  SHARDS="$SHARDS" PROMPT_SET="$PROMPT_SET" TASKS="$TASKS_CSV" PYTHONPATH=src uv run --no-sync python - <<'PY'
 import os
 from pathlib import Path
-from intelligent_liars.rollouts import (
-    DEFAULT_ROLLOUT_TASKS,
-    load_rollout_prompt_examples,
-)
+from intelligent_liars.rollouts import load_rollout_prompt_examples
 
 project_root = Path(".").resolve()
 prompt_set = os.environ["PROMPT_SET"]
+tasks = [task for task in os.environ["TASKS"].split(",") if task]
 shards = int(os.environ["SHARDS"])
 total = max(
     len(load_rollout_prompt_examples(task, project_root=project_root, prompt_set=prompt_set))
-    for task in DEFAULT_ROLLOUT_TASKS
+    for task in tasks
 )
 for shard in range(shards):
     start = (total * shard) // shards
@@ -44,8 +44,13 @@ for shard in range(shards):
 PY
 )
 
-echo "starting ${SHARDS} qwen shards on GPUs ${GPUS_CSV}"
+echo "starting ${SHARDS} qwen shards on GPUs ${GPUS_CSV} tasks=${TASKS_CSV}"
 printf '%s\n' "${SHARD_LINES[@]}"
+
+task_args=()
+for task in "${TASKS_ARRAY[@]}"; do
+  task_args+=(--task "$task")
+done
 
 pids=()
 for line in "${SHARD_LINES[@]}"; do
@@ -60,6 +65,7 @@ for line in "${SHARD_LINES[@]}"; do
     export INTELLIGENT_LIARS_PROGRESS=1
     export PYTHONPATH=src
     uv run --no-sync intelligent-liars generate-rollouts \
+      "${task_args[@]}" \
       --batch-size "$BATCH_SIZE" \
       --flush-every "$FLUSH_EVERY" \
       --prompt-set "$PROMPT_SET" \
@@ -92,7 +98,7 @@ for pid in "${pids[@]}"; do
 done
 [ "$failed" -eq 0 ] || exit 1
 
-for task in roleplaying__plain sandbagging_v2__wmdp_mmlu; do
+for task in "${TASKS_ARRAY[@]}"; do
   mapfile -t files < <(find "$OUTPUT_ROOT" -maxdepth 2 -type f -name "${task}__*.json" | sort)
   if [ "${#files[@]}" -eq 0 ]; then
     echo "no shard files found for ${task}" >&2
