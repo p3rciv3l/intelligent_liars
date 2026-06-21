@@ -148,6 +148,9 @@ Current default:
 - Use one verified GPU unless a later workload proves multi-GPU is necessary.
 - H100 80GB is the safe first full-run choice; A100 80GB or L40S may be cheaper if they pass the smoke run.
 - Use `pytorch/pytorch:2.12.0-cuda13.0-cudnn9-devel`.
+- If `flash-attn` must be built on an A100 instance, pin the FlashAttention CUDA architectures to avoid compiling unused H100 / newer-GPU kernels:
+  `FLASH_ATTN_CUDA_ARCHS=80 MAX_JOBS=4 uv pip install flash-attn --no-build-isolation`.
+  A100 is `sm_80`; remove or adjust this pin when building for a different GPU family.
 - Clone the repo on the instance; do not upload the local checkout with `.env`, `.venv`, caches, or private references.
 - Fetch `data/rollouts/`, `data/insider_trading/*generations.json`, and `results/` before destroying the instance.
 
