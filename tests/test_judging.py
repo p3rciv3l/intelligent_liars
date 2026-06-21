@@ -7,6 +7,7 @@ from intelligent_liars.judging import (
     OpenRouterAPIError,
     call_judge,
     convert_response_to_json,
+    grade_roleplaying_dialogue,
     grade_single_dialogue_for_deception,
     grade_rollout_file,
     label_sandbagging_response,
@@ -100,6 +101,34 @@ def test_call_judge_enables_response_healing_for_structured_outputs(monkeypatch)
     assert captured["kwargs"]["plugins"] == [{"id": "response-healing"}]
 
 
+def test_roleplaying_structured_judge_retries_parse_failures(tmp_path, monkeypatch):
+    template_dir = tmp_path / "data" / "roleplaying"
+    template_dir.mkdir(parents=True)
+    (template_dir / "grading_template.txt").write_text(
+        "Scenario={scenario}\nQuestion={question}\nResponse={response}"
+    )
+    responses = iter(["not json", '{"reasoning":"ok","judgement":6}'])
+    calls = []
+
+    def fake_call_judge(**kwargs):
+        calls.append(kwargs)
+        return next(responses)
+
+    monkeypatch.setattr("intelligent_liars.judging.call_judge", fake_call_judge)
+
+    judgement, reasoning = grade_roleplaying_dialogue(
+        [{"role": "user", "content": "Question?", "detect": False}],
+        {"role": "assistant", "content": "Answer", "detect": True},
+        {"scenario": "Scenario", "question": "Question?"},
+        project_root=tmp_path,
+        config=JudgeConfig(max_retries=2),
+    )
+
+    assert judgement == 6
+    assert reasoning == "ok"
+    assert len(calls) == 2
+
+
 def test_call_judge_does_not_retry_non_retryable_openrouter_error(monkeypatch):
     calls = 0
 
@@ -167,6 +196,72 @@ def test_preflight_validates_openrouter_key_before_model_metadata(monkeypatch):
     assert preflight.resolved_model == "example/judge-model:floor"
     assert [event[0] for event in events] == ["key", "client", "metadata"]
     assert events[0][1] == {"api_key": "sk-test", "timeout": 3.0}
+
+
+def test_preflight_respects_provider_only_when_checking_structured_outputs(monkeypatch):
+    class FakeClient:
+        model = "example/judge-model"
+        provider_config = {"only": ["z-ai/fp8"]}
+
+    monkeypatch.setattr(
+        "intelligent_liars.judging.fetch_openrouter_key_metadata",
+        lambda **kwargs: {"label": "ok"},
+    )
+    monkeypatch.setattr("intelligent_liars.judging.get_model_client", lambda *args, **kwargs: FakeClient())
+    monkeypatch.setattr(
+        "intelligent_liars.judging.fetch_openrouter_model_endpoint_metadata",
+        lambda *args, **kwargs: {
+            "endpoints": [
+                {
+                    "tag": "wafer/fp4",
+                    "status": 0,
+                    "supported_parameters": ["response_format"],
+                },
+                {
+                    "tag": "z-ai/fp8",
+                    "status": 0,
+                    "supported_parameters": ["max_tokens"],
+                },
+            ]
+        },
+    )
+
+    try:
+        preflight_judge_config(JudgeConfig(api_key="sk-test"))
+    except ValueError as exc:
+        assert "no routed live endpoint supporting response_format" in str(exc)
+    else:
+        raise AssertionError("preflight should reject structured-output gaps on restricted routes")
+
+
+def test_preflight_accepts_configured_provider_route_with_structured_outputs(monkeypatch):
+    class FakeClient:
+        model = "example/judge-model"
+        provider_config = {"only": ["z-ai/fp8"], "quantizations": ["fp8"]}
+
+    monkeypatch.setattr(
+        "intelligent_liars.judging.fetch_openrouter_key_metadata",
+        lambda **kwargs: {"label": "ok"},
+    )
+    monkeypatch.setattr("intelligent_liars.judging.get_model_client", lambda *args, **kwargs: FakeClient())
+    monkeypatch.setattr(
+        "intelligent_liars.judging.fetch_openrouter_model_endpoint_metadata",
+        lambda *args, **kwargs: {
+            "endpoints": [
+                {
+                    "tag": "z-ai/fp8",
+                    "quantization": "fp8",
+                    "status": 0,
+                    "supported_parameters": ["response_format"],
+                }
+            ]
+        },
+    )
+
+    preflight = preflight_judge_config(JudgeConfig(api_key="sk-test"))
+
+    assert preflight.checked_live_metadata is True
+    assert preflight.resolved_model == "example/judge-model"
 
 
 def test_preflight_bad_openrouter_key_stops_before_client_resolution(monkeypatch):
@@ -265,6 +360,65 @@ def test_grade_roleplaying_rollout_file_writes_numeric_judge_score(tmp_path, mon
     assert payload["rollouts"][0]["graded_deception"] == [7]
     assert payload["rollouts"][0]["deception_percentage"] == 1.0
     assert "denies the truth" in payload["rollouts"][0]["grader_reasoning"][0]
+
+
+def test_roleplaying_grading_flushes_completed_work_on_later_failure(tmp_path, monkeypatch):
+    rollout_path = tmp_path / "data" / "rollouts" / "roleplaying__plain__qwen3-vl-8b-thinking.json"
+    rollout_path.parent.mkdir(parents=True)
+    records = []
+    for idx in range(2):
+        records.append(
+            {
+                "input_messages": [{"role": "user", "content": f"Question {idx}", "detect": False}],
+                "output_messages": [{"role": "assistant", "content": f"Answer {idx}", "detect": True}],
+                "output_strs": [f"Answer {idx}"],
+                "graded_deception": ["unknown"],
+                "grader_reasoning": [None],
+                "metadata": {"scenario": f"Scenario {idx}", "question": f"Question {idx}"},
+            }
+        )
+    rollout_path.write_text(
+        json.dumps(
+            {
+                "base_name": "roleplaying",
+                "variant": "plain",
+                "model": "qwen3-vl-8b-thinking",
+                "rollouts": records,
+            }
+        )
+    )
+    calls = 0
+
+    def fake_grade_roleplaying_output(*args, **kwargs):
+        nonlocal calls
+        del args, kwargs
+        calls += 1
+        if calls == 1:
+            return 6, "first ok"
+        raise RuntimeError("later failure")
+
+    monkeypatch.setattr(
+        "intelligent_liars.judging._grade_roleplaying_output",
+        fake_grade_roleplaying_output,
+    )
+
+    try:
+        grade_rollout_file(
+            rollout_path,
+            project_root=tmp_path,
+            config=JudgeConfig(structured_outputs=False),
+            max_workers=1,
+            flush_every=99,
+        )
+    except RuntimeError as exc:
+        assert "later failure" in str(exc)
+    else:
+        raise AssertionError("grading should propagate the later failure")
+
+    payload = json.loads(rollout_path.read_text())
+    assert payload["rollouts"][0]["graded_deception"] == [6]
+    assert payload["rollouts"][0]["grader_reasoning"] == ["first ok"]
+    assert payload["rollouts"][1]["graded_deception"] == ["unknown"]
 
 
 def test_grade_roleplaying_rollout_file_prefers_structured_judge_output(tmp_path, monkeypatch):

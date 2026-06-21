@@ -15,38 +15,61 @@ cp .env.example .env
 uv run --no-sync intelligent-liars check-env
 ```
 
-On the A100 80GB or H100 box:
+On the GPU box:
 
 ```bash
-git clone git@github.com:p3rciv3l/intelligent_liars.git
+python -m pip install --user -U uv
+export PATH="$HOME/.local/bin:$PATH"
+git clone https://github.com/p3rciv3l/intelligent_liars.git
 cd intelligent_liars
 uv sync --frozen --no-editable
+uv pip install ninja packaging psutil
 uv pip install flash-attn --no-build-isolation
 cp .env.example .env
 # edit .env and set OPENROUTER_API_KEY; set HF_TOKEN only if model download requires it
 uv run --no-sync intelligent-liars check-env --require-cuda --check-openrouter
 ```
 
-If you rent the GPU through Vast.ai, use an image with CUDA, Python 3.11, and a
-recent PyTorch-compatible driver. The operational checklist is:
+If you rent the GPU through Vast.ai, use
+`pytorch/pytorch:2.12.0-cuda13.0-cudnn9-devel`. That image matches the locked
+Torch 2.12 / CUDA 13 stack and includes the CUDA toolkit needed to build
+`flash-attn`. The operational checklist is:
 
 ```bash
 # on the remote instance
-git clone git@github.com:p3rciv3l/intelligent_liars.git
+python -m pip install --user -U uv
+export PATH="$HOME/.local/bin:$PATH"
+git clone https://github.com/p3rciv3l/intelligent_liars.git
 cd intelligent_liars
 uv sync --frozen --dev --no-editable
-uv pip install flash-attn --no-build-isolation
+uv pip install ninja packaging psutil
+ninja --version
+uv run --no-sync python - <<'PY'
+import torch
+print("torch", torch.__version__, "cuda", torch.version.cuda, "available", torch.cuda.is_available())
+print("device", torch.cuda.get_device_name(0) if torch.cuda.is_available() else "none")
+PY
+MAX_JOBS=${MAX_JOBS:-4} uv pip install flash-attn --no-build-isolation
+uv run --no-sync python -c "import flash_attn; print(flash_attn.__version__)"
 cp .env.example .env
 # set OPENROUTER_API_KEY in .env or the shell; set HF_TOKEN only if needed
 uv run --no-sync intelligent-liars check-env --require-cuda --check-openrouter --check-model
-uv run --no-sync intelligent-liars run-qwen-sweep --batch-size 1 --max-new-tokens 512
-uv run --no-sync intelligent-liars run-insider-trading-sweep --samples-per-prompt 1 --max-new-tokens 512
+uv run --no-sync intelligent-liars run-qwen-sweep --limit 2 --batch-size 1 --max-new-tokens 512 --output-dir data/smoke_rollouts
+uv run --no-sync intelligent-liars run-qwen-sweep --batch-size 1
+uv run --no-sync intelligent-liars run-insider-trading-sweep --samples-per-prompt 1
 
 # from your local machine, fetch artifacts before destroying the instance
-rsync -avP remote:/path/to/intelligent_liars/data/rollouts/ ./data/rollouts/
-rsync -avP remote:/path/to/intelligent_liars/data/insider_trading/*generations.json ./data/insider_trading/
-rsync -avP remote:/path/to/intelligent_liars/results/ ./results/
+export VAST_HOST="root@<host>"
+export VAST_SSH_PORT="<port>"
+export REMOTE_REPO="/workspace/intelligent_liars"
+rsync -avP -e "ssh -p $VAST_SSH_PORT" "$VAST_HOST:$REMOTE_REPO/data/rollouts/" ./data/rollouts/
+rsync -avP -e "ssh -p $VAST_SSH_PORT" "$VAST_HOST:$REMOTE_REPO/data/insider_trading/"*generations.json ./data/insider_trading/
+rsync -avP -e "ssh -p $VAST_SSH_PORT" "$VAST_HOST:$REMOTE_REPO/results/" ./results/
 ```
+
+Use the clone-first flow above rather than copying a local checkout to the
+instance. That avoids uploading `.env`, `.venv`, local caches, and private
+reference repos. If you intentionally sync local files, exclude those paths.
 
 After artifacts are copied off the box, stop or destroy the Vast instance from
 the Vast dashboard or CLI so it does not keep billing.
@@ -79,10 +102,14 @@ load path and writes resumable Truth Spec-compatible JSON.
 For the default generated-rollout tasks and OpenRouter grading in one sweep:
 
 ```bash
-uv run --no-sync intelligent-liars run-qwen-sweep \
-  --batch-size 1 \
-  --max-new-tokens 512
+uv run --no-sync intelligent-liars run-qwen-sweep --batch-size 1
 ```
+
+The default Qwen3-VL Thinking generation settings follow the model card:
+sampling enabled, `temperature=1.0`, `top_p=0.95`, `top_k=20`, and
+`max_new_tokens=40960`. Use `--limit 2 --max-new-tokens 512 --output-dir
+data/smoke_rollouts` only for a smoke test before a full run, so the short
+smoke metadata does not block resuming the full rollout files.
 
 Outputs:
 
@@ -109,9 +136,7 @@ before Qwen generation.
 To run generation and grading as separate steps instead:
 
 ```bash
-uv run --no-sync intelligent-liars generate-rollouts \
-  --batch-size 1 \
-  --max-new-tokens 512
+uv run --no-sync intelligent-liars generate-rollouts --batch-size 1
 uv run --no-sync intelligent-liars grade-rollouts
 ```
 
@@ -151,8 +176,7 @@ For insider trading transcripts:
 
 ```bash
 uv run --no-sync intelligent-liars run-insider-trading-sweep \
-  --samples-per-prompt 1 \
-  --max-new-tokens 512
+  --samples-per-prompt 1
 ```
 
 Output:
@@ -168,7 +192,6 @@ prompts on the generated file. To run generation and grading as separate steps:
 ```bash
 uv run --no-sync intelligent-liars generate-insider-trading \
   --samples-per-prompt 1 \
-  --max-new-tokens 512 \
   --label-mode unknown
 uv run --no-sync intelligent-liars grade-insider-trading
 ```

@@ -195,7 +195,7 @@ def test_run_insider_trading_sweep_preflights_before_qwen_load(tmp_path, monkeyp
     (prompt_dir / "default.yaml").write_text("messages: []\n")
 
     def fake_preflight(config):
-        del config
+        assert config.model_config_path == tmp_path / "model_deployments.yaml"
         events.append("preflight")
         return JudgePreflight(
             provider="openrouter",
@@ -275,7 +275,7 @@ def test_run_qwen_sweep_preloads_prompts_and_grades_source_indices(tmp_path, mon
         return examples
 
     def fake_preflight(config):
-        del config
+        assert config.model_config_path == tmp_path / "model_deployments.yaml"
         assert events == ["load_prompts"]
         events.append("preflight")
         return JudgePreflight(
@@ -350,6 +350,274 @@ def test_run_qwen_sweep_preloads_prompts_and_grades_source_indices(tmp_path, mon
 
     assert result.exit_code == 0, result.output
     assert events == ["load_prompts", "preflight", "load_model", "generate", "grade"]
+
+
+def test_run_qwen_sweep_missing_openrouter_key_aborts_before_qwen_load(tmp_path, monkeypatch):
+    examples = [PromptExample(source_index=0, input_messages=[{"role": "user", "content": "zero"}])]
+
+    monkeypatch.setattr(
+        "intelligent_liars.cli.load_rollout_prompt_examples",
+        lambda *args, **kwargs: examples,
+    )
+
+    def fail_preflight(config):
+        del config
+        raise ValueError("OpenRouter API key not provided")
+
+    def fail_model_load(*args, **kwargs):
+        del args, kwargs
+        raise AssertionError("Qwen should not load when OpenRouter preflight fails")
+
+    monkeypatch.setattr("intelligent_liars.cli.preflight_judge_config", fail_preflight)
+    monkeypatch.setattr("intelligent_liars.cli.load_model_and_processor", fail_model_load)
+    monkeypatch.setattr("intelligent_liars.cli.generate_rollout_task", fail_model_load)
+    monkeypatch.setattr("intelligent_liars.cli.grade_rollout_file", fail_model_load)
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "run-qwen-sweep",
+            "--project-root",
+            str(tmp_path),
+            "--task",
+            "roleplaying__plain",
+        ],
+    )
+
+    assert result.exit_code != 0
+    assert not isinstance(result.exception, AssertionError)
+    assert "OpenRouter API key not provided" in str(result.exception)
+    assert not (tmp_path / "data" / "rollouts").exists()
+
+
+def test_run_qwen_sweep_resume_validation_runs_before_model_load(tmp_path, monkeypatch):
+    events: list[str] = []
+    examples = [PromptExample(source_index=0, input_messages=[{"role": "user", "content": "zero"}])]
+
+    monkeypatch.setattr(
+        "intelligent_liars.cli.load_rollout_prompt_examples",
+        lambda *args, **kwargs: examples,
+    )
+    monkeypatch.setattr(
+        "intelligent_liars.cli.preflight_judge_config",
+        lambda config: JudgePreflight(
+            provider=config.provider,
+            alias="mock",
+            resolved_model="mock",
+            structured_outputs=config.structured_outputs,
+            require_structured_outputs=config.require_structured_outputs,
+            checked_api_key=False,
+            checked_live_metadata=False,
+        ),
+    )
+
+    def fail_pending_check(**kwargs):
+        events.append("validate")
+        raise ValueError(f"incompatible rollout metadata: {kwargs['output_path']}")
+
+    def fail_model_load(*args, **kwargs):
+        del args, kwargs
+        raise AssertionError("Qwen should not load when resume validation fails")
+
+    monkeypatch.setattr("intelligent_liars.cli.pending_rollout_source_indices", fail_pending_check)
+    monkeypatch.setattr("intelligent_liars.cli.load_model_and_processor", fail_model_load)
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "run-qwen-sweep",
+            "--project-root",
+            str(tmp_path),
+            "--task",
+            "roleplaying__plain",
+            "--mock-response",
+            '{"reasoning":"ok","judgement":7}',
+        ],
+    )
+
+    assert result.exit_code != 0
+    assert not isinstance(result.exception, AssertionError)
+    assert events == ["validate"]
+    assert "incompatible rollout metadata" in str(result.exception)
+
+
+def test_run_qwen_sweep_passes_generation_options(tmp_path, monkeypatch):
+    captured = {}
+    examples = [PromptExample(source_index=0, input_messages=[{"role": "user", "content": "zero"}])]
+
+    monkeypatch.setattr(
+        "intelligent_liars.cli.load_rollout_prompt_examples",
+        lambda *args, **kwargs: examples,
+    )
+    monkeypatch.setattr(
+        "intelligent_liars.cli.preflight_judge_config",
+        lambda config: JudgePreflight(
+            provider=config.provider,
+            alias="mock",
+            resolved_model="mock",
+            structured_outputs=config.structured_outputs,
+            require_structured_outputs=config.require_structured_outputs,
+            checked_api_key=False,
+            checked_live_metadata=False,
+        ),
+    )
+    monkeypatch.setattr("intelligent_liars.cli.load_model_and_processor", lambda config: SimpleNamespace(model_id=DEFAULT_MODEL_ID))
+    monkeypatch.setattr(
+        "intelligent_liars.cli.pending_rollout_source_indices",
+        lambda **kwargs: {example.source_index for example in examples},
+    )
+    monkeypatch.setattr("intelligent_liars.cli.seed_everything", lambda seed: captured.setdefault("seed", seed))
+
+    def fake_generate(**kwargs):
+        captured["settings"] = kwargs["settings"]
+        return GenerationSummary(
+            task=kwargs["task"],
+            output_path=kwargs["output_path"],
+            total_examples=1,
+            generated_examples=1,
+            skipped_existing=0,
+        )
+
+    monkeypatch.setattr("intelligent_liars.cli.generate_rollout_task", fake_generate)
+    monkeypatch.setattr(
+        "intelligent_liars.cli.grade_rollout_file",
+        lambda path, **kwargs: GradingSummary(
+            task="roleplaying__plain",
+            input_path=path,
+            output_path=path,
+            total_items=1,
+            graded_items=1,
+            skipped_items=0,
+        ),
+    )
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "run-qwen-sweep",
+            "--project-root",
+            str(tmp_path),
+            "--task",
+            "roleplaying__plain",
+            "--batch-size",
+            "2",
+            "--max-new-tokens",
+            "123",
+            "--do-sample",
+            "--temperature",
+            "0.2",
+            "--top-p",
+            "0.8",
+            "--top-k",
+            "40",
+            "--seed",
+            "99",
+            "--flush-every",
+            "3",
+            "--mock-response",
+            '{"reasoning":"ok","judgement":7}',
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert captured["seed"] == 99
+    settings = captured["settings"]
+    assert settings.batch_size == 2
+    assert settings.max_new_tokens == 123
+    assert settings.do_sample is True
+    assert settings.temperature == 0.2
+    assert settings.top_p == 0.8
+    assert settings.top_k == 40
+    assert settings.seed == 99
+    assert settings.flush_every == 3
+
+
+def test_run_qwen_sweep_default_tasks_use_default_rollout_paths(tmp_path, monkeypatch):
+    generated_paths = []
+    graded_paths = []
+    examples = [PromptExample(source_index=0, input_messages=[{"role": "user", "content": "zero"}])]
+
+    monkeypatch.setattr(
+        "intelligent_liars.cli.load_rollout_prompt_examples",
+        lambda *args, **kwargs: examples,
+    )
+    monkeypatch.setattr(
+        "intelligent_liars.cli.preflight_judge_config",
+        lambda config: JudgePreflight(
+            provider=config.provider,
+            alias="mock",
+            resolved_model="mock",
+            structured_outputs=config.structured_outputs,
+            require_structured_outputs=config.require_structured_outputs,
+            checked_api_key=False,
+            checked_live_metadata=False,
+        ),
+    )
+    monkeypatch.setattr("intelligent_liars.cli.load_model_and_processor", lambda config: SimpleNamespace(model_id=DEFAULT_MODEL_ID))
+    monkeypatch.setattr(
+        "intelligent_liars.cli.pending_rollout_source_indices",
+        lambda **kwargs: {example.source_index for example in examples},
+    )
+
+    def fake_generate(**kwargs):
+        generated_paths.append(kwargs["output_path"])
+        return GenerationSummary(
+            task=kwargs["task"],
+            output_path=kwargs["output_path"],
+            total_examples=1,
+            generated_examples=1,
+            skipped_existing=0,
+        )
+
+    def fake_grade(path, **kwargs):
+        graded_paths.append(path)
+        return GradingSummary(
+            task=path.name,
+            input_path=path,
+            output_path=path,
+            total_items=1,
+            graded_items=1,
+            skipped_items=0,
+        )
+
+    monkeypatch.setattr("intelligent_liars.cli.generate_rollout_task", fake_generate)
+    monkeypatch.setattr("intelligent_liars.cli.grade_rollout_file", fake_grade)
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "run-qwen-sweep",
+            "--project-root",
+            str(tmp_path),
+            "--mock-response",
+            '{"reasoning":"ok","judgement":7}',
+        ],
+    )
+
+    expected_paths = [
+        tmp_path / "data" / "rollouts" / "roleplaying__plain__qwen3-vl-8b-thinking.json",
+        tmp_path / "data" / "rollouts" / "sandbagging_v2__wmdp_mmlu__qwen3-vl-8b-thinking.json",
+    ]
+    assert result.exit_code == 0, result.output
+    assert generated_paths == expected_paths
+    assert graded_paths == expected_paths
+
+
+@pytest.mark.parametrize(
+    ("args", "required_flags"),
+    [
+        (["check-env"], ["--check-openrouter", "--require-cuda"]),
+        (["generate-rollouts"], ["--prompt-set", "--output-dir"]),
+        (["grade-rollouts"], ["structured", "require"]),
+        (["run-qwen-sweep"], ["--prompt-set", "overwrite"]),
+    ],
+)
+def test_remote_workflow_commands_show_expected_help(args, required_flags):
+    result = CliRunner().invoke(app, [*args, "--help"], color=False)
+
+    assert result.exit_code == 0, result.output
+    for flag in required_flags:
+        assert flag in result.output
 
 
 def test_grade_rollouts_preflights_roleplaying_from_json_not_filename(tmp_path, monkeypatch):

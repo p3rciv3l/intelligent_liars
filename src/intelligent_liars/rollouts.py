@@ -67,11 +67,11 @@ class GenerationSettings:
     """
 
     batch_size: int = 1
-    max_new_tokens: int = 512
-    do_sample: bool = False
-    temperature: float = 0.6
+    max_new_tokens: int = 40960
+    do_sample: bool = True
+    temperature: float = 1.0
     top_p: float = 0.95
-    top_k: int | None = None
+    top_k: int | None = 20
     seed: int = 0
     flush_every: int = 10
 
@@ -108,6 +108,14 @@ class GenerationSummary:
     total_examples: int
     generated_examples: int
     skipped_existing: int
+
+
+@dataclass(frozen=True)
+class GeneratedCompletion:
+    """Decoded Qwen completion split into hidden thinking and final answer."""
+
+    text: str
+    thinking: str | None = None
 
 
 def qwen_model_slug(model_id: str = DEFAULT_MODEL_ID) -> str:
@@ -414,11 +422,7 @@ def generate_rollout_task(
 
     # Resume key: generated rows carry the prompt source_index in metadata, so
     # reruns can skip rows already present in an existing JSON file.
-    existing_indices = {
-        int(item.get("metadata", {}).get("source_index"))
-        for item in output_data.get("rollouts", [])
-        if item.get("metadata", {}).get("source_index") is not None
-    }
+    existing_indices = _existing_rollout_source_indices(output_data)
 
     # `start` and `limit` slice the source prompt list before resume filtering.
     selected_examples = list(examples[start:])
@@ -426,6 +430,14 @@ def generate_rollout_task(
         selected_examples = selected_examples[:limit]
 
     pending = [example for example in selected_examples if example.source_index not in existing_indices]
+    if not pending:
+        return GenerationSummary(
+            task=task,
+            output_path=output_path,
+            total_examples=len(selected_examples),
+            generated_examples=0,
+            skipped_existing=len(selected_examples),
+        )
     generated = 0
 
     for batch in _chunks(pending, settings.batch_size):
@@ -514,12 +526,65 @@ def validate_rollout_generation_resume(
     _validate_rollout_resume_metadata(output_path, output_data, expected_metadata)
 
 
+def pending_rollout_source_indices(
+    *,
+    task: str,
+    output_path: Path,
+    model_id: str,
+    examples: Sequence[PromptExample],
+    settings: GenerationSettings,
+    overwrite: bool,
+    start: int = 0,
+    limit: int | None = None,
+) -> set[int]:
+    """Return source indices that still need Qwen generation for this rollout."""
+
+    selected_examples = list(examples[start:])
+    if limit is not None:
+        selected_examples = selected_examples[:limit]
+    selected_indices = {example.source_index for example in selected_examples}
+    if overwrite or not output_path.exists():
+        return selected_indices
+
+    output_data = json.loads(output_path.read_text())
+    if not isinstance(output_data, dict):
+        raise ValueError(f"Existing rollout file must contain a JSON object: {output_path}")
+    expected_metadata = _rollout_run_metadata(
+        task=task,
+        model_id=model_id,
+        examples=examples,
+        settings=settings,
+    )
+    _validate_rollout_resume_metadata(output_path, output_data, expected_metadata)
+    return selected_indices - _existing_rollout_source_indices(output_data)
+
+
 def generation_content_settings(settings: GenerationSettings) -> dict[str, Any]:
     """Return generation settings that can affect model outputs."""
 
-    values = asdict(settings)
-    values.pop("flush_every", None)
+    values: dict[str, Any] = {
+        "max_new_tokens": settings.max_new_tokens,
+        "do_sample": settings.do_sample,
+    }
+    if settings.do_sample:
+        values.update(
+            {
+                "temperature": settings.temperature,
+                "top_p": settings.top_p,
+                "seed": settings.seed,
+            }
+        )
+        if settings.top_k is not None:
+            values["top_k"] = settings.top_k
     return values
+
+
+def _existing_rollout_source_indices(output_data: dict[str, Any]) -> set[int]:
+    return {
+        int(item.get("metadata", {}).get("source_index"))
+        for item in output_data.get("rollouts", [])
+        if item.get("metadata", {}).get("source_index") is not None
+    }
 
 
 def _validate_rollout_resume_metadata(
@@ -547,7 +612,7 @@ def _sha256_file(path: Path) -> str | None:
 def build_rollout_record(
     *,
     example: PromptExample,
-    completion: str,
+    completion: str | GeneratedCompletion,
     generation_settings: GenerationSettings,
 ) -> dict[str, Any]:
     """Build one Truth Spec-compatible rollout record from one Qwen completion.
@@ -563,6 +628,7 @@ def build_rollout_record(
         `judging.py` can fill labels later.
     """
 
+    generated = completion if isinstance(completion, GeneratedCompletion) else split_qwen_thinking(completion)
     metadata = dict(example.metadata or {})
     metadata.update(
         {
@@ -570,12 +636,14 @@ def build_rollout_record(
             "generation_settings": asdict(generation_settings),
         }
     )
+    if generated.thinking is not None:
+        metadata["qwen_thinking_content"] = generated.thinking
     return {
         "input_messages": example.input_messages,
         "expected_label": example.expected_label,
         "input_str": example.input_str or _messages_to_text(example.input_messages),
-        "output_messages": [{"role": "assistant", "content": completion, "detect": True}],
-        "output_strs": [completion],
+        "output_messages": [{"role": "assistant", "content": generated.text, "detect": True}],
+        "output_strs": [generated.text],
         "grader_reasoning": [None],
         "graded_deception": ["unknown"],
         "deception_percentage": None,
@@ -583,12 +651,30 @@ def build_rollout_record(
     }
 
 
+def split_qwen_thinking(text: str) -> GeneratedCompletion:
+    """Split Qwen thinking markup from the final answer when present."""
+
+    cleaned = text.lstrip("\n").rstrip()
+    marker = "</think>"
+    if marker not in cleaned:
+        return GeneratedCompletion(text=cleaned)
+    thinking_text, _, answer_text = cleaned.rpartition(marker)
+    if "<think>" in thinking_text:
+        thinking_text = thinking_text.split("<think>", maxsplit=1)[1]
+    thinking_text = thinking_text.strip()
+    answer_text = answer_text.lstrip("\n").rstrip()
+    return GeneratedCompletion(
+        text=answer_text,
+        thinking=thinking_text or None,
+    )
+
+
 def generate_completions(
     *,
     bundle: ModelBundle,
     conversations: Sequence[Sequence[Message]],
     settings: GenerationSettings,
-) -> list[str]:
+) -> list[GeneratedCompletion]:
     """Render conversations, run Qwen generation, and decode completions.
 
     Args:
@@ -618,7 +704,7 @@ def generate_completions(
         skip_special_tokens=True,
         clean_up_tokenization_spaces=False,
     )
-    return [text.lstrip("\n").rstrip() for text in decoded]
+    return [split_qwen_thinking(text) for text in decoded]
 
 
 def _generation_kwargs(settings: GenerationSettings) -> dict[str, Any]:

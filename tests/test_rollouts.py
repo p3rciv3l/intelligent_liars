@@ -12,6 +12,8 @@ from intelligent_liars.rollouts import (
     generate_rollout_task,
     load_rollout_prompt_set_examples,
     load_roleplaying_prompt_examples,
+    pending_rollout_source_indices,
+    split_qwen_thinking,
     _generation_kwargs,
     _render_generation_conversation,
 )
@@ -119,14 +121,78 @@ def test_rollout_record_keeps_prefix_in_input_and_completion_only_in_output():
     assert record["output_strs"] == [" I procrastinated."]
 
 
+def test_rollout_record_splits_qwen_thinking_from_final_answer():
+    example = PromptExample(
+        source_index=0,
+        input_messages=[{"role": "user", "content": "question", "detect": False}],
+    )
+
+    record = build_rollout_record(
+        example=example,
+        completion="<think>\nprivate reasoning\n</think>\nFinal answer.",
+        generation_settings=GenerationSettings(max_new_tokens=32),
+    )
+
+    assert record["output_messages"] == [
+        {"role": "assistant", "content": "Final answer.", "detect": True}
+    ]
+    assert record["output_strs"] == ["Final answer."]
+    assert record["metadata"]["qwen_thinking_content"] == "private reasoning"
+
+
+def test_split_qwen_thinking_leaves_plain_completions_unchanged():
+    completion = split_qwen_thinking(" I procrastinated.\n")
+
+    assert completion.text == " I procrastinated."
+    assert completion.thinking is None
+
+
 def test_generation_kwargs_adds_top_k_only_for_sampling():
     greedy = _generation_kwargs(GenerationSettings(do_sample=False, top_k=20))
     sampled = _generation_kwargs(GenerationSettings(do_sample=True, top_k=20))
 
-    assert greedy == {"max_new_tokens": 512, "do_sample": False}
-    assert sampled["temperature"] == 0.6
+    assert greedy == {"max_new_tokens": 40960, "do_sample": False}
+    assert sampled["temperature"] == 1.0
     assert sampled["top_p"] == 0.95
     assert sampled["top_k"] == 20
+
+
+def test_generation_content_metadata_excludes_batch_and_flush_for_resume(tmp_path, monkeypatch):
+    def fake_generate_completions(**kwargs):
+        return ["completion"]
+
+    monkeypatch.setattr("intelligent_liars.rollouts.generate_completions", fake_generate_completions)
+    bundle = ModelBundle(
+        model=object(),
+        processor=object(),
+        tokenizer=object(),
+        model_id=DEFAULT_MODEL_ID,
+        config=ModelLoadConfig(),
+    )
+    examples = [PromptExample(source_index=0, input_messages=[{"role": "user", "content": "one"}])]
+    output_path = tmp_path / "roleplaying__plain__qwen3-vl-8b-thinking.json"
+
+    generate_rollout_task(
+        bundle=bundle,
+        task="roleplaying__plain",
+        examples=examples,
+        output_path=output_path,
+        settings=GenerationSettings(batch_size=1, flush_every=1),
+    )
+
+    pending = pending_rollout_source_indices(
+        task="roleplaying__plain",
+        output_path=output_path,
+        model_id=DEFAULT_MODEL_ID,
+        examples=examples,
+        settings=GenerationSettings(batch_size=2, flush_every=99),
+        overwrite=False,
+    )
+    payload = json.loads(output_path.read_text())
+
+    assert pending == set()
+    assert "batch_size" not in payload["run_metadata"]["generation_settings"]
+    assert "flush_every" not in payload["run_metadata"]["generation_settings"]
 
 
 @pytest.mark.parametrize(

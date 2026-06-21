@@ -189,6 +189,7 @@ models:
     assert payload["max_tokens"] == 42
     assert payload["provider"]["sort"] == "price"
     assert session.calls[0]["timeout"] == 3.0
+    assert client.provider_config["sort"] == "price"
 
 
 def test_get_model_client_merges_provider_with_call_site_winning(tmp_path):

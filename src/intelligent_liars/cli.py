@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from pathlib import Path
 
 import typer
@@ -53,9 +54,9 @@ from intelligent_liars.rollouts import (
     generate_rollout_task,
     load_rollout_prompt_examples,
     parse_task_name,
+    pending_rollout_source_indices,
     qwen_model_slug,
     seed_everything,
-    validate_rollout_generation_resume,
 )
 
 
@@ -107,6 +108,10 @@ def _judge_config_from_options(
         require_structured_outputs=require_structured_outputs,
         mock_response=mock_response,
     )
+
+
+def _bind_judge_config_to_project_root(config: JudgeConfig, project_root: Path) -> JudgeConfig:
+    return replace(config, model_config_path=project_root / "model_deployments.yaml")
 
 
 def _project_path(project_root: Path, path: Path) -> Path:
@@ -200,6 +205,13 @@ def _selected_source_indices(examples, *, start: int, limit: int | None) -> set[
     if limit is not None:
         selected = selected[:limit]
     return {int(example.source_index) for example in selected}
+
+
+def _selected_example_count(examples, *, start: int, limit: int | None) -> int:
+    selected = list(examples[start:])
+    if limit is not None:
+        selected = selected[:limit]
+    return len(selected)
 
 
 def _source_index_filter(
@@ -398,21 +410,41 @@ def generate_rollouts(
     model_config = model_config_from_env()
     model_id = resolve_model_id(model_config.model_name)
     model_slug = qwen_model_slug(model_id)
+    pending_by_task: dict[str, set[int]] = {}
     for task, examples in examples_by_task.items():
-        validate_rollout_generation_resume(
+        output_path = output_dir / f"{task}__{model_slug}.json"
+        pending_by_task[task] = pending_rollout_source_indices(
             task=task,
-            output_path=output_dir / f"{task}__{model_slug}.json",
+            output_path=output_path,
             model_id=model_id,
             examples=examples,
             settings=settings,
             overwrite=overwrite,
+            start=start,
+            limit=limit,
         )
+    if not any(pending_by_task.values()):
+        for task, examples in examples_by_task.items():
+            output_path = output_dir / f"{task}__{model_slug}.json"
+            selected_count = _selected_example_count(examples, start=start, limit=limit)
+            console.print(
+                "[green]Generated rollouts[/green] "
+                f"task={task} new=0 skipped={selected_count} path={output_path}"
+            )
+        return
     bundle = load_model_and_processor(model_config)
 
     for task in task_list:
         # Fixed prompts are preloaded before model load; Qwen creates fresh completions.
         examples = examples_by_task[task]
         output_path = output_dir / f"{task}__{model_slug}.json"
+        if not pending_by_task[task]:
+            selected_count = _selected_example_count(examples, start=start, limit=limit)
+            console.print(
+                "[green]Generated rollouts[/green] "
+                f"task={task} new=0 skipped={selected_count} path={output_path}"
+            )
+            continue
         summary = generate_rollout_task(
             bundle=bundle,
             task=task,
@@ -555,6 +587,7 @@ def grade_rollouts(
         require_structured_outputs=require_structured_outputs,
         mock_response=mock_response,
     )
+    judge_config = _bind_judge_config_to_project_root(judge_config, project_root)
     # Resolve defaults lazily after project_root is known.
     rollout_paths = [
         _project_path(project_root, path)
@@ -670,6 +703,7 @@ def run_qwen_sweep(
         require_structured_outputs=require_structured_outputs,
         mock_response=mock_response,
     )
+    judge_config = _bind_judge_config_to_project_root(judge_config, project_root)
     examples_by_task = {
         task: load_rollout_prompt_examples(
             task,
@@ -694,21 +728,35 @@ def run_qwen_sweep(
     model_config = model_config_from_env()
     model_id = resolve_model_id(model_config.model_name)
     model_slug = qwen_model_slug(model_id)
+    pending_by_task: dict[str, set[int]] = {}
     for task, examples in examples_by_task.items():
-        validate_rollout_generation_resume(
+        output_path = output_dir / f"{task}__{model_slug}.json"
+        pending_by_task[task] = pending_rollout_source_indices(
             task=task,
-            output_path=output_dir / f"{task}__{model_slug}.json",
+            output_path=output_path,
             model_id=model_id,
             examples=examples,
             settings=settings,
             overwrite=overwrite_generation,
+            start=start,
+            limit=limit,
         )
-    bundle = load_model_and_processor(model_config)
+    bundle = load_model_and_processor(model_config) if any(pending_by_task.values()) else None
 
     generated_paths: list[tuple[str, Path]] = []
     for task in task_list:
         examples = examples_by_task[task]
         output_path = output_dir / f"{task}__{model_slug}.json"
+        generated_paths.append((task, output_path))
+        if not pending_by_task[task]:
+            selected_count = _selected_example_count(examples, start=start, limit=limit)
+            console.print(
+                "[green]Generated rollouts[/green] "
+                f"task={task} new=0 skipped={selected_count} path={output_path}"
+            )
+            continue
+        if bundle is None:
+            raise RuntimeError("Internal error: pending rollouts require a loaded Qwen model.")
         summary = generate_rollout_task(
             bundle=bundle,
             task=task,
@@ -719,7 +767,6 @@ def run_qwen_sweep(
             start=start,
             limit=limit,
         )
-        generated_paths.append((task, output_path))
         console.print(
             "[green]Generated rollouts[/green] "
             f"task={summary.task} new={summary.generated_examples} "
@@ -991,6 +1038,7 @@ def grade_insider_trading(
         require_structured_outputs=require_structured_outputs,
         mock_response=mock_response,
     )
+    judge_config = _bind_judge_config_to_project_root(judge_config, project_root)
     preflight_judge_config(judge_config)
     summary = grade_insider_trading_transcripts_with_judge(
         input_path,
@@ -1075,6 +1123,7 @@ def run_insider_trading_sweep(
         require_structured_outputs=require_structured_outputs,
         mock_response=mock_response,
     )
+    judge_config = _bind_judge_config_to_project_root(judge_config, project_root)
     preflight = preflight_judge_config(judge_config)
     console.print(
         "[green]OpenRouter judge preflight passed[/green] "

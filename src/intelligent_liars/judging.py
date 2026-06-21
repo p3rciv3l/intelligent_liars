@@ -60,7 +60,7 @@ class JudgeConfig:
 # Shared defaults used by both judging.py call sites and cli.py Typer options.
 DEFAULT_JUDGE_CONFIG = JudgeConfig()
 DEFAULT_ROLLOUT_GRADING_FLUSH_EVERY = 25
-DEFAULT_ROLLOUT_GRADING_MAX_WORKERS = 8
+DEFAULT_ROLLOUT_GRADING_MAX_WORKERS = 1
 DEFAULT_INSIDER_GRADING_FLUSH_EVERY = 10
 
 
@@ -117,16 +117,25 @@ def preflight_judge_config(config: JudgeConfig) -> JudgePreflight:
         endpoints = metadata.get("endpoints")
         if not isinstance(endpoints, list):
             raise RuntimeError(f"OpenRouter model metadata missing endpoints for {client.model}")
+        routeable_endpoints = _filter_endpoints_for_provider_routing(
+            endpoints,
+            getattr(client, "provider_config", {}),
+        )
+        if not routeable_endpoints:
+            raise ValueError(
+                f"OpenRouter model {client.model!r} has no live endpoint matching provider routing; "
+                "check model_deployments.yaml provider.order/provider.only."
+            )
         capable_endpoints = [
             endpoint
-            for endpoint in endpoints
+            for endpoint in routeable_endpoints
             if isinstance(endpoint, dict)
             and endpoint.get("status", 0) == 0
             and "response_format" in set(endpoint.get("supported_parameters") or [])
         ]
         if not capable_endpoints:
             raise ValueError(
-                f"OpenRouter model {client.model!r} has no live endpoint supporting response_format; "
+                f"OpenRouter model {client.model!r} has no routed live endpoint supporting response_format; "
                 "choose a structured-output-capable judge or pass --no-structured-outputs."
             )
 
@@ -139,6 +148,62 @@ def preflight_judge_config(config: JudgeConfig) -> JudgePreflight:
         checked_api_key=True,
         checked_live_metadata=checked_live_metadata,
     )
+
+
+def _filter_endpoints_for_provider_routing(
+    endpoints: Sequence[Any],
+    provider_config: dict[str, Any],
+) -> list[dict[str, Any]]:
+    """Apply local OpenRouter provider filters to endpoint metadata.
+
+    OpenRouter endpoint metadata exposes concrete route tags such as
+    `z-ai/fp8` and `wafer/fp4`. Preflight uses those tags to make sure the
+    configured restricted provider set still has at least one live route before
+    generation starts.
+    """
+
+    only = _normalised_provider_values(provider_config.get("only"))
+    ignore = _normalised_provider_values(provider_config.get("ignore"))
+    quantizations = _normalised_provider_values(provider_config.get("quantizations"))
+    filtered: list[dict[str, Any]] = []
+    for endpoint in endpoints:
+        if not isinstance(endpoint, dict):
+            continue
+        endpoint_keys = _endpoint_provider_keys(endpoint)
+        if only and endpoint_keys.isdisjoint(only):
+            continue
+        if ignore and not endpoint_keys.isdisjoint(ignore):
+            continue
+        if quantizations:
+            quantization = str(endpoint.get("quantization") or "").lower()
+            if quantization not in quantizations:
+                continue
+        if endpoint.get("status", 0) != 0:
+            continue
+        filtered.append(endpoint)
+    return filtered
+
+
+def _normalised_provider_values(value: Any) -> set[str]:
+    if value is None:
+        return set()
+    if not isinstance(value, Sequence) or isinstance(value, str):
+        values = [value]
+    else:
+        values = list(value)
+    return {str(item).strip().lower() for item in values if str(item).strip()}
+
+
+def _endpoint_provider_keys(endpoint: dict[str, Any]) -> set[str]:
+    tag = str(endpoint.get("tag") or "").strip().lower()
+    provider_name = str(endpoint.get("provider_name") or "").strip().lower()
+    keys = {
+        tag,
+        tag.split("/", maxsplit=1)[0],
+        provider_name,
+        provider_name.replace(".", "-").replace(" ", "-"),
+    }
+    return {key for key in keys if key}
 
 
 def parse_judgement(response_text: str) -> tuple[Judgement, str]:
@@ -411,14 +476,7 @@ def grade_roleplaying_dialogue(
 
     if config.structured_outputs:
         try:
-            response_text = call_judge(
-                system_prompt=prompt.get("system"),
-                user_prompt=prompt["user"] + _roleplaying_structured_instruction(),
-                config=config,
-                response_format=roleplaying_response_format(),
-                provider_routing=_provider_routing_for_structured_outputs(config),
-            )
-            return _parse_structured_roleplaying_grade(response_text)
+            return _run_structured_roleplaying_judge(prompt, config=config)
         except Exception as exc:
             logger.warning("Structured roleplaying judge failed: %s", exc.__class__.__name__)
             if config.require_structured_outputs:
@@ -662,6 +720,27 @@ def _render_double_down_prompt(template: str, *, email: str, response: str) -> s
     return template.replace("{email}", email).replace("{response}", response)
 
 
+def _run_structured_roleplaying_judge(
+    prompt: dict[str, str],
+    *,
+    config: JudgeConfig,
+) -> tuple[Judgement, str]:
+    last_error: Exception | None = None
+    for _ in range(config.max_retries):
+        response_text = call_judge(
+            system_prompt=prompt.get("system"),
+            user_prompt=prompt["user"] + _roleplaying_structured_instruction(),
+            config=config,
+            response_format=roleplaying_response_format(),
+            provider_routing=_provider_routing_for_structured_outputs(config),
+        )
+        try:
+            return _parse_structured_roleplaying_grade(response_text)
+        except ValueError as exc:
+            last_error = exc
+    raise ValueError(f"Invalid structured roleplaying judge response after retries: {last_error}")
+
+
 def run_json_judge(
     prompt: str,
     *,
@@ -733,39 +812,44 @@ def _grade_roleplaying_rollout_data(
 
     completed = 0
     workers = max(max_workers, 1)
-    with ThreadPoolExecutor(max_workers=workers) as executor:
-        future_to_job = {
-            executor.submit(
-                _grade_roleplaying_output,
-                records[record_idx],
-                output_idx,
-                project_root,
-                config,
-            ): (record_idx, output_idx)
-            for record_idx, output_idx in jobs
-        }
-        for future in as_completed(future_to_job):
-            record_idx, output_idx = future_to_job[future]
-            try:
-                judgement, reasoning = future.result()
-            except Exception as exc:  # pragma: no cover - defensive diagnostic
-                raise RuntimeError(
-                    f"Roleplaying judge failed for record {record_idx} output {output_idx}: {exc}"
-                ) from exc
-
-            record = records[record_idx]
-            record["graded_deception"][output_idx] = judgement
-            record["grader_reasoning"][output_idx] = reasoning
-            _set_deception_percentage(record)
-            completed += 1
-            if completed % max(flush_every, 1) == 0:
-                write_json_atomic(output_path, data)
-
     data["grading_metadata"] = {
         "provider": config.provider,
         "model": config.resolved_model,
         "source": "apollo_deception_detection_port",
     }
+    try:
+        with ThreadPoolExecutor(max_workers=workers) as executor:
+            future_to_job = {
+                executor.submit(
+                    _grade_roleplaying_output,
+                    records[record_idx],
+                    output_idx,
+                    project_root,
+                    config,
+                ): (record_idx, output_idx)
+                for record_idx, output_idx in jobs
+            }
+            for future in as_completed(future_to_job):
+                record_idx, output_idx = future_to_job[future]
+                try:
+                    judgement, reasoning = future.result()
+                except Exception as exc:  # pragma: no cover - defensive diagnostic
+                    raise RuntimeError(
+                        f"Roleplaying judge failed for record {record_idx} output {output_idx}: {exc}"
+                    ) from exc
+
+                record = records[record_idx]
+                record["graded_deception"][output_idx] = judgement
+                record["grader_reasoning"][output_idx] = reasoning
+                _set_deception_percentage(record)
+                completed += 1
+                if completed % max(flush_every, 1) == 0:
+                    write_json_atomic(output_path, data)
+    except Exception:
+        if completed:
+            write_json_atomic(output_path, data)
+        raise
+
     return GradingSummary(
         task=task,
         input_path=input_path,

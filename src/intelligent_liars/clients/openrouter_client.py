@@ -300,6 +300,11 @@ class OpenRouterClient:
         
         # Build provider configuration with defaults
         self._default_provider = self._build_provider_config(provider)
+
+    @property
+    def provider_config(self) -> dict[str, Any]:
+        """Return a copy of the default OpenRouter provider routing payload."""
+        return dict(self._default_provider)
     
     def _build_provider_config(
         self, 

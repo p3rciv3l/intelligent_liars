@@ -246,7 +246,10 @@ def _sha256_file(path: Path) -> str:
 
 
 def _reply(bundle: ModelBundle, messages: list[Message], settings: GenerationSettings) -> str:
-    return generate_completions(bundle=bundle, conversations=[messages], settings=settings)[0]
+    completion = generate_completions(bundle=bundle, conversations=[messages], settings=settings)[0]
+    if isinstance(completion, str):
+        return completion
+    return completion.text
 
 
 def _contains(needle: Any, haystack: str) -> bool:
