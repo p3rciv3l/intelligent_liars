@@ -119,7 +119,7 @@ This fills `graded_deception` and `grader_reasoning` in-place. Roleplaying uses
 the Apollo LLM judge prompt from `data/roleplaying/grading_template.txt` and
 keeps the 1-7 numeric judge scores. Sandbagging uses Apollo's deterministic tag
 parser, not an LLM judge. The default LLM judge runs through OpenRouter using
-the `glm-5.2` alias from `prod_env/model_deployments.yaml`, so set
+the `glm-5.2` alias from `model_deployments.yaml`, so set
 `OPENROUTER_API_KEY` before grading roleplaying rollouts. You can pass any
 OpenRouter alias from that YAML, or a raw OpenRouter model ID, with
 `--judge-model`.

@@ -1,0 +1,18 @@
+models:
+  # Prefer the official Z.AI endpoint; fall back only to Wafer.
+  # OpenRouter currently lists these endpoints as fp8 and fp4 respectively;
+  # do not add a full-precision quantization filter until fp16/bf16/fp32 exists.
+  - name: glm-5.2
+    model: z-ai/glm-5.2
+    temperature: 0.1
+    top_p: 0.95
+    max_tokens: 2048
+    provider:
+      order:
+        - z-ai/fp8
+        - wafer/fp4
+      only:
+        - z-ai/fp8
+        - wafer/fp4
+      allow_fallbacks: true
+      require_parameters: true

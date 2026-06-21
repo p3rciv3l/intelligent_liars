@@ -442,12 +442,14 @@ def default_model_deployments_path() -> Path:
 
     client_path = Path(__file__).resolve()
     cwd = Path.cwd().resolve()
-    candidates = [
-        parent / "prod_env" / "model_deployments.yaml"
-        for parent in (cwd, *cwd.parents)
-    ]
+    candidates: list[Path] = []
+    for parent in (cwd, *cwd.parents):
+        candidates.append(parent / "model_deployments.yaml")
+        candidates.append(parent / "prod_env" / "model_deployments.yaml")
     if len(client_path.parents) > 3:
-        candidates.append(client_path.parents[3] / "prod_env" / "model_deployments.yaml")
+        repo_root = client_path.parents[3]
+        candidates.append(repo_root / "model_deployments.yaml")
+        candidates.append(repo_root / "prod_env" / "model_deployments.yaml")
     candidates.append(client_path.with_name("model_deployments.yaml"))
     for candidate in candidates:
         if candidate.exists():
@@ -515,7 +517,7 @@ def load_model_deployments(
     
     Args:
         yaml_path: Path to model_deployments.yaml. If None, looks for
-                  prod_env/model_deployments.yaml relative to this file.
+                  model_deployments.yaml from the current checkout root.
     
     Returns:
         Dictionary mapping model names to their configurations

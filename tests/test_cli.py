@@ -153,6 +153,8 @@ def test_project_root_resolution_walks_up_from_package_dir(tmp_path, monkeypatch
 
 def test_check_env_openrouter_missing_key_reports_concise_error(monkeypatch):
     monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    monkeypatch.setattr("intelligent_liars.environment.load_dotenv", lambda: False)
+    monkeypatch.setattr("intelligent_liars.clients.openrouter_client.load_dotenv", lambda: False)
 
     result = CliRunner().invoke(app, ["check-env", "--check-openrouter"])
 

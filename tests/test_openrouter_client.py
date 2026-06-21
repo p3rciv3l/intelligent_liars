@@ -146,6 +146,16 @@ def test_fetch_openrouter_key_metadata_raises_typed_auth_error(monkeypatch):
 def test_default_model_deployments_path_walks_up_from_nested_cwd(tmp_path, monkeypatch):
     nested = tmp_path / "src" / "intelligent_liars"
     nested.mkdir(parents=True)
+    deployments = tmp_path / "model_deployments.yaml"
+    deployments.write_text("models: []\n")
+    monkeypatch.chdir(nested)
+
+    assert default_model_deployments_path() == deployments
+
+
+def test_default_model_deployments_path_falls_back_to_prod_env(tmp_path, monkeypatch):
+    nested = tmp_path / "src" / "intelligent_liars"
+    nested.mkdir(parents=True)
     deployments = tmp_path / "prod_env" / "model_deployments.yaml"
     deployments.parent.mkdir()
     deployments.write_text("models: []\n")

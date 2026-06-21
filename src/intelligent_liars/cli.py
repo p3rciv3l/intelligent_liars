@@ -450,7 +450,7 @@ def grade_rollouts(
     ),
     judge_model: str | None = typer.Option(
         DEFAULT_JUDGE_CONFIG.model,
-        help="OpenRouter model alias from prod_env/model_deployments.yaml or raw OpenRouter model ID.",
+        help="OpenRouter model alias from model_deployments.yaml or raw OpenRouter model ID.",
     ),
     max_workers: int = typer.Option(
         DEFAULT_ROLLOUT_GRADING_MAX_WORKERS,
@@ -909,7 +909,7 @@ def grade_insider_trading(
     ),
     judge_model: str | None = typer.Option(
         DEFAULT_JUDGE_CONFIG.model,
-        help="OpenRouter model alias from prod_env/model_deployments.yaml or raw OpenRouter model ID.",
+        help="OpenRouter model alias from model_deployments.yaml or raw OpenRouter model ID.",
     ),
     max_tokens: int = typer.Option(
         DEFAULT_JUDGE_CONFIG.max_tokens,
