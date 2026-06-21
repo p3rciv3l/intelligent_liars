@@ -96,6 +96,23 @@ Keep the first pass close to Truth Spec and avoid multimodal I/O until the text 
 - Decoder extraction backends live in `src/intelligent_liars/activation_backends.py` and `src/intelligent_liars/nnsight_backend.py`.
 - Activation outputs should default to `results/extracted_feats_all_layers_qwen3-vl-8b-thinking.h5`.
 
+## Current Sweep State
+
+The Qwen elicitation and OpenRouter judging path is wired for a one-command sweep:
+
+```bash
+uv run --no-sync intelligent-liars run-qwen-sweep --batch-size 1
+```
+
+Current operational details:
+
+- Qwen generation defaults to the Qwen3-VL Thinking model-card settings: sampling on, `temperature=1.0`, `top_p=0.95`, `top_k=20`, and `max_new_tokens=40960`.
+- Qwen `<think>...</think>` content is split out before grading; final answers stay in `output_strs`, and hidden thinking is stored as metadata.
+- Rollout resume metadata tracks output-affecting settings only, not batch size or flush cadence.
+- OpenRouter judge config lives at root `model_deployments.yaml`.
+- The only configured judge is `glm-5.2`, routed to `z-ai/fp8` first and `wafer/fp4` as the only fallback. Full precision is not configured because OpenRouter does not currently expose a full-precision GLM 5.2 endpoint.
+- Roleplaying judge calls use structured output, preflight the routed provider set, retry parse failures, and flush partial grading progress.
+
 ## Experiment Loop
 
 The working loop is:
@@ -123,11 +140,16 @@ The general truth direction is a target, but it should not be assumed to be the 
 The stronger intervention target is not merely "make QA bad." The stronger target is report-truthfulness divergence: the model still has or can infer the correct answer, but the answer shown to the human is systematically wrong.
 
 ## Vast.ai
-The user is going to use Vast.AI for any Qwen 3-VL related inference given that he wants to be able to control
-for harness conditions (including the GPU) across the intial inference for response generation, as well as for
-activation extraction, and for evaluating the vanilla and steered model on the various benchmarks.
+Use Vast.ai for Qwen3-VL inference, activation extraction, and later vanilla / steered benchmark evaluation so
+the harness and GPU are controlled.
 
-He is unsure at the moment which GPU or GPUs to use. He wants to be on the pareto frontier of cost/perf.
+Current default:
+
+- Use one verified GPU unless a later workload proves multi-GPU is necessary.
+- H100 80GB is the safe first full-run choice; A100 80GB or L40S may be cheaper if they pass the smoke run.
+- Use `pytorch/pytorch:2.12.0-cuda13.0-cudnn9-devel`.
+- Clone the repo on the instance; do not upload the local checkout with `.env`, `.venv`, caches, or private references.
+- Fetch `data/rollouts/`, `data/insider_trading/*generations.json`, and `results/` before destroying the instance.
 
 ## Multimodal Scope
 
