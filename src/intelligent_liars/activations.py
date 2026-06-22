@@ -268,6 +268,7 @@ class ActivationExtractionSettings:
     max_length: int | None = None
     capture_logits: bool = False
     resume: bool = False
+    storage_dtype: Literal["float16", "float32"] = "float16"
 
 
 @dataclass(frozen=True)
@@ -280,6 +281,15 @@ class ActivationExtractionSummary:
     masked_tokens: int
     layers: tuple[int, ...]
     backend: str = "transformers-hooks"
+
+
+@dataclass(frozen=True)
+class ActivationMergeSummary:
+    output_path: Path
+    shard_paths: tuple[Path, ...]
+    tasks: tuple[str, ...]
+    examples_by_task: Mapping[str, int]
+    token_rows_by_task: Mapping[str, int]
 
 
 def parse_layer_spec(layer_spec: str, num_layers: int) -> tuple[int, ...]:
@@ -1301,6 +1311,7 @@ def extract_dataset_activations(
         task_metadata_attrs=task_metadata_attrs,
         overwrite=overwrite,
         resume=settings.resume,
+        storage_dtype=settings.storage_dtype,
     )
     return ActivationExtractionSummary(
         task=task_name,
@@ -1396,6 +1407,7 @@ def write_activation_hdf5(
     task_metadata_attrs: Mapping[str, Any] | None = None,
     overwrite: bool,
     resume: bool = False,
+    storage_dtype: Literal["float16", "float32"] = "float16",
 ) -> None:
     output_path.parent.mkdir(parents=True, exist_ok=True)
     row_count = len(labels)
@@ -1442,6 +1454,7 @@ def write_activation_hdf5(
         dataset_id=dataset_id,
         processor_id=processor_id,
         task_metadata_attrs=task_metadata_attrs or {},
+        storage_dtype=storage_dtype,
     )
     try:
         _merge_activation_shard(
@@ -1490,10 +1503,10 @@ def _write_activation_shard(
     dataset_id: str | None,
     processor_id: str | None,
     task_metadata_attrs: Mapping[str, Any],
+    storage_dtype: Literal["float16", "float32"],
 ) -> Path:
     import h5py
     import numpy as np
-    import torch
 
     tmp_file = tempfile.NamedTemporaryFile(
         prefix=f".{output_path.name}.{_safe_hdf5_name(task)}.",
@@ -1536,6 +1549,7 @@ def _write_activation_shard(
             for attr_name, attr_value in task_metadata_attrs.items():
                 if isinstance(attr_value, bool | int | float | str):
                     task_metadata.attrs[attr_name] = attr_value
+            task_metadata.attrs["activation_storage_dtype"] = storage_dtype
 
             task_metadata.create_dataset("source_indices", data=np.asarray(source_indices, dtype=np.int64))
             task_metadata.create_dataset("output_indices", data=np.asarray(output_indices, dtype=np.int64))
@@ -1590,7 +1604,11 @@ def _write_activation_shard(
             token_rows = len(labels)
             for layer in sorted(layers):
                 tensors = list(activations_by_layer[layer])
-                data = torch.cat(tensors, dim=0).detach().cpu().numpy() if tensors else np.empty((0, 0))
+                data = (
+                    _tensor_sequence_to_numpy(tensors, storage_dtype=storage_dtype)
+                    if tensors
+                    else np.empty((0, 0), dtype=np.dtype(storage_dtype))
+                )
                 if data.shape[0] != token_rows:
                     raise ValueError(
                         f"layer_{layer} has {data.shape[0]} rows, expected {token_rows} from metadata."
@@ -1600,7 +1618,7 @@ def _write_activation_shard(
                 dataset.attrs["surface"] = surface_names.get(layer, f"decoder_layer_{layer}_answer_tokens")
 
             if logits_by_batch:
-                logits = torch.cat(list(logits_by_batch), dim=0).detach().cpu().numpy()
+                logits = _tensor_sequence_to_numpy(logits_by_batch, storage_dtype=storage_dtype)
                 logits_group = handle.require_group("logits")
                 logits_dataset = logits_group.create_dataset(task, data=logits, compression="gzip")
                 logits_dataset.attrs["position_convention"] = "next-token logits at answer token position minus 1"
@@ -1609,6 +1627,312 @@ def _write_activation_shard(
         raise
 
     return shard_path
+
+
+def _tensor_sequence_to_numpy(
+    tensors: Sequence[Any],
+    *,
+    storage_dtype: Literal["float16", "float32"],
+) -> Any:
+    import numpy as np
+    import torch
+
+    if storage_dtype == "float16":
+        torch_dtype = torch.float16
+        numpy_dtype = np.float16
+    elif storage_dtype == "float32":
+        torch_dtype = torch.float32
+        numpy_dtype = np.float32
+    else:
+        raise ValueError(f"Unsupported activation storage dtype: {storage_dtype!r}")
+    return torch.cat(list(tensors), dim=0).detach().cpu().to(dtype=torch_dtype).numpy().astype(numpy_dtype, copy=False)
+
+
+def merge_activation_hdf5_shards(
+    shard_paths: Sequence[Path],
+    *,
+    output_path: Path,
+    overwrite: bool = False,
+) -> ActivationMergeSummary:
+    import h5py
+    import numpy as np
+
+    shard_paths = tuple(Path(path) for path in shard_paths)
+    if not shard_paths:
+        raise ValueError("At least one activation shard is required.")
+    missing = [str(path) for path in shard_paths if not path.exists()]
+    if missing:
+        raise FileNotFoundError(f"Activation shard(s) not found: {missing}")
+    if output_path.exists() and not overwrite:
+        raise FileExistsError(f"{output_path} already exists. Use overwrite=True to replace it.")
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_file = tempfile.NamedTemporaryFile(
+        prefix=f".{output_path.name}.merge.",
+        suffix=".h5",
+        dir=output_path.parent,
+        delete=False,
+    )
+    tmp_file.close()
+    tmp_path = Path(tmp_file.name)
+
+    examples_by_task: dict[str, int] = {}
+    token_rows_by_task: dict[str, int] = {}
+    try:
+        with h5py.File(shard_paths[0], "r") as first, h5py.File(tmp_path, "w") as target:
+            _copy_root_attrs(target, first)
+            target.attrs["created_at"] = datetime.now(UTC).isoformat()
+            target.attrs["merged_at"] = datetime.now(UTC).isoformat()
+            target.attrs["merged_shard_count"] = len(shard_paths)
+            target.attrs["source_output_path"] = str(output_path)
+
+            for shard_path in shard_paths[1:]:
+                with h5py.File(shard_path, "r") as shard:
+                    _verify_root_attrs_compatible(first, shard)
+
+            tasks = _tasks_in_activation_shards(shard_paths)
+            for task in tasks:
+                merged = _collect_merged_activation_task(shard_paths, task=task)
+                examples_by_task[task] = len(merged["example_source_indices"])
+                token_rows_by_task[task] = len(merged["labels"])
+
+                metadata = target.require_group("metadata")
+                task_metadata = metadata.create_group(task)
+                for attr_name, attr_value in merged["attrs"].items():
+                    task_metadata.attrs[attr_name] = attr_value
+                task_metadata.attrs["merged_at"] = target.attrs["merged_at"]
+                task_metadata.attrs["merged_shard_count"] = int(merged["shard_count"])
+                task_metadata.attrs["merged_source_paths_json"] = json.dumps(
+                    [str(path) for path in merged["source_paths"]],
+                    sort_keys=True,
+                )
+                task_metadata.attrs["merged_example_count"] = examples_by_task[task]
+                task_metadata.attrs["merged_token_rows"] = token_rows_by_task[task]
+
+                for dataset_name in _TOKEN_METADATA_DATASETS:
+                    task_metadata.create_dataset(dataset_name, data=np.asarray(merged[dataset_name]))
+                for dataset_name in _EXAMPLE_INT_METADATA_DATASETS:
+                    task_metadata.create_dataset(dataset_name, data=np.asarray(merged[dataset_name]))
+                string_dtype = h5py.string_dtype(encoding="utf-8")
+                for dataset_name in _EXAMPLE_STRING_METADATA_DATASETS:
+                    task_metadata.create_dataset(
+                        dataset_name,
+                        data=np.asarray(merged[dataset_name], dtype=object),
+                        dtype=string_dtype,
+                    )
+
+                for layer, payload in sorted(merged["layers"].items()):
+                    layer_group = target.require_group(f"layer_{layer}")
+                    dataset = layer_group.create_dataset(task, data=payload["data"], compression="gzip")
+                    for attr_name, attr_value in payload["attrs"].items():
+                        dataset.attrs[attr_name] = attr_value
+
+                if merged["logits"] is not None:
+                    logits_group = target.require_group("logits")
+                    logits_dataset = logits_group.create_dataset(task, data=merged["logits"]["data"], compression="gzip")
+                    for attr_name, attr_value in merged["logits"]["attrs"].items():
+                        logits_dataset.attrs[attr_name] = attr_value
+
+        output_path.unlink(missing_ok=True)
+        tmp_path.replace(output_path)
+    except Exception:
+        tmp_path.unlink(missing_ok=True)
+        raise
+
+    return ActivationMergeSummary(
+        output_path=output_path,
+        shard_paths=shard_paths,
+        tasks=tuple(sorted(examples_by_task)),
+        examples_by_task=examples_by_task,
+        token_rows_by_task=token_rows_by_task,
+    )
+
+
+_TOKEN_METADATA_DATASETS = (
+    "source_indices",
+    "output_indices",
+    "labels",
+    "example_splits",
+    "example_indices",
+    "token_positions",
+    "logit_positions",
+)
+_EXAMPLE_INT_METADATA_DATASETS = (
+    "example_source_indices",
+    "example_output_indices",
+    "example_labels",
+    "example_token_counts",
+)
+_EXAMPLE_STRING_METADATA_DATASETS = (
+    "detected_answer_texts",
+    "decoded_answer_texts",
+    "char_spans_json",
+    "messages_json",
+    "rendered_texts",
+    "source_datasets",
+    "raw_labels_json",
+    "label_schemas",
+    "example_metadata_json",
+)
+
+
+def _tasks_in_activation_shards(shard_paths: Sequence[Path]) -> tuple[str, ...]:
+    import h5py
+
+    tasks: set[str] = set()
+    for shard_path in shard_paths:
+        with h5py.File(shard_path, "r") as shard:
+            metadata = shard.get("metadata")
+            if metadata is None:
+                continue
+            tasks.update(str(task) for task in metadata.keys())
+    if not tasks:
+        raise ValueError("No metadata task groups found in activation shards.")
+    return tuple(sorted(tasks))
+
+
+def _collect_merged_activation_task(shard_paths: Sequence[Path], *, task: str) -> dict[str, Any]:
+    import h5py
+    import numpy as np
+
+    token_values: dict[str, list[Any]] = {name: [] for name in _TOKEN_METADATA_DATASETS}
+    example_values: dict[str, list[Any]] = {
+        name: [] for name in (*_EXAMPLE_INT_METADATA_DATASETS, *_EXAMPLE_STRING_METADATA_DATASETS)
+    }
+    example_splits = [0]
+    layers: dict[int, dict[str, Any]] = {}
+    logits_payloads: list[Any] = []
+    logits_attrs: dict[str, Any] | None = None
+    first_attrs: dict[str, Any] | None = None
+    seen_examples: set[tuple[int, int]] = set()
+    source_paths: list[Path] = []
+
+    for shard_path in shard_paths:
+        with h5py.File(shard_path, "r") as shard:
+            if f"metadata/{task}" not in shard:
+                continue
+            source_paths.append(shard_path)
+            meta = shard[f"metadata/{task}"]
+            if first_attrs is None:
+                first_attrs = dict(meta.attrs.items())
+            else:
+                _verify_merge_task_attrs_compatible(first_attrs, dict(meta.attrs.items()), task=task)
+
+            splits = meta["example_splits"][...].astype(np.int64)
+            source_indices = meta["example_source_indices"][...].astype(np.int64)
+            output_indices = meta["example_output_indices"][...].astype(np.int64)
+            layers_in_shard = _layer_indices_for_task(shard, meta, task=task)
+            for layer in layers_in_shard:
+                dataset = shard[f"layer_{layer}/{task}"]
+                payload = layers.setdefault(layer, {"pieces": [], "attrs": dict(dataset.attrs.items())})
+                if payload["attrs"].get("surface") != dataset.attrs.get("surface"):
+                    raise FileExistsError(f"Cannot merge {task}: layer_{layer} surface attr differs.")
+
+            if f"logits/{task}" in shard:
+                logits_dataset = shard[f"logits/{task}"]
+                logits_attrs = logits_attrs or dict(logits_dataset.attrs.items())
+                if logits_attrs != dict(logits_dataset.attrs.items()):
+                    raise FileExistsError(f"Cannot merge {task}: logits attrs differ.")
+                logits_payloads.append(logits_dataset[...])
+
+            for example_idx, (source_index, output_index) in enumerate(zip(source_indices, output_indices, strict=True)):
+                key = (int(source_index), int(output_index))
+                if key in seen_examples:
+                    raise FileExistsError(
+                        f"Cannot merge {task}: duplicate example source_index={source_index} output_index={output_index}."
+                    )
+                seen_examples.add(key)
+                start = int(splits[example_idx])
+                end = int(splits[example_idx + 1])
+                token_count = end - start
+
+                for dataset_name in ("source_indices", "output_indices", "labels", "token_positions"):
+                    token_values[dataset_name].extend(meta[dataset_name][start:end].tolist())
+                if "logit_positions" in meta:
+                    logit_positions = meta["logit_positions"][...]
+                    if len(logit_positions) == 0:
+                        pass
+                    elif len(logit_positions) == len(meta["labels"]):
+                        token_values["logit_positions"].extend(logit_positions[start:end].tolist())
+                    else:
+                        raise ValueError(
+                            f"Cannot merge {task}: logit_positions has {len(logit_positions)} rows "
+                            f"but labels has {len(meta['labels'])}."
+                        )
+                token_values["example_indices"].extend([len(example_splits) - 1] * token_count)
+                example_splits.append(example_splits[-1] + token_count)
+
+                for dataset_name in _EXAMPLE_INT_METADATA_DATASETS:
+                    example_values[dataset_name].append(int(meta[dataset_name][example_idx]))
+                for dataset_name in _EXAMPLE_STRING_METADATA_DATASETS:
+                    example_values[dataset_name].append(_decode_hdf5_scalar(meta[dataset_name][example_idx]))
+                for layer in layers_in_shard:
+                    layers[layer]["pieces"].append(shard[f"layer_{layer}/{task}"][start:end])
+
+    if first_attrs is None:
+        raise ValueError(f"No shards contained task {task!r}.")
+
+    token_values["example_splits"] = example_splits
+    merged_layers = {
+        layer: {
+            "data": np.concatenate(payload["pieces"], axis=0) if payload["pieces"] else np.empty((0, 0)),
+            "attrs": payload["attrs"],
+        }
+        for layer, payload in layers.items()
+    }
+    for layer, payload in merged_layers.items():
+        if payload["data"].shape[0] != len(token_values["labels"]):
+            raise ValueError(
+                f"Merged layer_{layer}/{task} has {payload['data'].shape[0]} rows, "
+                f"expected {len(token_values['labels'])}."
+            )
+
+    merged: dict[str, Any] = {
+        **token_values,
+        **example_values,
+        "attrs": first_attrs,
+        "layers": merged_layers,
+        "logits": None,
+        "source_paths": tuple(source_paths),
+        "shard_count": len(source_paths),
+    }
+    if logits_payloads:
+        merged["logits"] = {
+            "data": np.concatenate(logits_payloads, axis=0),
+            "attrs": logits_attrs or {},
+        }
+    return merged
+
+
+def _verify_merge_task_attrs_compatible(existing: Mapping[str, Any], incoming: Mapping[str, Any], *, task: str) -> None:
+    for attr_name in (
+        "dataset_id",
+        "model_id",
+        "processor_id",
+        "backend",
+        "aggregation",
+        "activation_storage_dtype",
+    ):
+        if existing.get(attr_name) != incoming.get(attr_name):
+            raise FileExistsError(f"Cannot merge {task}: metadata attr {attr_name!r} differs.")
+
+
+def _layer_indices_for_task(handle: Any, metadata: Any, *, task: str) -> tuple[int, ...]:
+    raw_layers = metadata.attrs.get("layers_json")
+    layers = tuple(int(layer) for layer in json.loads(raw_layers)) if raw_layers else ()
+    if layers:
+        return layers
+    found = []
+    for group_name in handle.keys():
+        if group_name.startswith("layer_") and task in handle[group_name]:
+            found.append(int(group_name.removeprefix("layer_")))
+    return tuple(sorted(found))
+
+
+def _decode_hdf5_scalar(value: Any) -> str:
+    if isinstance(value, bytes):
+        return value.decode("utf-8")
+    return str(value)
 
 
 def _merge_activation_shard(
@@ -1800,6 +2124,7 @@ def _extraction_settings_attrs(settings: ActivationExtractionSettings) -> dict[s
         "extraction_max_length": "" if settings.max_length is None else settings.max_length,
         "extraction_capture_logits": settings.capture_logits,
         "extraction_resume": settings.resume,
+        "extraction_storage_dtype": settings.storage_dtype,
     }
 
 

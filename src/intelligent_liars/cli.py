@@ -14,6 +14,7 @@ from intelligent_liars.activations import (
     default_activation_output_path,
     extract_dataset_activations,
     extract_rollout_activations,
+    merge_activation_hdf5_shards,
     parse_layer_spec,
 )
 from intelligent_liars.activation_backends import ActivationBackend, TransformersHookBackend
@@ -1276,6 +1277,11 @@ def extract_activations(
         False,
         help="Also store next-token logits at answer-token scoring positions.",
     ),
+    storage_dtype: str = typer.Option(
+        "float16",
+        "--storage-dtype",
+        help='Activation/logit HDF5 storage dtype: "float16" or "float32".',
+    ),
 ) -> None:
     """Extract decoder activations from rollouts or named source datasets.
 
@@ -1296,6 +1302,7 @@ def extract_activations(
         resume: Reuse compatible existing layers and skip replacing already-written requested layers.
         backend_name: Activation backend, either `transformers` or `nnsight`.
         capture_logits: Store next-token logits at answer-token positions.
+        storage_dtype: Floating dtype used when writing activations to HDF5.
 
     References:
         Rollout inputs default to `data/rollouts/{task}__{MODEL_SLUG}.json`.
@@ -1348,6 +1355,12 @@ def extract_activations(
         raise typer.BadParameter('backend must be "transformers" or "nnsight".')
 
     layer_indices = parse_layer_spec(layers, activation_backend.decoder_layer_count())
+    if storage_dtype == "float16":
+        storage_dtype_value = "float16"
+    elif storage_dtype == "float32":
+        storage_dtype_value = "float32"
+    else:
+        raise typer.BadParameter('storage-dtype must be "float16" or "float32".')
     output_path = _project_path(
         project_root,
         output_path or default_activation_output_path(activation_backend.model_id),
@@ -1362,6 +1375,7 @@ def extract_activations(
         max_length=max_length,
         capture_logits=capture_logits,
         resume=resume,
+        storage_dtype=storage_dtype_value,
     )
 
     summaries = []
@@ -1398,5 +1412,32 @@ def extract_activations(
             f"skipped_labels={summary.skipped_labels} "
             f"masked_tokens={summary.masked_tokens} "
             f"layers={list(summary.layers)} "
+            f"path={summary.output_path}"
+        )
+
+
+@app.command("merge-activation-shards")
+def merge_activation_shards(
+    paths: list[Path] = typer.Argument(..., help="Activation HDF5 shard paths to merge."),
+    output_path: Path = typer.Option(..., "--output", "-o", help="Final merged HDF5 output path."),
+    overwrite: bool = typer.Option(False, help="Replace an existing merged output file."),
+) -> None:
+    """Merge independently extracted activation HDF5 shards."""
+
+    project_root = _resolve_project_root(None)
+    resolved_paths = [_project_path(project_root, path) for path in paths]
+    output_path = _project_path(project_root, output_path)
+    summary = merge_activation_hdf5_shards(
+        resolved_paths,
+        output_path=output_path,
+        overwrite=overwrite,
+    )
+    for task in summary.tasks:
+        console.print(
+            "[green]Merged activation shards[/green] "
+            f"task={task} "
+            f"examples={summary.examples_by_task[task]} "
+            f"token_rows={summary.token_rows_by_task[task]} "
+            f"shards={len(summary.shard_paths)} "
             f"path={summary.output_path}"
         )
