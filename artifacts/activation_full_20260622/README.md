@@ -4,7 +4,7 @@
 
 - HDF5: `artifacts/activation_full_20260622/extracted_feats_all_layers_qwen3-vl-8b-thinking.h5`
 - Size: `11514713158` bytes
-- Google Drive artifact folder: `https://drive.google.com/drive/folders/1C7KUkZHCfQXnpkt6debhCcA4YtV8eOHX?usp=sharing`
+- Google Drive artifact folder: `https://drive.google.com/drive/folders/1C7KUkZHCfQXnpkt6debhCcA4YtV8eOHX`
 - Remote source: `/dev/shm/intelligent_liars_activation/results/extracted_feats_all_layers_qwen3-vl-8b-thinking.h5`
 - Model: `Qwen/Qwen3-VL-8B-Thinking`
 - Format: `qwen_answer_token_activations_v2`

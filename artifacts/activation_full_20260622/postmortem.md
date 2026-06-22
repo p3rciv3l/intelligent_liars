@@ -17,7 +17,7 @@ artifacts/activation_full_20260622/extracted_feats_all_layers_qwen3-vl-8b-thinki
 The Google Drive folder for the external artifact is:
 
 ```text
-https://drive.google.com/drive/folders/1C7KUkZHCfQXnpkt6debhCcA4YtV8eOHX?usp=sharing
+https://drive.google.com/drive/folders/1C7KUkZHCfQXnpkt6debhCcA4YtV8eOHX
 ```
 
 The full HDF5 is intentionally not committed to GitHub. Keep the binary in Google Drive or local ignored storage, and keep only metadata/logs in the repo.
