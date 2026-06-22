@@ -22,6 +22,7 @@ from intelligent_liars.activations import (
     ActivationDataset,
     ActivationExample,
     ActivationExtractionSummary,
+    ActivationMergeSummary,
 )
 from intelligent_liars.activation_backends import ActivationSurface
 from intelligent_liars.judging import (
@@ -186,6 +187,46 @@ def test_extract_activations_sycophancy_guard_runs_before_model_load(tmp_path, m
     assert not isinstance(result.exception, AssertionError)
     assert result.exception is not None
     assert "Sycophancy source directory not found" in str(result.exception)
+
+
+def test_merge_activation_shards_cli_resolves_paths(tmp_path, monkeypatch):
+    seen = {}
+
+    def fake_merge(paths, *, output_path, overwrite):
+        seen["paths"] = paths
+        seen["output_path"] = output_path
+        seen["overwrite"] = overwrite
+        return ActivationMergeSummary(
+            output_path=output_path,
+            shard_paths=tuple(paths),
+            tasks=("roleplaying__plain",),
+            examples_by_task={"roleplaying__plain": 2},
+            token_rows_by_task={"roleplaying__plain": 3},
+        )
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("intelligent_liars.cli.merge_activation_hdf5_shards", fake_merge)
+    (tmp_path / "pyproject.toml").write_text("[project]\nname='example'\n")
+    (tmp_path / "src" / "intelligent_liars").mkdir(parents=True)
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "merge-activation-shards",
+            "tmp/shard-1.h5",
+            "tmp/shard-2.h5",
+            "--output",
+            "results/merged.h5",
+            "--overwrite",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert seen["paths"] == [tmp_path / "tmp/shard-1.h5", tmp_path / "tmp/shard-2.h5"]
+    assert seen["output_path"] == tmp_path / "results/merged.h5"
+    assert seen["overwrite"] is True
+    assert "examples=2" in result.output
+    assert "token_rows=3" in result.output
 
 
 def test_run_insider_trading_sweep_preflights_before_qwen_load(tmp_path, monkeypatch):

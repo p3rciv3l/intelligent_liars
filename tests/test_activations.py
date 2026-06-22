@@ -23,6 +23,7 @@ from intelligent_liars.activations import (
     extract_dataset_activations,
     load_named_activation_examples,
     load_rollout_activation_examples,
+    merge_activation_hdf5_shards,
     normalise_deception_label,
     parse_layer_spec,
     render_activation_example,
@@ -1018,6 +1019,138 @@ def test_write_activation_hdf5_overwrite_removes_stale_task_outputs(tmp_path):
         assert "roleplaying__plain" not in handle["layer_1"]
         assert "roleplaying__plain" not in handle.get("logits", {})
         assert handle["layer_0/roleplaying__plain"][...].tolist() == [[2.0, 2.0, 2.0]]
+
+
+def test_merge_activation_hdf5_shards_concatenates_examples_and_layers(tmp_path):
+    torch = pytest.importorskip("torch")
+    h5py = pytest.importorskip("h5py")
+
+    shard_1 = tmp_path / "shard-1.h5"
+    shard_2 = tmp_path / "shard-2.h5"
+    output_path = tmp_path / "merged.h5"
+
+    common_kwargs = {
+        "task": "roleplaying__plain",
+        "model_id": DEFAULT_MODEL_ID,
+        "backend_name": "unit-test",
+        "surface_names": {0: "decoder_layer_0_answer_tokens"},
+        "preserved_input_keys": ("attention_mask", "input_ids"),
+        "dataset_id": "roleplaying.json",
+        "processor_id": DEFAULT_MODEL_ID,
+        "overwrite": False,
+    }
+    write_activation_hdf5(
+        output_path=shard_1,
+        layers=(0,),
+        activations_by_layer={0: [torch.tensor([[1.0, 2.0], [3.0, 4.0]])]},
+        source_indices=[10, 10],
+        output_indices=[0, 0],
+        labels=[HONEST, HONEST],
+        example_indices=[0, 0],
+        token_positions=[5, 6],
+        example_splits=[0, 2],
+        example_source_indices=[10],
+        example_output_indices=[0],
+        example_labels=[HONEST],
+        example_token_counts=[2],
+        detected_answer_texts=["yes"],
+        decoded_answer_texts=["yes"],
+        char_spans_json=["[[0, 3]]"],
+        messages_json=['[{"role": "assistant", "content": "yes"}]'],
+        rendered_texts=["<assistant>yes"],
+        source_datasets=["roleplaying.json"],
+        raw_labels_json=["1"],
+        label_schemas=[LabelSchema.ROLEPLAYING_1_TO_7.value],
+        example_metadata_json=['{"source_index": 10}'],
+        **common_kwargs,
+    )
+    write_activation_hdf5(
+        output_path=shard_2,
+        layers=(0,),
+        activations_by_layer={0: [torch.tensor([[5.0, 6.0]])]},
+        source_indices=[11],
+        output_indices=[0],
+        labels=[DECEPTIVE],
+        example_indices=[0],
+        token_positions=[7],
+        example_splits=[0, 1],
+        example_source_indices=[11],
+        example_output_indices=[0],
+        example_labels=[DECEPTIVE],
+        example_token_counts=[1],
+        detected_answer_texts=["no"],
+        decoded_answer_texts=["no"],
+        char_spans_json=["[[0, 2]]"],
+        messages_json=['[{"role": "assistant", "content": "no"}]'],
+        rendered_texts=["<assistant>no"],
+        source_datasets=["roleplaying.json"],
+        raw_labels_json=["7"],
+        label_schemas=[LabelSchema.ROLEPLAYING_1_TO_7.value],
+        example_metadata_json=['{"source_index": 11}'],
+        **common_kwargs,
+    )
+
+    summary = merge_activation_hdf5_shards([shard_1, shard_2], output_path=output_path)
+
+    assert summary.tasks == ("roleplaying__plain",)
+    assert summary.examples_by_task["roleplaying__plain"] == 2
+    assert summary.token_rows_by_task["roleplaying__plain"] == 3
+    with h5py.File(output_path, "r") as handle:
+        assert handle["layer_0/roleplaying__plain"].shape == (3, 2)
+        assert handle["metadata/roleplaying__plain/example_splits"][...].tolist() == [0, 2, 3]
+        assert handle["metadata/roleplaying__plain/example_indices"][...].tolist() == [0, 0, 1]
+        assert handle["metadata/roleplaying__plain/example_source_indices"][...].tolist() == [10, 11]
+        assert handle["metadata/roleplaying__plain"].attrs["merged_shard_count"] == 2
+
+
+def test_merge_activation_hdf5_shards_rejects_duplicate_examples(tmp_path):
+    torch = pytest.importorskip("torch")
+
+    shard_1 = tmp_path / "shard-1.h5"
+    shard_2 = tmp_path / "shard-2.h5"
+    common_kwargs = {
+        "task": "roleplaying__plain",
+        "layers": (0,),
+        "source_indices": [10],
+        "output_indices": [0],
+        "labels": [HONEST],
+        "example_indices": [0],
+        "token_positions": [5],
+        "example_splits": [0, 1],
+        "example_source_indices": [10],
+        "example_output_indices": [0],
+        "example_labels": [HONEST],
+        "example_token_counts": [1],
+        "detected_answer_texts": ["yes"],
+        "decoded_answer_texts": ["yes"],
+        "char_spans_json": ["[[0, 3]]"],
+        "messages_json": ['[{"role": "assistant", "content": "yes"}]'],
+        "rendered_texts": ["<assistant>yes"],
+        "source_datasets": ["roleplaying.json"],
+        "raw_labels_json": ["1"],
+        "label_schemas": [LabelSchema.ROLEPLAYING_1_TO_7.value],
+        "example_metadata_json": ['{"source_index": 10}'],
+        "model_id": DEFAULT_MODEL_ID,
+        "backend_name": "unit-test",
+        "surface_names": {0: "decoder_layer_0_answer_tokens"},
+        "preserved_input_keys": ("attention_mask", "input_ids"),
+        "dataset_id": "roleplaying.json",
+        "processor_id": DEFAULT_MODEL_ID,
+        "overwrite": False,
+    }
+    write_activation_hdf5(
+        output_path=shard_1,
+        activations_by_layer={0: [torch.tensor([[1.0, 2.0]])]},
+        **common_kwargs,
+    )
+    write_activation_hdf5(
+        output_path=shard_2,
+        activations_by_layer={0: [torch.tensor([[3.0, 4.0]])]},
+        **common_kwargs,
+    )
+
+    with pytest.raises(FileExistsError, match="duplicate example"):
+        merge_activation_hdf5_shards([shard_1, shard_2], output_path=tmp_path / "merged.h5")
 
 
 class FakeSaveTensor:
