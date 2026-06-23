@@ -1,0 +1,7 @@
+[core]
+    remote = gdrive-artifacts
+    analytics = false
+[cache]
+    type = "reflink,hardlink,copy"
+['remote "gdrive-artifacts"']
+    url = gdrive://1C7KUkZHCfQXnpkt6debhCcA4YtV8eOHX

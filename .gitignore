@@ -17,6 +17,7 @@ wheels/
 .env
 .env.*
 !.env.example
+.secrets/
 
 # Generated experiment artifacts
 data/*
@@ -50,7 +51,10 @@ data/geometry_of_truth/*
 data/internal_state/*
 !data/internal_state/*.csv
 results/
-artifacts/
+artifacts/**
+!artifacts/**/
+!artifacts/**/*.dvc
+!artifacts/**/.gitignore
 checkpoints/
 models/
 wandb/

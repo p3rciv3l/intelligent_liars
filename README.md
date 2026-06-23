@@ -83,6 +83,69 @@ reference repos. If you intentionally sync local files, exclude those paths.
 After artifacts are copied off the box, stop or destroy the Vast instance from
 the Vast dashboard or CLI so it does not keep billing.
 
+## Artifact Storage
+
+Large generated files stay out of Git. This repo uses DVC metadata for large
+artifacts and keeps the actual bytes in the existing Google Drive artifact
+folder.
+
+The configured DVC remote is:
+
+```text
+gdrive-artifacts -> gdrive://1C7KUkZHCfQXnpkt6debhCcA4YtV8eOHX
+```
+
+Drive folder:
+https://drive.google.com/drive/folders/1C7KUkZHCfQXnpkt6debhCcA4YtV8eOHX
+
+Run DVC through `uvx` so DVC and the Google Drive plugin do not become normal
+model-runtime dependencies:
+
+```bash
+uvx --from "dvc[gdrive]" dvc status
+uvx --from "dvc[gdrive]" dvc pull
+```
+
+Google currently blocks the default DVC Google Drive OAuth app. This repo uses a
+custom Google OAuth desktop client in the `intelligent-liars-dvc` Google Cloud
+project. The tracked `.dvc/config` contains only the remote URL. Local OAuth
+client secrets and user tokens live in ignored files:
+
+```text
+.dvc/config.local
+.secrets/dvc-gdrive-user-credentials.json
+```
+
+Keep those files out of Git. To configure a local checkout with the project
+owner's OAuth client:
+
+```bash
+uvx --from "dvc[gdrive]" dvc remote modify --local gdrive-artifacts \
+  gdrive_client_id "<google-oauth-client-id>"
+uvx --from "dvc[gdrive]" dvc remote modify --local gdrive-artifacts \
+  gdrive_client_secret "<google-oauth-client-secret>"
+uvx --from "dvc[gdrive]" dvc remote modify --local gdrive-artifacts \
+  gdrive_user_credentials_file "$PWD/.secrets/dvc-gdrive-user-credentials.json"
+uvx --from "dvc[gdrive]" dvc push
+```
+
+Do not use a service-account key for this My Drive folder. Google Drive rejects
+service-account uploads to My Drive with `Service Accounts do not have storage
+quota`; service accounts require a Shared Drive or domain delegation setup.
+
+On a headless GPU box, prefer copying new artifacts back with `rsync` first,
+then run `dvc add` and `dvc push` from a local machine with browser access:
+
+```bash
+uvx --from "dvc[gdrive]" dvc add artifacts/activations/<run>/<file>.h5
+uvx --from "dvc[gdrive]" dvc push
+git add .dvc .dvcignore artifacts/**/*.dvc .gitignore README.md
+git commit -m "track activation artifact with dvc"
+```
+
+The actual HDF5 files remain ignored; only `.dvc` pointer files should be
+committed.
+
 To verify that the Hugging Face processor is reachable without loading the full
 model:
 
