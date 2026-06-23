@@ -5,6 +5,15 @@ load Qwen3-VL, extract answer-token activations from the text decoder, train
 truth directions, and test whether steering flips correct-vs-wrong answer
 logprobs without collapsing outputs.
 
+## Repository Layout
+
+- `src/intelligent_liars/`: package code and CLI commands.
+- `tests/`: pytest coverage for loaders, grading, activation extraction, and probes.
+- `data/`: tracked prompt/source data plus current Qwen rollout JSONs.
+- `docs/`: tracked run notes, postmortems, handoffs, and lessons.
+- `artifacts/`: ignored generated outputs, including activation HDF5s and probe JSONs.
+- `references/`: ignored local checkouts and papers.
+
 ## Setup
 
 This repo uses `uv`.
@@ -64,7 +73,7 @@ export VAST_SSH_PORT="<port>"
 export REMOTE_REPO="/workspace/intelligent_liars"
 rsync -avP -e "ssh -p $VAST_SSH_PORT" "$VAST_HOST:$REMOTE_REPO/data/rollouts/" ./data/rollouts/
 rsync -avP -e "ssh -p $VAST_SSH_PORT" "$VAST_HOST:$REMOTE_REPO/data/insider_trading/"*generations.json ./data/insider_trading/
-rsync -avP -e "ssh -p $VAST_SSH_PORT" "$VAST_HOST:$REMOTE_REPO/results/" ./results/
+rsync -avP -e "ssh -p $VAST_SSH_PORT" "$VAST_HOST:$REMOTE_REPO/results/" ./artifacts/activations/
 ```
 
 Use the clone-first flow above rather than copying a local checkout to the
@@ -161,7 +170,7 @@ uv run --no-sync intelligent-liars extract-activations \
 The default output is:
 
 ```text
-results/extracted_feats_all_layers_qwen3-vl-8b-thinking.h5
+artifacts/activations/extracted_feats_all_layers_qwen3-vl-8b-thinking.h5
 ```
 
 Inside the file, activations are stored at `layer_{idx}/{task}` with shape

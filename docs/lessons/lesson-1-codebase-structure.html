@@ -153,7 +153,7 @@
   <div class="callout">
     <strong>Separate these three things immediately:</strong>
     <ul class="tight">
-      <li><strong>Data files</strong>: CSV, YAML, JSON, and HDF5 files stored under <code>data/</code>, <code>references/</code>, and <code>results/</code>.</li>
+      <li><strong>Data files</strong>: CSV, YAML, JSON, and HDF5 files stored under <code>data/</code>, <code>references/</code>, and <code>artifacts/</code>.</li>
       <li><strong>Python objects</strong>: dataclasses such as <code>PromptExample</code>, <code>ActivationExample</code>, <code>ProcessorBatch</code>, and <code>DetectionMask</code>.</li>
       <li><strong>Model computation</strong>: Qwen3-VL forward passes or generation calls. These create text or hidden-state tensors, but they are not the labels by themselves.</li>
     </ul>
@@ -168,7 +168,7 @@
     <tr><td>Generated rollout</td><td><code>data/rollouts/roleplaying__plain__qwen3-vl-8b-thinking.json</code></td><td>Qwen's generated assistant output plus metadata and placeholder labels.</td><td>Not final judged labels until grading fills them.</td></tr>
     <tr><td>Activation dataset</td><td><code>ActivationDataset(task, examples)</code></td><td>A normalized in-memory list of labeled message examples.</td><td>Not tensorized yet.</td></tr>
     <tr><td>Detection mask</td><td><code>DetectionMask.tensor</code></td><td>A boolean row selector over token positions after processor tokenization.</td><td>Not an attention mask. It does not alter what the model can see.</td></tr>
-    <tr><td>Activation HDF5</td><td><code>results/extracted_feats_all_layers_qwen3-vl-8b-thinking.h5</code></td><td>The probe input artifact: hidden-state rows plus labels and metadata.</td><td>Not the probe trainer itself.</td></tr>
+    <tr><td>Activation HDF5</td><td><code>artifacts/activations/extracted_feats_all_layers_qwen3-vl-8b-thinking.h5</code></td><td>The probe input artifact: hidden-state rows plus labels and metadata.</td><td>Not the probe trainer itself.</td></tr>
   </table>
 
   <h2>2. Main Anchor Architecture Diagram</h2>
@@ -220,7 +220,7 @@
       <text x="265" y="426" class="tiny">qwen generations</text>
       <rect x="252" y="462" width="168" height="62" class="box" fill="#fce7f3"></rect>
       <text x="265" y="483" class="small">activation HDF5</text>
-      <text x="265" y="498" class="tiny">results/*.h5</text>
+      <text x="265" y="498" class="tiny">artifacts/activations/*.h5</text>
       <text x="265" y="512" class="tiny">probe input artifact</text>
 
       <rect x="474" y="70" width="220" height="506" fill="#f8fafc" stroke="#94a3b8" rx="6"></rect>

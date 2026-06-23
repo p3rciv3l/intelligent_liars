@@ -94,7 +94,7 @@ Keep the first pass close to Truth Spec and avoid multimodal I/O until the text 
 - Rollout generation and grading live in `src/intelligent_liars/rollouts.py` and `src/intelligent_liars/judging.py`.
 - Dataset adapters, label schemas, message-span masking, and HDF5 writes live in `src/intelligent_liars/activations.py`.
 - Decoder extraction backends live in `src/intelligent_liars/activation_backends.py` and `src/intelligent_liars/nnsight_backend.py`.
-- Activation outputs should default to `results/extracted_feats_all_layers_qwen3-vl-8b-thinking.h5`.
+- Activation outputs should default to `artifacts/activations/extracted_feats_all_layers_qwen3-vl-8b-thinking.h5`.
 
 ## Current Sweep State
 
@@ -160,7 +160,7 @@ Current default:
   It writes shard logs to `logs/qwen-shard-*.log`, shard JSONs to `data/rollout_shards/`, and merged files to `data/rollouts/`. Use `TASKS=sandbagging_v2__wmdp_mmlu` to skip already recovered roleplaying output.
 - Roleplaying judging is API/network-bound, not GPU-bound. After generation merge, run it separately with structured outputs and conservative concurrency, e.g. `uv run --no-sync intelligent-liars grade-rollouts -p data/rollouts/roleplaying__plain__qwen3-vl-8b-thinking.json --max-workers 10 --continue-on-error`. Sandbagging grading is deterministic and local.
 - Clone the repo on the instance; do not upload the local checkout with `.env`, `.venv`, caches, or private references.
-- Fetch `data/rollouts/`, `data/insider_trading/*generations.json`, and `results/` before destroying the instance.
+- Fetch `data/rollouts/`, `data/insider_trading/*generations.json`, and remote `results/` outputs before destroying the instance; store large local outputs under `artifacts/`.
 
 ## Multimodal Scope
 

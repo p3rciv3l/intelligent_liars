@@ -2,7 +2,7 @@
 
 Date: 2026-06-22
 
-Artifact root: `artifacts/activation_full_20260622`
+Artifact root: `artifacts/activations/activation_full_20260622`
 
 This postmortem covers the full Qwen3-VL activation extraction run for the judged rollout data. The run succeeded and the final HDF5 is local and validated, but there were several operational lessons worth preserving before the next activation/probe pass.
 
@@ -11,7 +11,7 @@ This postmortem covers the full Qwen3-VL activation extraction run for the judge
 The final local artifact is:
 
 ```text
-artifacts/activation_full_20260622/extracted_feats_all_layers_qwen3-vl-8b-thinking.h5
+artifacts/activations/activation_full_20260622/extracted_feats_all_layers_qwen3-vl-8b-thinking.h5
 ```
 
 The Google Drive folder for the external artifact is:
@@ -89,7 +89,7 @@ roleplaying__plain:        329 examples
 sandbagging_v2__wmdp_mmlu: 128 examples
 ```
 
-The insider rollout files were excluded because their labels are currently `unknown` under the extractor's binary-label logic. To use insider data for probe training, define the label mapping first instead of forcing it through the existing binary truth/deception path.
+The insider rollout files were excluded because their labels were not usable under the extractor's binary-label logic at extraction time. Later judging those rollouts does not backfill this HDF5; using insider data for probe training requires a separate activation extraction pass over the now-labeled insider tasks.
 
 This HDF5 is not yet a trained truth direction. It is the activation table needed for the next step.
 
@@ -98,8 +98,8 @@ This HDF5 is not yet a trained truth direction. It is the activation table neede
 1. Commit the activation extraction code and tests, not the ignored HDF5 artifacts.
 2. Destroy the Vast instance unless another immediate GPU job will use it. Billing continues while it is running, and the local HDF5 has already validated.
 3. Fix the processor warning in `activations.py`.
-4. Add a probe-training CLI that reads this HDF5, splits by example rather than token row, trains simple linear probes per layer, and reports held-out accuracy/AUC.
-5. Use the probe results to choose candidate layers before building steering hooks.
+4. Use the probe results to choose candidate layers before building steering hooks.
+5. Run a separate GPU activation extraction for the now-labeled insider tasks if insider directions should be represented.
 6. Add a smaller compression knob before the next full extraction run if iteration speed matters.
 
 ## Re-run Shape

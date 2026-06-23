@@ -2,7 +2,7 @@
 
 ## Output
 
-- HDF5: `artifacts/activation_full_20260622/extracted_feats_all_layers_qwen3-vl-8b-thinking.h5`
+- HDF5: `artifacts/activations/activation_full_20260622/extracted_feats_all_layers_qwen3-vl-8b-thinking.h5`
 - Size: `11514713158` bytes
 - Google Drive artifact folder: `https://drive.google.com/drive/folders/1C7KUkZHCfQXnpkt6debhCcA4YtV8eOHX`
 - Remote source: `/dev/shm/intelligent_liars_activation/results/extracted_feats_all_layers_qwen3-vl-8b-thinking.h5`
@@ -31,7 +31,7 @@
 | `sandbagging_v2__wmdp_mmlu` | 128 | 38,799 |
 | Total | 457 | 50,375 |
 
-The insider rollout files were not included in this full extraction because their raw labels are `unknown`, leaving zero usable examples for the current activation extractor.
+This HDF5 does not contain insider-trading hidden states. The insider rollout files were not usable at extraction time under the then-current binary-label logic; later judging those rollouts does not backfill this already-written HDF5.
 
 ## Timing
 
