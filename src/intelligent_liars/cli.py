@@ -45,6 +45,7 @@ from intelligent_liars.nnsight_backend import (
     NnsightActivationBackend,
     load_nnsight_bundle,
 )
+from intelligent_liars.probes import train_probe_directions
 from intelligent_liars.rollouts import (
     DEFAULT_INSIDER_GENERATION_SETTINGS,
     DEFAULT_ROLLOUT_PROMPT_SET,
@@ -192,7 +193,7 @@ def _generation_settings(
 
 def _rollout_task_needs_llm_judge(task: str) -> bool:
     base, _ = parse_task_name(task)
-    return base == "roleplaying"
+    return base in {"roleplaying", "insider_trading", "insider_trading_doubledown"}
 
 
 def _infer_rollout_task_from_path(path: Path) -> str:
@@ -551,7 +552,7 @@ def grade_rollouts(
         help="Testing hook: use this literal judge response instead of calling an API.",
     ),
 ) -> None:
-    """Grade generated roleplaying/sandbagging rollout JSON files.
+    """Grade generated Truth Spec-style rollout JSON files.
 
     Args:
         paths: Optional repeatable rollout paths. Defaults to generated Qwen
@@ -577,9 +578,10 @@ def grade_rollouts(
             of aborting the whole file.
         mock_response: Literal judge response for tests/smoke runs.
 
-    References:
+        References:
         Roleplaying grades use `data/roleplaying/grading_template.txt`.
         Sandbagging grades use the deterministic parser in `judging.py`.
+        Insider-trading rollout grades use `data/insider_trading/` judge prompts.
     """
 
     load_dotenv()
@@ -1250,7 +1252,7 @@ def extract_activations(
         None,
         "--output",
         "-o",
-        help="Output HDF5 path. Defaults to results/extracted_feats_all_layers_{model_slug}.h5.",
+        help="Output HDF5 path. Defaults to artifacts/activations/extracted_feats_all_layers_{model_slug}.h5.",
     ),
     layers: str = typer.Option(
         "all",
@@ -1441,3 +1443,72 @@ def merge_activation_shards(
             f"shards={len(summary.shard_paths)} "
             f"path={summary.output_path}"
         )
+
+
+@app.command("train-probes")
+def train_probes(
+    input_path: Path = typer.Option(
+        ...,
+        "--input",
+        "-i",
+        help="Activation HDF5 path produced by extract-activations.",
+    ),
+    output_path: Path = typer.Option(
+        ...,
+        "--output",
+        "-o",
+        help="Output JSON path for probe metrics.",
+    ),
+    tasks: list[str] | None = typer.Option(
+        None,
+        "--task",
+        "-t",
+        help="Activation task to train/evaluate. Repeatable. Defaults to every task in the HDF5.",
+    ),
+    project_root: Path | None = typer.Option(
+        None,
+        help="Project root. Relative input/output paths resolve under this root.",
+    ),
+    layers: str = typer.Option(
+        "all",
+        "--layers",
+        "-l",
+        help='Decoder layers to train on: "all", comma list, or range.',
+    ),
+    test_size: float = typer.Option(
+        0.25,
+        min=0.01,
+        max=0.99,
+        help="Held-out fraction for each within-task example split.",
+    ),
+    random_seed: int = typer.Option(0, help="Random seed for stratified example splits and logistic regression."),
+    max_iter: int = typer.Option(1000, min=1, help="Maximum logistic-regression iterations."),
+    regularization_c: float = typer.Option(
+        1.0,
+        "--c",
+        min=1e-9,
+        help="Inverse L2 regularization strength for logistic regression.",
+    ),
+) -> None:
+    """Train simple linear probes on mean-pooled answer-token activations."""
+
+    project_root = _resolve_project_root(project_root)
+    summary = train_probe_directions(
+        input_path=_project_path(project_root, input_path),
+        output_path=_project_path(project_root, output_path),
+        tasks=tasks,
+        layers=layers,
+        test_size=test_size,
+        random_seed=random_seed,
+        max_iter=max_iter,
+        regularization_c=regularization_c,
+    )
+    console.print(
+        "[green]Trained probes[/green] "
+        f"tasks={list(summary.tasks)} "
+        f"layers={list(summary.layers)} "
+        f"within_task={summary.within_task_results} "
+        f"cross_task={summary.cross_task_results} "
+        f"directions={summary.direction_results} "
+        f"path={summary.output_path}"
+    )

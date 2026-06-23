@@ -41,6 +41,8 @@ INSIDER_REPORT_LABELS: dict[str, Label] = {
     "invalid": SKIP,
     "unknown": SKIP,
     "ambiguous": SKIP,
+    "skip": SKIP,
+    "refusal": SKIP,
 }
 
 SANDBAGGING_LABELS: dict[str, Label] = {
@@ -434,15 +436,15 @@ def load_named_activation_examples(
             project_root=project_root,
             generated_model=generated_model,
         )
-    if base in {"roleplaying", "sandbagging_v2"}:
+    if base in {"roleplaying", "sandbagging_v2", "insider_trading", "insider_trading_doubledown"}:
         rollout_path = project_root / "data" / "rollouts" / f"{task}__{generated_model}.json"
-        if not rollout_path.exists():
+        if rollout_path.exists():
+            return load_rollout_activation_examples(rollout_path, task=task)
+        if base not in {"insider_trading", "insider_trading_doubledown"}:
             raise FileNotFoundError(
                 f"Generated rollout not found for {task}: {rollout_path}. "
                 "Run generate-rollouts for Qwen before extracting this named task."
             )
-        return load_rollout_activation_examples(rollout_path, task=task)
-    if base in {"insider_trading", "insider_trading_doubledown"}:
         return _load_insider_trading_examples(
             task,
             is_double_down=base == "insider_trading_doubledown",
@@ -2188,7 +2190,7 @@ def _safe_hdf5_name(value: str) -> str:
 
 
 def default_activation_output_path(model_id: str) -> Path:
-    return Path("results") / f"extracted_feats_all_layers_{qwen_model_slug(model_id)}.h5"
+    return Path("artifacts") / "activations" / f"extracted_feats_all_layers_{qwen_model_slug(model_id)}.h5"
 
 
 def _message(role: str, content: Any, *, detect: bool = False) -> Message:

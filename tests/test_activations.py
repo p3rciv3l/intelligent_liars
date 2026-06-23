@@ -49,7 +49,7 @@ def test_parse_layer_spec_supports_all_sparse_lists_and_ranges():
 def test_default_activation_output_path_matches_project_contract():
     assert (
         default_activation_output_path(DEFAULT_MODEL_ID)
-        == Path("results/extracted_feats_all_layers_qwen3-vl-8b-thinking.h5")
+        == Path("artifacts/activations/extracted_feats_all_layers_qwen3-vl-8b-thinking.h5")
     )
 
 
@@ -59,6 +59,8 @@ def test_normalise_deception_label_matches_truth_spec_rollout_labels():
     assert normalise_deception_label("unknown") == SKIP
     assert normalise_deception_label("explicit", schema=LabelSchema.INSIDER_REPORT) == HONEST
     assert normalise_deception_label("concealed", schema=LabelSchema.INSIDER_REPORT) == DECEPTIVE
+    assert normalise_deception_label("skip", schema=LabelSchema.INSIDER_REPORT) == SKIP
+    assert normalise_deception_label("refusal", schema=LabelSchema.INSIDER_REPORT) == SKIP
     assert normalise_deception_label(7, schema=LabelSchema.ROLEPLAYING_1_TO_7) == DECEPTIVE
     assert normalise_deception_label(1, schema=LabelSchema.ROLEPLAYING_1_TO_7) == HONEST
     assert normalise_deception_label(4, schema=LabelSchema.ROLEPLAYING_1_TO_7) == SKIP
@@ -455,6 +457,48 @@ def test_doubledown_rollout_labels_do_not_use_report_schema(tmp_path):
 
     assert examples[0].label == DECEPTIVE
     assert examples[0].label_schema == LabelSchema.STRING_DECEPTION
+
+
+def test_named_insider_task_prefers_rollout_file_when_available(tmp_path):
+    transcript_path = tmp_path / "data" / "insider_trading" / "qwen3-vl-8b-thinking-generations.json"
+    transcript_path.parent.mkdir(parents=True)
+    transcript_path.write_text(
+        json.dumps(
+            [
+                {
+                    "transcript": [
+                        {"role": "user", "content": "question"},
+                        {"role": "assistant", "content": "Action: send_message honest report"},
+                    ],
+                    "metadata": {"report_label": "explicit"},
+                }
+            ]
+        )
+    )
+    rollout_path = tmp_path / "data" / "rollouts" / "insider_trading__onpolicy__qwen3-vl-8b-thinking.json"
+    rollout_path.parent.mkdir(parents=True)
+    rollout_path.write_text(
+        json.dumps(
+            {
+                "rollouts": [
+                    {
+                        "input_messages": [{"role": "user", "content": "question"}],
+                        "output_strs": ["thinking before report. Action: send_message concealed report"],
+                        "graded_deception": ["concealed"],
+                        "metadata": {"source_index": 7},
+                    }
+                ]
+            }
+        )
+    )
+
+    examples = load_named_activation_examples("insider_trading__onpolicy", project_root=tmp_path)
+
+    assert len(examples) == 1
+    assert examples[0].label == DECEPTIVE
+    assert examples[0].label_schema == LabelSchema.INSIDER_REPORT
+    assert examples[0].source_dataset == str(rollout_path)
+    assert examples[0].detected_text == "Action: send_message concealed report"
 
 
 def test_extract_rollout_activations_fails_on_all_ungraded_rollouts_without_writing(tmp_path):

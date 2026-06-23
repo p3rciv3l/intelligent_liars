@@ -34,6 +34,7 @@ from intelligent_liars.judging import (
     JudgePreflight,
 )
 from intelligent_liars.models import DEFAULT_MODEL_ID
+from intelligent_liars.probes import ProbeTrainingSummary
 from intelligent_liars.rollouts import (
     DEFAULT_ROLLOUT_PROMPT_SET,
     DEFAULT_INSIDER_GENERATION_SETTINGS,
@@ -716,6 +717,60 @@ def test_grade_rollouts_preflights_roleplaying_from_json_not_filename(tmp_path, 
     assert events == ["preflight", "grade"]
 
 
+def test_grade_rollouts_preflights_insider_from_json_not_filename(tmp_path, monkeypatch):
+    events: list[str] = []
+    rollout_path = tmp_path / "renamed.json"
+    rollout_path.write_text(
+        '{"base_name":"insider_trading","variant":"onpolicy","rollouts":[]}\n'
+    )
+
+    def fake_preflight(config):
+        del config
+        events.append("preflight")
+        return JudgePreflight(
+            provider="openrouter",
+            alias="mock",
+            resolved_model="mock",
+            structured_outputs=True,
+            require_structured_outputs=True,
+            checked_api_key=False,
+            checked_live_metadata=False,
+        )
+
+    def fake_grade(path, **kwargs):
+        assert events == ["preflight"]
+        assert path == rollout_path
+        assert kwargs["task"] == "insider_trading__onpolicy"
+        events.append("grade")
+        return GradingSummary(
+            task="insider_trading__onpolicy",
+            input_path=path,
+            output_path=path,
+            total_items=0,
+            graded_items=0,
+            skipped_items=0,
+        )
+
+    monkeypatch.setattr("intelligent_liars.cli.preflight_judge_config", fake_preflight)
+    monkeypatch.setattr("intelligent_liars.cli.grade_rollout_file", fake_grade)
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "grade-rollouts",
+            "--project-root",
+            str(tmp_path),
+            "--path",
+            str(rollout_path),
+            "--mock-response",
+            '{"reasoning":"ok","judgement":"explicit"}',
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert events == ["preflight", "grade"]
+
+
 def test_grade_rollouts_accepts_source_index_filter(tmp_path, monkeypatch):
     rollout_path = tmp_path / "sandbagging.json"
     rollout_path.write_text(
@@ -896,3 +951,60 @@ def test_extract_activations_nnsight_backend_passes_bundle_to_extractor(tmp_path
 
     assert result.exit_code == 0, result.output
     assert events == ["backend", "extract"]
+
+
+def test_train_probes_cli_resolves_paths_and_options(tmp_path, monkeypatch):
+    captured = {}
+    (tmp_path / "pyproject.toml").write_text("[project]\nname='example'\n")
+    (tmp_path / "src" / "intelligent_liars").mkdir(parents=True)
+
+    def fake_train_probe_directions(**kwargs):
+        captured.update(kwargs)
+        return ProbeTrainingSummary(
+            output_path=kwargs["output_path"],
+            input_path=kwargs["input_path"],
+            tasks=tuple(kwargs["tasks"]),
+            layers=(0, 1),
+            within_task_results=2,
+            cross_task_results=0,
+            direction_results=2,
+        )
+
+    monkeypatch.setattr("intelligent_liars.cli.train_probe_directions", fake_train_probe_directions)
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "train-probes",
+            "--project-root",
+            str(tmp_path),
+            "--input",
+            "acts.h5",
+            "--output",
+            "results/probes.json",
+            "--task",
+            "roleplaying__plain",
+            "--layers",
+            "0,1",
+            "--test-size",
+            "0.4",
+            "--random-seed",
+            "7",
+            "--max-iter",
+            "5",
+            "--c",
+            "0.25",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert captured["input_path"] == tmp_path / "acts.h5"
+    assert captured["output_path"] == tmp_path / "results" / "probes.json"
+    assert captured["tasks"] == ["roleplaying__plain"]
+    assert captured["layers"] == "0,1"
+    assert captured["test_size"] == 0.4
+    assert captured["random_seed"] == 7
+    assert captured["max_iter"] == 5
+    assert captured["regularization_c"] == 0.25
+    assert "within_task=2" in result.output
+    assert "directions=2" in result.output
