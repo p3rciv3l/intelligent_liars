@@ -143,6 +143,11 @@ The stronger intervention target is not merely "make QA bad." The stronger targe
 Use Vast.ai for Qwen3-VL inference, activation extraction, and later vanilla / steered benchmark evaluation so
 the harness and GPU are controlled.
 
+Operational run knowledge lives in `docs/vast_qwen_rollouts_20260621.md` and
+`docs/activation_full_20260622.md`. Keep `PROJECT.md` focused on project
+direction and use those docs for per-run facts, artifact locations, and GPU
+lessons.
+
 Current default:
 
 - Use one verified GPU unless a later workload proves multi-GPU is necessary.

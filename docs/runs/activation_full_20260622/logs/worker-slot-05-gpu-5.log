@@ -1,84 +1,0 @@
-Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
-Fetching 4 files:   0%|          | 0/4 [00:00<?, ?it/s]Fetching 4 files: 100%|██████████| 4/4 [00:00<00:00, 4211.15it/s]
-Loading weights:   0%|          | 0/750 [00:00<?, ?it/s]Loading weights:   0%|          | 1/750 [00:00<01:22,  9.07it/s]Loading weights:   0%|          | 2/750 [00:00<02:05,  5.98it/s]Loading weights:   2%|▏         | 16/750 [00:00<00:15, 47.83it/s]Loading weights:   4%|▎         | 28/750 [00:00<00:10, 68.89it/s]Loading weights:   6%|▌         | 43/750 [00:00<00:07, 93.16it/s]Loading weights:   8%|▊         | 59/750 [00:00<00:06, 110.97it/s]Loading weights:   9%|▉         | 71/750 [00:00<00:06, 109.92it/s]Loading weights:  11%|█▏        | 86/750 [00:00<00:05, 118.81it/s]Loading weights:  14%|█▎        | 102/750 [00:01<00:05, 128.72it/s]Loading weights:  15%|█▌        | 116/750 [00:01<00:05, 122.71it/s]Loading weights:  17%|█▋        | 131/750 [00:01<00:04, 128.92it/s]Loading weights:  20%|█▉        | 147/750 [00:01<00:04, 125.01it/s]Loading weights:  21%|██▏       | 160/750 [00:01<00:04, 121.81it/s]Loading weights:  24%|██▎       | 177/750 [00:01<00:04, 133.09it/s]Loading weights:  26%|██▌       | 192/750 [00:01<00:04, 124.53it/s]Loading weights:  28%|██▊       | 213/750 [00:01<00:03, 143.25it/s]Loading weights:  30%|███       | 228/750 [00:02<00:03, 141.36it/s]Loading weights:  33%|███▎      | 245/750 [00:02<00:03, 144.30it/s]Loading weights:  35%|███▍      | 260/750 [00:02<00:03, 140.91it/s]Loading weights:  37%|███▋      | 275/750 [00:02<00:03, 142.99it/s]Loading weights:  39%|███▊      | 290/750 [00:02<00:03, 142.93it/s]Loading weights:  41%|████      | 305/750 [00:02<00:03, 134.04it/s]Loading weights:  43%|████▎     | 322/750 [00:02<00:03, 137.08it/s]Loading weights:  45%|████▍     | 336/750 [00:02<00:03, 135.48it/s]Loading weights:  47%|████▋     | 356/750 [00:02<00:02, 149.48it/s]Loading weights:  50%|████▉     | 372/750 [00:03<00:02, 141.77it/s]Loading weights:  52%|█████▏    | 389/750 [00:03<00:02, 143.29it/s]Loading weights:  61%|██████    | 459/750 [00:03<00:00, 293.18it/s]Loading weights:  82%|████████▏ | 616/750 [00:03<00:00, 647.84it/s]Loading weights:  98%|█████████▊| 735/750 [00:03<00:00, 801.49it/s]Loading weights: 100%|██████████| 750/750 [00:03<00:00, 214.55it/s]
-[transformers] Kwargs passed to `processor.__call__` have to be in `processor_kwargs` dict, not in `**kwargs`
-[transformers] Kwargs passed to `processor.__call__` have to be in `processor_kwargs` dict, not in `**kwargs`
-[transformers] Kwargs passed to `processor.__call__` have to be in `processor_kwargs` dict, not in `**kwargs`
-[transformers] Kwargs passed to `processor.__call__` have to be in `processor_kwargs` dict, not in `**kwargs`
-[transformers] Kwargs passed to `processor.__call__` have to be in `processor_kwargs` dict, not in `**kwargs`
-[transformers] Kwargs passed to `processor.__call__` have to be in `processor_kwargs` dict, not in `**kwargs`
-[transformers] Kwargs passed to `processor.__call__` have to be in `processor_kwargs` dict, not in `**kwargs`
-[transformers] Kwargs passed to `processor.__call__` have to be in `processor_kwargs` dict, not in `**kwargs`
-WORKER_DONE time=2026-06-22T06:18:39+00:00 gpu=5 slot=slot-05-gpu-5 chunk=00052-sandbagging_v2__wmdp_mmlu task=sandbagging_v2__wmdp_mmlu examples=8 elapsed=35.8s output=/dev/shm/intelligent_liars_activation/runs/full-run-20260622T061750Z/run/outputs/00052-sandbagging_v2__wmdp_mmlu__attempt-00.h5
-[transformers] Kwargs passed to `processor.__call__` have to be in `processor_kwargs` dict, not in `**kwargs`
-[transformers] Kwargs passed to `processor.__call__` have to be in `processor_kwargs` dict, not in `**kwargs`
-[transformers] Kwargs passed to `processor.__call__` have to be in `processor_kwargs` dict, not in `**kwargs`
-[transformers] Kwargs passed to `processor.__call__` have to be in `processor_kwargs` dict, not in `**kwargs`
-[transformers] Kwargs passed to `processor.__call__` have to be in `processor_kwargs` dict, not in `**kwargs`
-[transformers] Kwargs passed to `processor.__call__` have to be in `processor_kwargs` dict, not in `**kwargs`
-[transformers] Kwargs passed to `processor.__call__` have to be in `processor_kwargs` dict, not in `**kwargs`
-[transformers] Kwargs passed to `processor.__call__` have to be in `processor_kwargs` dict, not in `**kwargs`
-WORKER_DONE time=2026-06-22T06:19:10+00:00 gpu=5 slot=slot-05-gpu-5 chunk=00058-sandbagging_v2__wmdp_mmlu task=sandbagging_v2__wmdp_mmlu examples=8 elapsed=31.0s output=/dev/shm/intelligent_liars_activation/runs/full-run-20260622T061750Z/run/outputs/00058-sandbagging_v2__wmdp_mmlu__attempt-00.h5
-[transformers] Kwargs passed to `processor.__call__` have to be in `processor_kwargs` dict, not in `**kwargs`
-[transformers] Kwargs passed to `processor.__call__` have to be in `processor_kwargs` dict, not in `**kwargs`
-[transformers] Kwargs passed to `processor.__call__` have to be in `processor_kwargs` dict, not in `**kwargs`
-[transformers] Kwargs passed to `processor.__call__` have to be in `processor_kwargs` dict, not in `**kwargs`
-[transformers] Kwargs passed to `processor.__call__` have to be in `processor_kwargs` dict, not in `**kwargs`
-[transformers] Kwargs passed to `processor.__call__` have to be in `processor_kwargs` dict, not in `**kwargs`
-[transformers] Kwargs passed to `processor.__call__` have to be in `processor_kwargs` dict, not in `**kwargs`
-[transformers] Kwargs passed to `processor.__call__` have to be in `processor_kwargs` dict, not in `**kwargs`
-WORKER_DONE time=2026-06-22T06:19:21+00:00 gpu=5 slot=slot-05-gpu-5 chunk=00001-roleplaying__plain task=roleplaying__plain examples=8 elapsed=10.2s output=/dev/shm/intelligent_liars_activation/runs/full-run-20260622T061750Z/run/outputs/00001-roleplaying__plain__attempt-00.h5
-[transformers] Kwargs passed to `processor.__call__` have to be in `processor_kwargs` dict, not in `**kwargs`
-[transformers] Kwargs passed to `processor.__call__` have to be in `processor_kwargs` dict, not in `**kwargs`
-[transformers] Kwargs passed to `processor.__call__` have to be in `processor_kwargs` dict, not in `**kwargs`
-[transformers] Kwargs passed to `processor.__call__` have to be in `processor_kwargs` dict, not in `**kwargs`
-[transformers] Kwargs passed to `processor.__call__` have to be in `processor_kwargs` dict, not in `**kwargs`
-[transformers] Kwargs passed to `processor.__call__` have to be in `processor_kwargs` dict, not in `**kwargs`
-[transformers] Kwargs passed to `processor.__call__` have to be in `processor_kwargs` dict, not in `**kwargs`
-[transformers] Kwargs passed to `processor.__call__` have to be in `processor_kwargs` dict, not in `**kwargs`
-WORKER_DONE time=2026-06-22T06:19:30+00:00 gpu=5 slot=slot-05-gpu-5 chunk=00007-roleplaying__plain task=roleplaying__plain examples=8 elapsed=9.4s output=/dev/shm/intelligent_liars_activation/runs/full-run-20260622T061750Z/run/outputs/00007-roleplaying__plain__attempt-00.h5
-[transformers] Kwargs passed to `processor.__call__` have to be in `processor_kwargs` dict, not in `**kwargs`
-[transformers] Kwargs passed to `processor.__call__` have to be in `processor_kwargs` dict, not in `**kwargs`
-[transformers] Kwargs passed to `processor.__call__` have to be in `processor_kwargs` dict, not in `**kwargs`
-[transformers] Kwargs passed to `processor.__call__` have to be in `processor_kwargs` dict, not in `**kwargs`
-[transformers] Kwargs passed to `processor.__call__` have to be in `processor_kwargs` dict, not in `**kwargs`
-[transformers] Kwargs passed to `processor.__call__` have to be in `processor_kwargs` dict, not in `**kwargs`
-[transformers] Kwargs passed to `processor.__call__` have to be in `processor_kwargs` dict, not in `**kwargs`
-[transformers] Kwargs passed to `processor.__call__` have to be in `processor_kwargs` dict, not in `**kwargs`
-WORKER_DONE time=2026-06-22T06:19:42+00:00 gpu=5 slot=slot-05-gpu-5 chunk=00014-roleplaying__plain task=roleplaying__plain examples=8 elapsed=11.9s output=/dev/shm/intelligent_liars_activation/runs/full-run-20260622T061750Z/run/outputs/00014-roleplaying__plain__attempt-00.h5
-[transformers] Kwargs passed to `processor.__call__` have to be in `processor_kwargs` dict, not in `**kwargs`
-[transformers] Kwargs passed to `processor.__call__` have to be in `processor_kwargs` dict, not in `**kwargs`
-[transformers] Kwargs passed to `processor.__call__` have to be in `processor_kwargs` dict, not in `**kwargs`
-[transformers] Kwargs passed to `processor.__call__` have to be in `processor_kwargs` dict, not in `**kwargs`
-[transformers] Kwargs passed to `processor.__call__` have to be in `processor_kwargs` dict, not in `**kwargs`
-[transformers] Kwargs passed to `processor.__call__` have to be in `processor_kwargs` dict, not in `**kwargs`
-[transformers] Kwargs passed to `processor.__call__` have to be in `processor_kwargs` dict, not in `**kwargs`
-[transformers] Kwargs passed to `processor.__call__` have to be in `processor_kwargs` dict, not in `**kwargs`
-WORKER_DONE time=2026-06-22T06:19:52+00:00 gpu=5 slot=slot-05-gpu-5 chunk=00018-roleplaying__plain task=roleplaying__plain examples=8 elapsed=10.4s output=/dev/shm/intelligent_liars_activation/runs/full-run-20260622T061750Z/run/outputs/00018-roleplaying__plain__attempt-00.h5
-[transformers] Kwargs passed to `processor.__call__` have to be in `processor_kwargs` dict, not in `**kwargs`
-[transformers] Kwargs passed to `processor.__call__` have to be in `processor_kwargs` dict, not in `**kwargs`
-[transformers] Kwargs passed to `processor.__call__` have to be in `processor_kwargs` dict, not in `**kwargs`
-[transformers] Kwargs passed to `processor.__call__` have to be in `processor_kwargs` dict, not in `**kwargs`
-[transformers] Kwargs passed to `processor.__call__` have to be in `processor_kwargs` dict, not in `**kwargs`
-[transformers] Kwargs passed to `processor.__call__` have to be in `processor_kwargs` dict, not in `**kwargs`
-[transformers] Kwargs passed to `processor.__call__` have to be in `processor_kwargs` dict, not in `**kwargs`
-[transformers] Kwargs passed to `processor.__call__` have to be in `processor_kwargs` dict, not in `**kwargs`
-WORKER_DONE time=2026-06-22T06:20:04+00:00 gpu=5 slot=slot-05-gpu-5 chunk=00025-roleplaying__plain task=roleplaying__plain examples=8 elapsed=11.9s output=/dev/shm/intelligent_liars_activation/runs/full-run-20260622T061750Z/run/outputs/00025-roleplaying__plain__attempt-00.h5
-[transformers] Kwargs passed to `processor.__call__` have to be in `processor_kwargs` dict, not in `**kwargs`
-[transformers] Kwargs passed to `processor.__call__` have to be in `processor_kwargs` dict, not in `**kwargs`
-[transformers] Kwargs passed to `processor.__call__` have to be in `processor_kwargs` dict, not in `**kwargs`
-[transformers] Kwargs passed to `processor.__call__` have to be in `processor_kwargs` dict, not in `**kwargs`
-[transformers] Kwargs passed to `processor.__call__` have to be in `processor_kwargs` dict, not in `**kwargs`
-[transformers] Kwargs passed to `processor.__call__` have to be in `processor_kwargs` dict, not in `**kwargs`
-[transformers] Kwargs passed to `processor.__call__` have to be in `processor_kwargs` dict, not in `**kwargs`
-[transformers] Kwargs passed to `processor.__call__` have to be in `processor_kwargs` dict, not in `**kwargs`
-WORKER_DONE time=2026-06-22T06:20:15+00:00 gpu=5 slot=slot-05-gpu-5 chunk=00033-roleplaying__plain task=roleplaying__plain examples=8 elapsed=10.9s output=/dev/shm/intelligent_liars_activation/runs/full-run-20260622T061750Z/run/outputs/00033-roleplaying__plain__attempt-00.h5
-[transformers] Kwargs passed to `processor.__call__` have to be in `processor_kwargs` dict, not in `**kwargs`
-[transformers] Kwargs passed to `processor.__call__` have to be in `processor_kwargs` dict, not in `**kwargs`
-[transformers] Kwargs passed to `processor.__call__` have to be in `processor_kwargs` dict, not in `**kwargs`
-[transformers] Kwargs passed to `processor.__call__` have to be in `processor_kwargs` dict, not in `**kwargs`
-[transformers] Kwargs passed to `processor.__call__` have to be in `processor_kwargs` dict, not in `**kwargs`
-[transformers] Kwargs passed to `processor.__call__` have to be in `processor_kwargs` dict, not in `**kwargs`
-[transformers] Kwargs passed to `processor.__call__` have to be in `processor_kwargs` dict, not in `**kwargs`
-[transformers] Kwargs passed to `processor.__call__` have to be in `processor_kwargs` dict, not in `**kwargs`
-WORKER_DONE time=2026-06-22T06:20:23+00:00 gpu=5 slot=slot-05-gpu-5 chunk=00039-roleplaying__plain task=roleplaying__plain examples=8 elapsed=7.3s output=/dev/shm/intelligent_liars_activation/runs/full-run-20260622T061750Z/run/outputs/00039-roleplaying__plain__attempt-00.h5
