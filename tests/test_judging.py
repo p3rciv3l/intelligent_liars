@@ -732,12 +732,12 @@ def test_insider_record_is_graded_is_stage_aware():
     ]
 
     assert not _insider_record_is_graded({"metadata": {"made_trade": "unknown"}})
-    assert not _insider_record_is_graded({"metadata": {"made_trade": "invalid"}})
+    assert _insider_record_is_graded({"metadata": {"made_trade": "invalid"}})
     assert _insider_record_is_graded({"metadata": {"made_trade": "no"}})
     assert not _insider_record_is_graded(
         {"transcript": transcript, "metadata": {"made_trade": "yes", "trade_label": "yes"}}
     )
-    assert not _insider_record_is_graded(
+    assert _insider_record_is_graded(
         {
             "transcript": transcript,
             "metadata": {

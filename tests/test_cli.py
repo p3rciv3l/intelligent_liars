@@ -190,13 +190,49 @@ def test_extract_activations_sycophancy_guard_runs_before_model_load(tmp_path, m
     assert "Sycophancy source directory not found" in str(result.exception)
 
 
+def test_generate_sycophancy_pair_mode_does_not_load_model(tmp_path, monkeypatch):
+    def fail_model_load(*args, **kwargs):
+        del args, kwargs
+        raise AssertionError("model load should not be reached")
+
+    seen = {}
+
+    def fake_pair(**kwargs):
+        seen.update(kwargs)
+        return SimpleNamespace(output_dir=kwargs["output_dir"], paired_examples=2)
+
+    monkeypatch.setattr("intelligent_liars.cli.load_model_and_processor", fail_model_load)
+    monkeypatch.setattr("intelligent_liars.cli.pair_sycophancy_dataset", fake_pair)
+    (tmp_path / "pyproject.toml").write_text("[project]\nname='example'\n")
+    (tmp_path / "src" / "intelligent_liars").mkdir(parents=True)
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "generate-sycophancy",
+            "--project-root",
+            str(tmp_path),
+            "--mode",
+            "pair",
+            "--task",
+            "abstract_algebra",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert seen["output_dir"] == tmp_path / "data" / "sycophancy" / "qwen3-vl-8b-thinking"
+    assert seen["tasks"] == ("abstract_algebra",)
+
+
 def test_merge_activation_shards_cli_resolves_paths(tmp_path, monkeypatch):
     seen = {}
 
-    def fake_merge(paths, *, output_path, overwrite):
+    def fake_merge(paths, *, output_path, overwrite, compression, merge_strategy):
         seen["paths"] = paths
         seen["output_path"] = output_path
         seen["overwrite"] = overwrite
+        seen["compression"] = compression
+        seen["merge_strategy"] = merge_strategy
         return ActivationMergeSummary(
             output_path=output_path,
             shard_paths=tuple(paths),
@@ -226,6 +262,8 @@ def test_merge_activation_shards_cli_resolves_paths(tmp_path, monkeypatch):
     assert seen["paths"] == [tmp_path / "tmp/shard-1.h5", tmp_path / "tmp/shard-2.h5"]
     assert seen["output_path"] == tmp_path / "results/merged.h5"
     assert seen["overwrite"] is True
+    assert seen["compression"] == "lzf"
+    assert seen["merge_strategy"] == "auto"
     assert "examples=2" in result.output
     assert "token_rows=3" in result.output
 

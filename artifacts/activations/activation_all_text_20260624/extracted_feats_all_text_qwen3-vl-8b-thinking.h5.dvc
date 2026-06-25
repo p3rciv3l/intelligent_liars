@@ -1,0 +1,5 @@
+outs:
+- md5: b6e82b698513d2372949f2752e17005a
+  size: 62394047728
+  hash: md5
+  path: extracted_feats_all_text_qwen3-vl-8b-thinking.h5

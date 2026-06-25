@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+from collections import Counter
 import argparse
 import json
 import os
@@ -11,6 +12,9 @@ from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+
+
+DEFAULT_GENERATED_MODEL = "qwen3-vl-8b-thinking"
 
 
 @dataclass(frozen=True)
@@ -27,6 +31,8 @@ class Unit:
     examples: tuple[ExampleKey, ...]
     estimated_chars: int
     attempt: int = 0
+    source_type: str = "rollout"
+    generated_model: str = DEFAULT_GENERATED_MODEL
 
     @property
     def key(self) -> str:
@@ -66,6 +72,8 @@ def deserialise_unit(payload: dict[str, Any]) -> Unit:
         examples=tuple(ExampleKey(**example) for example in payload["examples"]),
         estimated_chars=int(payload["estimated_chars"]),
         attempt=int(payload.get("attempt", 0)),
+        source_type=str(payload.get("source_type", "rollout")),
+        generated_model=str(payload.get("generated_model", DEFAULT_GENERATED_MODEL)),
     )
 
 
@@ -79,8 +87,8 @@ def create_initial_queue(args: argparse.Namespace, *, overwrite_queue: bool) -> 
     run_dir = Path(args.run_dir).resolve()
     ensure_dirs(run_dir)
     if overwrite_queue:
-        for subdir in ("pending", "running", "done", "failed", "completed"):
-            for path in (run_dir / subdir).glob("*.json"):
+        for subdir in ("pending", "running", "done", "failed", "completed", "outputs"):
+            for path in (run_dir / subdir).glob("*"):
                 path.unlink()
     existing = []
     for subdir in ("pending", "running", "done"):
@@ -90,7 +98,9 @@ def create_initial_queue(args: argparse.Namespace, *, overwrite_queue: bool) -> 
 
     units = plan_units(
         project_root=project_root,
-        rollout_paths=[Path(path) for path in args.path],
+        rollout_paths=[Path(path) for path in args.path or []],
+        tasks=list(args.task or []),
+        generated_model=args.generated_model,
         chunk_chars=args.chunk_chars,
         max_examples_per_chunk=args.max_examples_per_chunk,
         limit=args.limit,
@@ -104,6 +114,8 @@ def plan_units(
     *,
     project_root: Path,
     rollout_paths: list[Path],
+    tasks: list[str],
+    generated_model: str,
     chunk_chars: int,
     max_examples_per_chunk: int,
     limit: int | None,
@@ -111,9 +123,23 @@ def plan_units(
     from intelligent_liars.activations import ActivationDataset
 
     units: list[Unit] = []
+    sources: list[tuple[str, str, Any]] = []
     for rollout_path in rollout_paths:
         resolved = rollout_path if rollout_path.is_absolute() else project_root / rollout_path
         dataset = ActivationDataset.from_rollout(resolved)
+        source_id = str(resolved.relative_to(project_root) if resolved.is_relative_to(project_root) else resolved)
+        sources.append(("rollout", source_id, dataset))
+    for task in tasks:
+        dataset = ActivationDataset.from_named_task(
+            task,
+            project_root=project_root,
+            generated_model=generated_model,
+        )
+        sources.append(("named_task", task, dataset))
+    if not sources:
+        raise ValueError("At least one --path rollout file or --task named dataset is required.")
+
+    for source_type, source_id, dataset in sources:
         examples = list(dataset.labeled_for_probe())
         if limit is not None:
             examples = examples[:limit]
@@ -129,9 +155,11 @@ def plan_units(
                 Unit(
                     chunk_id=chunk_id,
                     task=dataset.task,
-                    rollout_path=str(resolved.relative_to(project_root) if resolved.is_relative_to(project_root) else resolved),
+                    rollout_path=source_id,
                     examples=tuple(ExampleKey(example.source_index, example.output_index) for example in pending),
                     estimated_chars=pending_chars,
+                    source_type=source_type,
+                    generated_model=generated_model,
                 )
             )
             pending = []
@@ -181,12 +209,128 @@ def claim_unit(run_dir: Path) -> tuple[Path, Unit] | None:
     return None
 
 
+def requeue_running_units(run_dir: Path) -> tuple[int, int]:
+    """Return stale running units to the pending queue before restart."""
+    requeued = 0
+    promoted = 0
+    for running_path in sorted((run_dir / "running").glob("*.json")):
+        try:
+            unit = deserialise_unit(read_json(running_path))
+        except Exception:
+            running_path.unlink(missing_ok=True)
+            continue
+        output_path = run_dir / "outputs" / f"{unit.key}.h5"
+        if _shard_is_complete(output_path):
+            done_path = run_dir / "done" / running_path.name
+            if not done_path.exists():
+                os.replace(running_path, done_path)
+            else:
+                running_path.unlink()
+            promoted += 1
+            continue
+
+        pending_path = run_dir / "pending" / running_path.name
+        if pending_path.exists():
+            running_path.unlink()
+            continue
+
+        os.replace(running_path, pending_path)
+        requeued += 1
+
+    return requeued, promoted
+
+
+def repair_stale_done_units(run_dir: Path) -> tuple[int, int]:
+    """Move done units without a valid shard output back to pending.
+
+    Returns:
+        A tuple of (requeued_units, removed_duplicate_units).
+    """
+    done_dir = run_dir / "done"
+    pending_dir = run_dir / "pending"
+    requeued = 0
+    removed = 0
+    seen_unit_ids: set[str] = set()
+    for done_path in sorted(done_dir.glob("*.json")):
+        try:
+            unit = deserialise_unit(read_json(done_path))
+        except Exception:
+            done_path.unlink(missing_ok=True)
+            removed += 1
+            continue
+
+        unit_id = unit.key
+        if unit_id in seen_unit_ids:
+            done_path.unlink(missing_ok=True)
+            removed += 1
+            continue
+        seen_unit_ids.add(unit_id)
+
+        output_path = run_dir / "outputs" / f"{unit_id}.h5"
+        if not _shard_is_complete(output_path):
+            done_path.unlink(missing_ok=True)
+            pending_path = pending_dir / f"{unit_id}.json"
+            if not pending_path.exists():
+                write_json(pending_path, serialise_unit(unit))
+                requeued += 1
+    return requeued, removed
+
+
+def _shard_is_complete(path: Path) -> bool:
+    if not path.exists() or path.stat().st_size == 0:
+        return False
+    try:
+        import h5py
+
+        with h5py.File(path, "r") as handle:
+            metadata = handle.get("metadata")
+            if not isinstance(metadata, h5py.Group) or len(metadata.keys()) == 0:
+                return False
+
+            if (layer_container := handle.get("layers")) is not None:
+                if isinstance(layer_container, h5py.Group) and _has_layer_dataset(layer_container):
+                    return True
+            return _has_layer_dataset(handle)
+    except Exception:
+        return False
+
+
+def _has_layer_dataset(group: Any) -> bool:
+    import h5py
+
+    for name, item in group.items():
+        if not name.startswith("layer_") or not isinstance(item, h5py.Group):
+            continue
+        if any(isinstance(child, h5py.Dataset) for child in item.values()):
+            return True
+    return False
+
+
+def count_state(run_dir: Path) -> dict[str, int]:
+    state = {
+        name: len(list((run_dir / name).glob("*.json")))
+        for name in ("pending", "running", "done", "failed", "completed")
+    }
+    state["outputs"] = len(list((run_dir / "outputs").glob("*.h5")))
+    return state
+
+
 def build_chunk_dataset(project_root: Path, unit: Unit):
     from intelligent_liars.activations import ActivationDataset
 
-    rollout_path = Path(unit.rollout_path)
-    resolved = rollout_path if rollout_path.is_absolute() else project_root / rollout_path
-    dataset = ActivationDataset.from_rollout(resolved, task=unit.task)
+    if unit.source_type == "named_task":
+        dataset = ActivationDataset.from_named_task(
+            unit.task,
+            project_root=project_root,
+            generated_model=unit.generated_model,
+        )
+        resolved = dataset.source_path
+    elif unit.source_type == "rollout":
+        rollout_path = Path(unit.rollout_path)
+        resolved = rollout_path if rollout_path.is_absolute() else project_root / rollout_path
+        dataset = ActivationDataset.from_rollout(resolved, task=unit.task)
+    else:
+        raise ValueError(f"Unsupported unit source_type: {unit.source_type!r}")
     by_key = {
         (example.source_index, example.output_index): example
         for example in dataset.labeled_for_probe()
@@ -204,7 +348,7 @@ def build_chunk_dataset(project_root: Path, unit: Unit):
         task=unit.task,
         examples=tuple(examples),
         source_path=resolved,
-        dataset_id=str(resolved),
+        dataset_id=dataset.dataset_id or unit.rollout_path,
     )
 
 
@@ -240,6 +384,7 @@ def run_worker(args: argparse.Namespace) -> int:
             continue
         unit_path, unit = claimed
         output_path = run_dir / "outputs" / f"{unit.key}.h5"
+        staged_output_path = output_path.with_suffix(output_path.suffix + ".tmp")
         started = time.time()
         write_json(
             heartbeat,
@@ -263,15 +408,17 @@ def run_worker(args: argparse.Namespace) -> int:
                 max_length=args.max_length,
                 capture_logits=args.capture_logits,
                 storage_dtype=args.storage_dtype,
+                compression=args.compression,
             )
             summary = extract_dataset_activations(
                 bundle=bundle,
                 dataset=dataset,
-                output_path=output_path,
+                output_path=staged_output_path,
                 settings=settings,
                 overwrite=True,
                 backend=backend,
             )
+            os.replace(staged_output_path, output_path)
             elapsed = time.time() - started
             write_json(
                 run_dir / "completed" / f"{unit.key}.json",
@@ -299,6 +446,7 @@ def run_worker(args: argparse.Namespace) -> int:
                 flush=True,
             )
         except Exception as exc:
+            staged_output_path.unlink(missing_ok=True)
             write_json(
                 run_dir / "failed" / unit_path.name,
                 {
@@ -336,8 +484,18 @@ def gpu_snapshot() -> str:
 def run_supervisor(args: argparse.Namespace) -> int:
     project_root = Path(args.project_root).resolve()
     run_dir = Path(args.run_dir).resolve()
+    if args.overwrite_queue:
+        requeued, promoted = 0, 0
+        repaired_done, removed_done = 0, 0
+    else:
+        requeued, promoted = requeue_running_units(run_dir)
+        repaired_done, removed_done = repair_stale_done_units(run_dir)
     created_units = create_initial_queue(args, overwrite_queue=args.overwrite_queue)
     pending_files = sorted((run_dir / "pending").glob("*.json"))
+    if not args.plan_only and not args.allow_empty_queue:
+        if not pending_files and not list((run_dir / "running").glob("*.json")):
+            print("SUPERVISOR_GUARD pending=0 running=0; queue empty. Use --allow-empty-queue to proceed.")
+            return 0
     write_json(
         run_dir / "run_metadata.json",
         {
@@ -345,6 +503,8 @@ def run_supervisor(args: argparse.Namespace) -> int:
             "project_root": str(project_root),
             "run_dir": str(run_dir),
             "paths": args.path,
+            "tasks": args.task,
+            "generated_model": args.generated_model,
             "gpus": parse_csv(args.gpus),
             "layers": args.layers,
             "batch_size": args.batch_size,
@@ -353,11 +513,35 @@ def run_supervisor(args: argparse.Namespace) -> int:
             "planned_units": len(created_units) or len(pending_files),
             "storage_dtype": args.storage_dtype,
             "capture_logits": args.capture_logits,
+            "compression": args.compression,
+            "requeued_running_units": requeued,
+            "promoted_running_units": promoted,
+            "repaired_done_units": repaired_done,
+            "removed_done_units": removed_done,
         },
     )
     if args.plan_only:
-        for path in pending_files:
-            print(path.read_text().strip())
+        units = list(created_units)
+        if not units:
+            for path in pending_files:
+                try:
+                    units.append(deserialise_unit(read_json(path)))
+                except Exception:
+                    pass
+        queue_by_task = dict(Counter(unit.task for unit in units))
+        queue_by_source_type = dict(Counter(unit.source_type for unit in units))
+        print(f"PLAN_PENDING_UNITS={len(units)}")
+        print(f"PLAN_BY_TASK={json.dumps(queue_by_task, sort_keys=True)}")
+        print(f"PLAN_BY_SOURCE_TYPE={json.dumps(queue_by_source_type, sort_keys=True)}")
+        total_examples = sum(len(unit.examples) for unit in units)
+        print(f"PLAN_EXAMPLES_TOTAL={total_examples}")
+        for unit in sorted(units, key=lambda unit: (unit.task, unit.chunk_id))[:10]:
+            print(
+                f"PLAN_UNIT task={unit.task} "
+                f"source={unit.source_type} "
+                f"estimated_chars={unit.estimated_chars} "
+                f"examples={len(unit.examples)}",
+            )
         return 0
 
     env_base = os.environ.copy()
@@ -387,6 +571,8 @@ def run_supervisor(args: argparse.Namespace) -> int:
             str(args.batch_size),
             "--storage-dtype",
             args.storage_dtype,
+            "--generated-model",
+            args.generated_model,
             "--idle-sleep",
             str(args.idle_sleep),
         ]
@@ -396,16 +582,18 @@ def run_supervisor(args: argparse.Namespace) -> int:
             cmd.append("--no-verify-masks")
         if args.capture_logits:
             cmd.append("--capture-logits")
+        cmd.extend(["--compression", args.compression])
         handle = worker_log.open("a")
         workers.append(subprocess.Popen(cmd, cwd=project_root, env=env_base, stdout=handle, stderr=subprocess.STDOUT, text=True))
 
     print(f"SUPERVISOR_START time={now()} run_dir={run_dir} workers={len(workers)}", flush=True)
     try:
         while True:
-            pending = len(list((run_dir / "pending").glob("*.json")))
-            running = len(list((run_dir / "running").glob("*.json")))
-            done = len(list((run_dir / "done").glob("*.json")))
-            failed = len(list((run_dir / "failed").glob("*.json")))
+            state = count_state(run_dir)
+            pending = state["pending"]
+            running = state["running"]
+            done = state["done"]
+            failed = state["failed"]
             alive = sum(worker.poll() is None for worker in workers)
             print(
                 f"STATUS time={now()} alive={alive} pending={pending} running={running} done={done} failed={failed}",
@@ -443,7 +631,12 @@ def merge_outputs(args: argparse.Namespace) -> None:
     output_path = output_path if output_path.is_absolute() else project_root / output_path
     from intelligent_liars.activations import merge_activation_hdf5_shards
 
-    summary = merge_activation_hdf5_shards(shard_paths, output_path=output_path, overwrite=args.overwrite_output)
+    summary = merge_activation_hdf5_shards(
+        shard_paths,
+        output_path=output_path,
+        overwrite=args.overwrite_output,
+        compression=args.compression,
+    )
     print(
         f"MERGE_DONE time={now()} output={summary.output_path} "
         f"tasks={json.dumps(summary.examples_by_task, sort_keys=True)}",
@@ -464,9 +657,12 @@ def parse_args() -> argparse.Namespace:
     common.add_argument("--no-verify-masks", action="store_true")
     common.add_argument("--capture-logits", action="store_true")
     common.add_argument("--storage-dtype", choices=("float16", "float32"), default="float16")
+    common.add_argument("--compression", choices=("gzip", "lzf", "none"), default="lzf")
+    common.add_argument("--generated-model", default=DEFAULT_GENERATED_MODEL)
 
     supervisor = sub.add_parser("supervisor", parents=[common])
-    supervisor.add_argument("--path", action="append", required=True)
+    supervisor.add_argument("--path", action="append")
+    supervisor.add_argument("--task", action="append")
     supervisor.add_argument("--output", required=True)
     supervisor.add_argument("--gpus", default="0")
     supervisor.add_argument("--chunk-chars", type=int, default=12000)
@@ -477,6 +673,11 @@ def parse_args() -> argparse.Namespace:
     supervisor.add_argument("--overwrite-queue", action="store_true")
     supervisor.add_argument("--overwrite-output", action="store_true")
     supervisor.add_argument("--plan-only", action="store_true")
+    supervisor.add_argument(
+        "--allow-empty-queue",
+        action="store_true",
+        help="Allow the supervisor to proceed when pending/running queues are empty.",
+    )
 
     worker = sub.add_parser("worker", parents=[common])
     worker.add_argument("--gpu", required=True)

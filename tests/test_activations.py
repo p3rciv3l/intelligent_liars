@@ -108,6 +108,19 @@ def test_load_rollout_activation_examples_replaces_empty_assistant_placeholder(t
     assert examples[0].raw_label == 7
 
 
+def test_geometry_of_truth_loader_strips_terminal_sentence_punctuation(tmp_path, monkeypatch):
+    data_dir = tmp_path / "data" / "geometry_of_truth"
+    data_dir.mkdir(parents=True)
+    (data_dir / "cities.csv").write_text("statement,label\nSpringfield is in Oregon!,1\n", encoding="utf-8")
+    monkeypatch.setattr(activations_module, "GOT_BEST_CSVS", ("cities.csv",))
+
+    examples = load_named_activation_examples("geometry_of_truth__best", project_root=tmp_path)
+
+    assert len(examples) == 1
+    assert examples[0].messages[-2]["content"] == "Springfield is in Oregon"
+    assert examples[0].messages[-1] == {"role": "assistant", "content": ".", "detect": True}
+
+
 def test_render_activation_example_merges_assistant_prefix_and_masks_only_detected_span():
     class FakeProcessor:
         def apply_chat_template(self, messages, tokenize=False, add_generation_prompt=False):
@@ -723,9 +736,16 @@ def test_message_detection_mask_uses_char_spans_not_first_matching_tokens():
     assert decoded == ["answer"]
 
 
-def test_verify_decoded_masks_rejects_extra_decoded_text():
+def test_verify_decoded_masks_rejects_alphanumeric_extra_decoded_text():
     with pytest.raises(ValueError, match="Detection mask mismatch"):
-        verify_decoded_masks(expected_texts=["."], decoded_texts=[")."])
+        verify_decoded_masks(expected_texts=["."], decoded_texts=["x."])
+
+
+def test_verify_decoded_masks_allows_quote_boundary_extra():
+    verify_decoded_masks(expected_texts=["."], decoded_texts=["’."])
+    verify_decoded_masks(expected_texts=["."], decoded_texts=["!."])
+    verify_decoded_masks(expected_texts=["."], decoded_texts=["%."])
+    verify_decoded_masks(expected_texts=["answer"], decoded_texts=['"answer"'])
 
 
 def test_build_qwen_inputs_rejects_processor_tokenizer_mismatch():
@@ -1147,6 +1167,148 @@ def test_merge_activation_hdf5_shards_concatenates_examples_and_layers(tmp_path)
         assert handle["metadata/roleplaying__plain"].attrs["merged_shard_count"] == 2
 
 
+def test_merge_activation_hdf5_shards_auto_copies_disjoint_tasks(tmp_path):
+    torch = pytest.importorskip("torch")
+    h5py = pytest.importorskip("h5py")
+
+    shard_1 = tmp_path / "shard-1.h5"
+    shard_2 = tmp_path / "shard-2.h5"
+    output_path = tmp_path / "merged.h5"
+
+    common_kwargs = {
+        "layers": (0,),
+        "output_indices": [0],
+        "labels": [HONEST],
+        "example_indices": [0],
+        "token_positions": [5],
+        "example_splits": [0, 1],
+        "example_output_indices": [0],
+        "example_labels": [HONEST],
+        "example_token_counts": [1],
+        "detected_answer_texts": ["yes"],
+        "decoded_answer_texts": ["yes"],
+        "char_spans_json": ["[[0, 3]]"],
+        "messages_json": ['[{"role": "assistant", "content": "yes"}]'],
+        "rendered_texts": ["<assistant>yes"],
+        "raw_labels_json": ["1"],
+        "label_schemas": [LabelSchema.ROLEPLAYING_1_TO_7.value],
+        "model_id": DEFAULT_MODEL_ID,
+        "backend_name": "unit-test",
+        "surface_names": {0: "decoder_layer_0_answer_tokens"},
+        "preserved_input_keys": ("attention_mask", "input_ids"),
+        "processor_id": DEFAULT_MODEL_ID,
+        "overwrite": False,
+    }
+    write_activation_hdf5(
+        output_path=shard_1,
+        task="roleplaying__plain",
+        activations_by_layer={0: [torch.tensor([[1.0, 2.0]])]},
+        source_indices=[10],
+        example_source_indices=[10],
+        source_datasets=["roleplaying.json"],
+        example_metadata_json=['{"source_index": 10}'],
+        dataset_id="roleplaying.json",
+        compression="lzf",
+        **common_kwargs,
+    )
+    with h5py.File(shard_1, "a") as shard:
+        shard["metadata"].create_dataset("task_names", data=[b"roleplaying__plain"])
+    write_activation_hdf5(
+        output_path=shard_2,
+        task="sandbagging_v2__wmdp_mmlu",
+        activations_by_layer={0: [torch.tensor([[3.0, 4.0]])]},
+        source_indices=[20],
+        example_source_indices=[20],
+        source_datasets=["sandbagging.json"],
+        example_metadata_json=['{"source_index": 20}'],
+        dataset_id="sandbagging.json",
+        compression="none",
+        **common_kwargs,
+    )
+
+    summary = merge_activation_hdf5_shards(
+        [shard_1, shard_2],
+        output_path=output_path,
+        compression="gzip",
+    )
+
+    assert summary.tasks == ("roleplaying__plain", "sandbagging_v2__wmdp_mmlu")
+    assert summary.examples_by_task == {
+        "roleplaying__plain": 1,
+        "sandbagging_v2__wmdp_mmlu": 1,
+    }
+    assert summary.token_rows_by_task == {
+        "roleplaying__plain": 1,
+        "sandbagging_v2__wmdp_mmlu": 1,
+    }
+    with h5py.File(output_path, "r") as handle:
+        assert handle.attrs["merged_strategy"] == "copy-disjoint"
+        assert handle.attrs["merged_compression"] == "preserved"
+        assert "task_names" not in handle["metadata"]
+        assert handle["layer_0/roleplaying__plain"].compression == "lzf"
+        assert handle["layer_0/sandbagging_v2__wmdp_mmlu"].compression is None
+        assert handle["metadata/roleplaying__plain"].attrs["merged_shard_count"] == 1
+        assert handle["metadata/sandbagging_v2__wmdp_mmlu"].attrs["merged_shard_count"] == 1
+
+
+def test_merge_activation_hdf5_shards_copy_disjoint_rejects_overlapping_tasks(tmp_path):
+    torch = pytest.importorskip("torch")
+
+    shard_1 = tmp_path / "shard-1.h5"
+    shard_2 = tmp_path / "shard-2.h5"
+    common_kwargs = {
+        "task": "roleplaying__plain",
+        "layers": (0,),
+        "output_indices": [0],
+        "labels": [HONEST],
+        "example_indices": [0],
+        "token_positions": [5],
+        "example_splits": [0, 1],
+        "example_output_indices": [0],
+        "example_labels": [HONEST],
+        "example_token_counts": [1],
+        "detected_answer_texts": ["yes"],
+        "decoded_answer_texts": ["yes"],
+        "char_spans_json": ["[[0, 3]]"],
+        "messages_json": ['[{"role": "assistant", "content": "yes"}]'],
+        "rendered_texts": ["<assistant>yes"],
+        "source_datasets": ["roleplaying.json"],
+        "raw_labels_json": ["1"],
+        "label_schemas": [LabelSchema.ROLEPLAYING_1_TO_7.value],
+        "model_id": DEFAULT_MODEL_ID,
+        "backend_name": "unit-test",
+        "surface_names": {0: "decoder_layer_0_answer_tokens"},
+        "preserved_input_keys": ("attention_mask", "input_ids"),
+        "dataset_id": "roleplaying.json",
+        "processor_id": DEFAULT_MODEL_ID,
+        "compression": "none",
+        "overwrite": False,
+    }
+    write_activation_hdf5(
+        output_path=shard_1,
+        activations_by_layer={0: [torch.tensor([[1.0, 2.0]])]},
+        source_indices=[10],
+        example_source_indices=[10],
+        example_metadata_json=['{"source_index": 10}'],
+        **common_kwargs,
+    )
+    write_activation_hdf5(
+        output_path=shard_2,
+        activations_by_layer={0: [torch.tensor([[3.0, 4.0]])]},
+        source_indices=[11],
+        example_source_indices=[11],
+        example_metadata_json=['{"source_index": 11}'],
+        **common_kwargs,
+    )
+
+    with pytest.raises(FileExistsError, match="copy-disjoint"):
+        merge_activation_hdf5_shards(
+            [shard_1, shard_2],
+            output_path=tmp_path / "merged.h5",
+            merge_strategy="copy-disjoint",
+        )
+
+
 def test_merge_activation_hdf5_shards_rejects_duplicate_examples(tmp_path):
     torch = pytest.importorskip("torch")
 
@@ -1195,6 +1357,154 @@ def test_merge_activation_hdf5_shards_rejects_duplicate_examples(tmp_path):
 
     with pytest.raises(FileExistsError, match="duplicate example"):
         merge_activation_hdf5_shards([shard_1, shard_2], output_path=tmp_path / "merged.h5")
+
+
+def test_write_activation_hdf5_respects_compression_mode(tmp_path):
+    torch = pytest.importorskip("torch")
+    h5py = pytest.importorskip("h5py")
+
+    none_path = tmp_path / "acts_none.h5"
+    write_activation_hdf5(
+        output_path=none_path,
+        task="roleplaying__plain",
+        layers=(0,),
+        activations_by_layer={0: [torch.tensor([[1.0, 2.0]])]},
+        source_indices=[10],
+        output_indices=[0],
+        labels=[HONEST],
+        example_indices=[0],
+        token_positions=[4],
+        example_splits=[0, 1],
+        example_source_indices=[10],
+        example_output_indices=[0],
+        example_labels=[HONEST],
+        example_token_counts=[1],
+        detected_answer_texts=["yes"],
+        decoded_answer_texts=["yes"],
+        char_spans_json=["[[0, 3]]"],
+        messages_json=['[{"role": "assistant", "content": "yes"}]'],
+        rendered_texts=["<assistant>yes"],
+        source_datasets=["roleplaying.json"],
+        raw_labels_json=["1"],
+        label_schemas=[LabelSchema.ROLEPLAYING_1_TO_7.value],
+        example_metadata_json=['{"source_index": 10}'],
+        model_id=DEFAULT_MODEL_ID,
+        backend_name="unit-test",
+        surface_names={0: "decoder_layer_0_answer_tokens"},
+        preserved_input_keys=("attention_mask", "input_ids"),
+        dataset_id="roleplaying.json",
+        processor_id=DEFAULT_MODEL_ID,
+        compression="none",
+        overwrite=False,
+    )
+
+    lzf_path = tmp_path / "acts_lzf.h5"
+    write_activation_hdf5(
+        output_path=lzf_path,
+        task="roleplaying__plain",
+        layers=(0,),
+        activations_by_layer={0: [torch.tensor([[3.0, 4.0]])]},
+        source_indices=[11],
+        output_indices=[0],
+        labels=[DECEPTIVE],
+        example_indices=[0],
+        token_positions=[5],
+        example_splits=[0, 1],
+        example_source_indices=[11],
+        example_output_indices=[0],
+        example_labels=[DECEPTIVE],
+        example_token_counts=[1],
+        detected_answer_texts=["no"],
+        decoded_answer_texts=["no"],
+        char_spans_json=["[[0, 2]]"],
+        messages_json=['[{"role": "assistant", "content": "no"}]'],
+        rendered_texts=["<assistant>no"],
+        source_datasets=["roleplaying.json"],
+        raw_labels_json=["0"],
+        label_schemas=[LabelSchema.ROLEPLAYING_1_TO_7.value],
+        example_metadata_json=['{"source_index": 11}'],
+        model_id=DEFAULT_MODEL_ID,
+        backend_name="unit-test",
+        surface_names={0: "decoder_layer_0_answer_tokens"},
+        preserved_input_keys=("attention_mask", "input_ids"),
+        dataset_id="roleplaying.json",
+        processor_id=DEFAULT_MODEL_ID,
+        compression="lzf",
+        overwrite=False,
+    )
+
+    with h5py.File(none_path, "r") as none_h5:
+        assert none_h5["layer_0/roleplaying__plain"].compression is None
+    with h5py.File(lzf_path, "r") as lzf_h5:
+        assert lzf_h5["layer_0/roleplaying__plain"].compression == "lzf"
+
+
+def test_merge_activation_hdf5_shards_respects_compression_mode(tmp_path):
+    torch = pytest.importorskip("torch")
+    h5py = pytest.importorskip("h5py")
+
+    shard_1 = tmp_path / "shard-1.h5"
+    shard_2 = tmp_path / "shard-2.h5"
+    common_kwargs = {
+        "task": "roleplaying__plain",
+        "layers": (0,),
+        "output_indices": [0],
+        "labels": [HONEST],
+        "example_indices": [0],
+        "token_positions": [5],
+        "example_splits": [0, 1],
+        "example_labels": [HONEST],
+        "example_token_counts": [1],
+        "detected_answer_texts": ["yes"],
+        "decoded_answer_texts": ["yes"],
+        "char_spans_json": ["[[0, 3]]"],
+        "messages_json": ['[{"role": "assistant", "content": "yes"}]'],
+        "rendered_texts": ["<assistant>yes"],
+        "source_datasets": ["roleplaying.json"],
+        "raw_labels_json": ["1"],
+        "label_schemas": [LabelSchema.ROLEPLAYING_1_TO_7.value],
+        "example_metadata_json": ['{"source_index": 10}'],
+        "model_id": DEFAULT_MODEL_ID,
+        "backend_name": "unit-test",
+        "surface_names": {0: "decoder_layer_0_answer_tokens"},
+        "preserved_input_keys": ("attention_mask", "input_ids"),
+        "dataset_id": "roleplaying.json",
+        "processor_id": DEFAULT_MODEL_ID,
+        "overwrite": False,
+    }
+
+    write_activation_hdf5(
+        output_path=shard_1,
+        activations_by_layer={0: [torch.tensor([[1.0, 2.0]])]},
+        source_indices=[10],
+        example_source_indices=[10],
+        example_output_indices=[0],
+        compression="none",
+        **common_kwargs,
+    )
+    shard_2_kwargs = common_kwargs | {"example_metadata_json": ['{"source_index": 11}']}
+    write_activation_hdf5(
+        output_path=shard_2,
+        activations_by_layer={0: [torch.tensor([[3.0, 4.0]])]},
+        source_indices=[11],
+        example_source_indices=[11],
+        example_output_indices=[0],
+        compression="none",
+        **shard_2_kwargs,
+    )
+
+    merged_path = tmp_path / "merged.h5"
+    summary = merge_activation_hdf5_shards(
+        [shard_1, shard_2],
+        output_path=merged_path,
+        overwrite=True,
+        compression="lzf",
+    )
+
+    assert summary.output_path == merged_path
+    with h5py.File(merged_path, "r") as merged:
+        assert merged["layer_0/roleplaying__plain"].compression == "lzf"
+        assert merged.attrs["merged_compression"] == "lzf"
 
 
 class FakeSaveTensor:

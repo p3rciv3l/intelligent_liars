@@ -271,6 +271,7 @@ class ActivationExtractionSettings:
     capture_logits: bool = False
     resume: bool = False
     storage_dtype: Literal["float16", "float32"] = "float16"
+    compression: Literal["gzip", "lzf", "none"] = "lzf"
 
 
 @dataclass(frozen=True)
@@ -744,7 +745,7 @@ def _load_geometry_of_truth_examples(task: str, variant: str, *, project_root: P
     for csv_name in csv_names:
         path = data_dir / csv_name
         for row_idx, row in enumerate(_read_csv_dicts(path)):
-            statement = row["statement"].rstrip(".")
+            statement = row["statement"].rstrip(".!?")
             if statement.endswith(('"', ">", ")", "”")):
                 continue
             examples.append(
@@ -1153,11 +1154,32 @@ def verify_decoded_masks(
     decoded_texts: Sequence[str],
 ) -> None:
     for idx, (expected, decoded) in enumerate(zip(expected_texts, decoded_texts, strict=True)):
-        if _normalise_for_compare(expected) == _normalise_for_compare(decoded):
+        if _decoded_detection_text_matches(expected=expected, decoded=decoded):
             continue
         raise ValueError(
             f"Detection mask mismatch at batch row {idx}: expected {expected[:160]!r}, got {decoded[:160]!r}"
         )
+
+
+def _decoded_detection_text_matches(*, expected: str, decoded: str) -> bool:
+    expected_norm = _normalise_for_compare(expected)
+    decoded_norm = _normalise_for_compare(decoded)
+    if expected_norm == decoded_norm:
+        return True
+    if not expected_norm:
+        return not decoded_norm
+    start = decoded_norm.find(expected_norm)
+    if start < 0:
+        return False
+    prefix = decoded_norm[:start]
+    suffix = decoded_norm[start + len(expected_norm) :]
+    return _is_quote_boundary_extra(prefix) and _is_quote_boundary_extra(suffix)
+
+
+def _is_quote_boundary_extra(text: str) -> bool:
+    # Qwen tokenization can include neighboring punctuation with a detected
+    # punctuation-only span, e.g. expected "." -> "!." or "%.".
+    return all(char.isspace() or not char.isalnum() for char in text)
 
 
 def extract_dataset_activations(
@@ -1314,6 +1336,7 @@ def extract_dataset_activations(
         overwrite=overwrite,
         resume=settings.resume,
         storage_dtype=settings.storage_dtype,
+        compression=settings.compression,
     )
     return ActivationExtractionSummary(
         task=task_name,
@@ -1407,6 +1430,7 @@ def write_activation_hdf5(
     dataset_id: str | None = None,
     processor_id: str | None = None,
     task_metadata_attrs: Mapping[str, Any] | None = None,
+    compression: Literal["gzip", "lzf", "none"] = "lzf",
     overwrite: bool,
     resume: bool = False,
     storage_dtype: Literal["float16", "float32"] = "float16",
@@ -1456,6 +1480,7 @@ def write_activation_hdf5(
         dataset_id=dataset_id,
         processor_id=processor_id,
         task_metadata_attrs=task_metadata_attrs or {},
+        compression=compression,
         storage_dtype=storage_dtype,
     )
     try:
@@ -1505,6 +1530,7 @@ def _write_activation_shard(
     dataset_id: str | None,
     processor_id: str | None,
     task_metadata_attrs: Mapping[str, Any],
+    compression: Literal["gzip", "lzf", "none"],
     storage_dtype: Literal["float16", "float32"],
 ) -> Path:
     import h5py
@@ -1616,13 +1642,21 @@ def _write_activation_shard(
                         f"layer_{layer} has {data.shape[0]} rows, expected {token_rows} from metadata."
                     )
                 group = handle.require_group(f"layer_{layer}")
-                dataset = group.create_dataset(task, data=data, compression="gzip")
+                dataset = group.create_dataset(
+                    task,
+                    data=data,
+                    compression=_normalize_compression_mode(compression),
+                )
                 dataset.attrs["surface"] = surface_names.get(layer, f"decoder_layer_{layer}_answer_tokens")
 
             if logits_by_batch:
                 logits = _tensor_sequence_to_numpy(logits_by_batch, storage_dtype=storage_dtype)
                 logits_group = handle.require_group("logits")
-                logits_dataset = logits_group.create_dataset(task, data=logits, compression="gzip")
+                logits_dataset = logits_group.create_dataset(
+                    task,
+                    data=logits,
+                    compression=_normalize_compression_mode(compression),
+                )
                 logits_dataset.attrs["position_convention"] = "next-token logits at answer token position minus 1"
     except Exception:
         shard_path.unlink(missing_ok=True)
@@ -1650,11 +1684,22 @@ def _tensor_sequence_to_numpy(
     return torch.cat(list(tensors), dim=0).detach().cpu().to(dtype=torch_dtype).numpy().astype(numpy_dtype, copy=False)
 
 
+def _normalize_compression_mode(
+    compression: Literal["gzip", "lzf", "none"],
+) -> str | None:
+    """Map compression tokens to h5py-compatible values."""
+    if compression == "none":
+        return None
+    return compression
+
+
 def merge_activation_hdf5_shards(
     shard_paths: Sequence[Path],
     *,
     output_path: Path,
     overwrite: bool = False,
+    compression: Literal["gzip", "lzf", "none"] = "lzf",
+    merge_strategy: Literal["auto", "concat", "copy-disjoint"] = "auto",
 ) -> ActivationMergeSummary:
     import h5py
     import numpy as np
@@ -1667,6 +1712,18 @@ def merge_activation_hdf5_shards(
         raise FileNotFoundError(f"Activation shard(s) not found: {missing}")
     if output_path.exists() and not overwrite:
         raise FileExistsError(f"{output_path} already exists. Use overwrite=True to replace it.")
+    if merge_strategy not in {"auto", "concat", "copy-disjoint"}:
+        raise ValueError(f"Unsupported activation merge strategy: {merge_strategy!r}")
+    if merge_strategy in {"auto", "copy-disjoint"} and _activation_shards_have_disjoint_tasks(shard_paths):
+        return _copy_disjoint_activation_hdf5_tasks(
+            shard_paths,
+            output_path=output_path,
+            overwrite=overwrite,
+        )
+    if merge_strategy == "copy-disjoint":
+        raise FileExistsError(
+            "Cannot copy-disjoint merge activation HDF5 files because at least one task is duplicated."
+        )
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     tmp_file = tempfile.NamedTemporaryFile(
@@ -1687,6 +1744,8 @@ def merge_activation_hdf5_shards(
             target.attrs["merged_at"] = datetime.now(UTC).isoformat()
             target.attrs["merged_shard_count"] = len(shard_paths)
             target.attrs["source_output_path"] = str(output_path)
+            target.attrs["merged_compression"] = compression
+            target.attrs["merged_strategy"] = "concat"
 
             for shard_path in shard_paths[1:]:
                 with h5py.File(shard_path, "r") as shard:
@@ -1725,13 +1784,21 @@ def merge_activation_hdf5_shards(
 
                 for layer, payload in sorted(merged["layers"].items()):
                     layer_group = target.require_group(f"layer_{layer}")
-                    dataset = layer_group.create_dataset(task, data=payload["data"], compression="gzip")
+                    dataset = layer_group.create_dataset(
+                        task,
+                        data=payload["data"],
+                        compression=_normalize_compression_mode(compression),
+                    )
                     for attr_name, attr_value in payload["attrs"].items():
                         dataset.attrs[attr_name] = attr_value
 
                 if merged["logits"] is not None:
                     logits_group = target.require_group("logits")
-                    logits_dataset = logits_group.create_dataset(task, data=merged["logits"]["data"], compression="gzip")
+                    logits_dataset = logits_group.create_dataset(
+                        task,
+                        data=merged["logits"]["data"],
+                        compression=_normalize_compression_mode(compression),
+                    )
                     for attr_name, attr_value in merged["logits"]["attrs"].items():
                         logits_dataset.attrs[attr_name] = attr_value
 
@@ -1748,6 +1815,146 @@ def merge_activation_hdf5_shards(
         examples_by_task=examples_by_task,
         token_rows_by_task=token_rows_by_task,
     )
+
+
+def _activation_shards_have_disjoint_tasks(shard_paths: Sequence[Path]) -> bool:
+    task_owners: dict[str, Path] = {}
+    for shard_path in shard_paths:
+        for task in _tasks_in_activation_shard(shard_path):
+            if task in task_owners:
+                return False
+            task_owners[task] = shard_path
+    return bool(task_owners)
+
+
+def _tasks_in_activation_shard(shard_path: Path) -> tuple[str, ...]:
+    import h5py
+
+    with h5py.File(shard_path, "r") as shard:
+        return _tasks_in_activation_handle(shard)
+
+
+def _tasks_in_activation_handle(handle: Any) -> tuple[str, ...]:
+    import h5py
+
+    metadata = handle.get("metadata")
+    if metadata is None:
+        return ()
+    return tuple(
+        sorted(
+            str(name)
+            for name, item in metadata.items()
+            if isinstance(item, h5py.Group)
+        )
+    )
+
+
+def _copy_disjoint_activation_hdf5_tasks(
+    shard_paths: Sequence[Path],
+    *,
+    output_path: Path,
+    overwrite: bool,
+) -> ActivationMergeSummary:
+    import h5py
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_file = tempfile.NamedTemporaryFile(
+        prefix=f".{output_path.name}.copy-disjoint.",
+        suffix=".h5",
+        dir=output_path.parent,
+        delete=False,
+    )
+    tmp_file.close()
+    tmp_path = Path(tmp_file.name)
+
+    examples_by_task: dict[str, int] = {}
+    token_rows_by_task: dict[str, int] = {}
+    copied_tasks: list[str] = []
+    try:
+        with h5py.File(shard_paths[0], "r") as first, h5py.File(tmp_path, "w") as target:
+            _copy_root_attrs(target, first)
+            merged_at = datetime.now(UTC).isoformat()
+            target.attrs["created_at"] = merged_at
+            target.attrs["merged_at"] = merged_at
+            target.attrs["merged_shard_count"] = len(shard_paths)
+            target.attrs["source_output_path"] = str(output_path)
+            target.attrs["merged_compression"] = "preserved"
+            target.attrs["merged_strategy"] = "copy-disjoint"
+
+            for shard_path in shard_paths:
+                with h5py.File(shard_path, "r") as shard:
+                    _verify_root_attrs_compatible(first, shard)
+                    for task in _tasks_in_activation_handle(shard):
+                        if task in copied_tasks:
+                            raise FileExistsError(
+                                f"Cannot copy-disjoint merge duplicate task {task!r}."
+                            )
+                        _copy_disjoint_activation_task(
+                            target=target,
+                            shard=shard,
+                            shard_path=shard_path,
+                            task=task,
+                            merged_at=merged_at,
+                            examples_by_task=examples_by_task,
+                            token_rows_by_task=token_rows_by_task,
+                        )
+                        copied_tasks.append(task)
+
+        output_path.unlink(missing_ok=True)
+        tmp_path.replace(output_path)
+    except Exception:
+        tmp_path.unlink(missing_ok=True)
+        raise
+
+    return ActivationMergeSummary(
+        output_path=output_path,
+        shard_paths=tuple(shard_paths),
+        tasks=tuple(sorted(copied_tasks)),
+        examples_by_task=examples_by_task,
+        token_rows_by_task=token_rows_by_task,
+    )
+
+
+def _copy_disjoint_activation_task(
+    *,
+    target: Any,
+    shard: Any,
+    shard_path: Path,
+    task: str,
+    merged_at: str,
+    examples_by_task: dict[str, int],
+    token_rows_by_task: dict[str, int],
+) -> None:
+    metadata = target.require_group("metadata")
+    if task in metadata:
+        raise FileExistsError(f"Cannot copy-disjoint merge duplicate metadata/{task}.")
+    shard.copy(f"metadata/{task}", metadata, name=task)
+    task_metadata = metadata[task]
+    token_rows = int(task_metadata["labels"].shape[0])
+    examples = int(task_metadata["example_labels"].shape[0])
+    token_rows_by_task[task] = token_rows
+    examples_by_task[task] = examples
+    task_metadata.attrs["merged_at"] = merged_at
+    task_metadata.attrs["merged_shard_count"] = 1
+    task_metadata.attrs["merged_source_paths_json"] = json.dumps([str(shard_path)], sort_keys=True)
+    task_metadata.attrs["merged_example_count"] = examples
+    task_metadata.attrs["merged_token_rows"] = token_rows
+
+    for layer in _layer_indices_for_task(shard, task_metadata, task=task):
+        source_path = f"layer_{layer}/{task}"
+        if source_path not in shard:
+            raise KeyError(f"Missing activation dataset in shard: {source_path}")
+        layer_group = target.require_group(f"layer_{layer}")
+        if task in layer_group:
+            raise FileExistsError(f"Cannot copy-disjoint merge duplicate layer_{layer}/{task}.")
+        shard.copy(source_path, layer_group, name=task)
+
+    logits_path = f"logits/{task}"
+    if logits_path in shard:
+        logits_group = target.require_group("logits")
+        if task in logits_group:
+            raise FileExistsError(f"Cannot copy-disjoint merge duplicate logits/{task}.")
+        shard.copy(logits_path, logits_group, name=task)
 
 
 _TOKEN_METADATA_DATASETS = (
@@ -1779,15 +1986,9 @@ _EXAMPLE_STRING_METADATA_DATASETS = (
 
 
 def _tasks_in_activation_shards(shard_paths: Sequence[Path]) -> tuple[str, ...]:
-    import h5py
-
     tasks: set[str] = set()
     for shard_path in shard_paths:
-        with h5py.File(shard_path, "r") as shard:
-            metadata = shard.get("metadata")
-            if metadata is None:
-                continue
-            tasks.update(str(task) for task in metadata.keys())
+        tasks.update(_tasks_in_activation_shard(shard_path))
     if not tasks:
         raise ValueError("No metadata task groups found in activation shards.")
     return tuple(sorted(tasks))
@@ -2126,6 +2327,7 @@ def _extraction_settings_attrs(settings: ActivationExtractionSettings) -> dict[s
         "extraction_max_length": "" if settings.max_length is None else settings.max_length,
         "extraction_capture_logits": settings.capture_logits,
         "extraction_resume": settings.resume,
+        "extraction_compression": settings.compression,
         "extraction_storage_dtype": settings.storage_dtype,
     }
 
@@ -2667,9 +2869,11 @@ def _build_qwen_inputs(
             add_generation_prompt=False,
             return_dict=True,
             return_tensors="pt",
-            padding=True,
-            truncation=max_length is not None,
-            max_length=max_length,
+            processor_kwargs={
+                "padding": True,
+                "truncation": max_length is not None,
+                "max_length": max_length,
+            },
         )
     except TypeError:
         inputs = processor(

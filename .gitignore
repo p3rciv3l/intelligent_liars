@@ -24,6 +24,7 @@ data/*
 !data/insider_trading/
 data/insider_trading/*
 !data/insider_trading/*.txt
+!data/insider_trading/*.dvc
 !data/insider_trading/prompts/
 !data/insider_trading/prompts/**/
 !data/insider_trading/prompts/**/*.yaml
@@ -51,6 +52,7 @@ data/geometry_of_truth/*
 data/internal_state/*
 !data/internal_state/*.csv
 results/
+logs/
 artifacts/**
 !artifacts/**/
 !artifacts/**/*.dvc
@@ -71,3 +73,6 @@ deception-detection/
 truth_spec/
 references/
 tmp/
+
+# Local forensic dumps; preserve curated postmortems and validation reports instead.
+docs/postmortems/*/transcript_slices/

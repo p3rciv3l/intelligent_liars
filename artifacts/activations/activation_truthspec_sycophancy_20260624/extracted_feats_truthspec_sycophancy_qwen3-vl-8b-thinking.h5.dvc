@@ -1,0 +1,5 @@
+outs:
+- md5: f29580a44846e3f1c9aa0b2399cd86c9
+  size: 1148264386
+  hash: md5
+  path: extracted_feats_truthspec_sycophancy_qwen3-vl-8b-thinking.h5

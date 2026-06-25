@@ -1,0 +1,5 @@
+outs:
+- md5: 1d20007ef905b40b0d10f44b2b833c14
+  size: 45024798624
+  hash: md5
+  path: extracted_feats_truthspec_static_qwen3-vl-8b-thinking.h5
