@@ -73,6 +73,7 @@ deception-detection/
 truth_spec/
 references/
 tmp/
+archive/
 
 # Local forensic dumps; preserve curated postmortems and validation reports instead.
 docs/postmortems/*/transcript_slices/
