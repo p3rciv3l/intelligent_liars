@@ -10,25 +10,52 @@ import subprocess
 import sys
 import time
 from dataclasses import asdict, dataclass
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from intelligent_liars import dynamic_queue
 from intelligent_liars.models import DEFAULT_MODEL_ID, qwen_model_load_description
 from intelligent_liars.run_control import (
     acquire_lock,
     command_line,
-    current_git_commit,
     file_sha256,
     install_signal_cleanup,
     lock_payload,
-    new_run_id,
     stable_sha256,
 )
+
+gpu_snapshot = dynamic_queue.gpu_snapshot
+load_queue_plan = dynamic_queue.load_queue_plan
+now = dynamic_queue.now
+parse_csv = dynamic_queue.parse_csv
+read_json = dynamic_queue.read_json
+write_json = dynamic_queue.write_json
+write_queue_plan = dynamic_queue.write_queue_plan
 
 
 DEFAULT_GENERATED_MODEL = "qwen3-vl-8b-thinking"
 PLAN_SCHEMA_VERSION = 1
+QUEUE_STATE_DIRS = ("pending", "running", "done", "failed")
+QUEUE_DIRS = (*QUEUE_STATE_DIRS, "completed", "outputs", "logs", "heartbeats")
+QUEUE_CLEAR_SPECS = tuple(
+    (name, "*")
+    for name in ("pending", "running", "done", "failed", "completed", "outputs")
+)
+QUEUE_STATE_SPECS = (
+    ("pending", "*.json"),
+    ("running", "*.json"),
+    ("done", "*.json"),
+    ("failed", "*.json"),
+    ("outputs", "*.h5"),
+)
+COUNT_STATE_SPECS = (
+    ("pending", "*.json"),
+    ("running", "*.json"),
+    ("done", "*.json"),
+    ("failed", "*.json"),
+    ("completed", "*.json"),
+    ("outputs", "*.h5"),
+)
 
 
 @dataclass(frozen=True)
@@ -57,25 +84,6 @@ class Unit:
         return f"{self.chunk_id}__attempt-{self.attempt:02d}"
 
 
-def now() -> str:
-    return datetime.now(UTC).isoformat(timespec="seconds")
-
-
-def read_json(path: Path) -> Any:
-    return json.loads(path.read_text())
-
-
-def write_json(path: Path, payload: Any) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(path.suffix + f".tmp-{os.getpid()}")
-    tmp.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
-    os.replace(tmp, path)
-
-
-def parse_csv(value: str) -> list[str]:
-    return [item.strip() for item in value.split(",") if item.strip()]
-
-
 def serialise_unit(unit: Unit) -> dict[str, Any]:
     payload = asdict(unit)
     payload["examples"] = [asdict(example) for example in unit.examples]
@@ -100,8 +108,7 @@ def deserialise_unit(payload: dict[str, Any]) -> Unit:
 
 
 def ensure_dirs(run_dir: Path) -> None:
-    for name in ("pending", "running", "done", "failed", "completed", "outputs", "logs", "heartbeats"):
-        (run_dir / name).mkdir(parents=True, exist_ok=True)
+    dynamic_queue.ensure_dirs(run_dir, QUEUE_DIRS)
 
 
 def create_initial_queue(
@@ -115,17 +122,23 @@ def create_initial_queue(
     run_dir = Path(args.run_dir).resolve()
     ensure_dirs(run_dir)
     if overwrite_queue:
-        for subdir in ("pending", "running", "done", "failed", "completed", "outputs"):
-            for path in (run_dir / subdir).glob("*"):
-                path.unlink()
+        dynamic_queue.clear_queue(run_dir, QUEUE_CLEAR_SPECS)
     units = units or plan_units_from_args(args)
-    existing = queue_unit_ids(run_dir)
-    for queue_idx, unit in enumerate(units):
-        stamped = stamp_unit_plan(unit, run_id=run_id, queue_plan_id=queue_plan_id)
-        if stamped.key in existing:
-            continue
-        write_json(run_dir / "pending" / f"{queue_idx:05d}-{stamped.key}.json", serialise_unit(stamped))
-        existing.add(stamped.key)
+    dynamic_queue.enqueue_missing_units(
+        run_dir,
+        units,
+        run_id=run_id,
+        queue_plan_id=queue_plan_id,
+        state_names=QUEUE_STATE_DIRS,
+        output_glob="*.h5",
+        unit_id=_unit_key,
+        serialise_unit=serialise_unit,
+        deserialise_unit=deserialise_unit,
+        stamp_unit_plan=_stamp_unit_plan_positional,
+        pending_path=_pending_path_for_new_unit,
+        output_unit_id=_output_unit_id,
+        fallback_unit_id=_fallback_unit_id,
+    )
     return units
 
 
@@ -156,9 +169,15 @@ def plan_units(
     units: list[Unit] = []
     sources: list[tuple[str, str, Any]] = []
     for rollout_path in rollout_paths:
-        resolved = rollout_path if rollout_path.is_absolute() else project_root / rollout_path
+        resolved = (
+            rollout_path if rollout_path.is_absolute() else project_root / rollout_path
+        )
         dataset = ActivationDataset.from_rollout(resolved)
-        source_id = str(resolved.relative_to(project_root) if resolved.is_relative_to(project_root) else resolved)
+        source_id = str(
+            resolved.relative_to(project_root)
+            if resolved.is_relative_to(project_root)
+            else resolved
+        )
         sources.append(("rollout", source_id, dataset))
     for task in tasks:
         dataset = ActivationDataset.from_named_task(
@@ -168,7 +187,9 @@ def plan_units(
         )
         sources.append(("named_task", task, dataset))
     if not sources:
-        raise ValueError("At least one --path rollout file or --task named dataset is required.")
+        raise ValueError(
+            "At least one --path rollout file or --task named dataset is required."
+        )
 
     for source_type, source_id, dataset in sources:
         examples = list(dataset.labeled_for_probe())
@@ -187,7 +208,10 @@ def plan_units(
                     chunk_id=chunk_id,
                     task=dataset.task,
                     rollout_path=source_id,
-                    examples=tuple(ExampleKey(example.source_index, example.output_index) for example in pending),
+                    examples=tuple(
+                        ExampleKey(example.source_index, example.output_index)
+                        for example in pending
+                    ),
                     estimated_chars=pending_chars,
                     source_type=source_type,
                     generated_model=generated_model,
@@ -200,7 +224,10 @@ def plan_units(
 
         for example in sorted(examples, key=estimated_example_chars, reverse=True):
             estimated = estimated_example_chars(example)
-            if pending and (pending_chars + estimated > chunk_chars or len(pending) >= max_examples_per_chunk):
+            if pending and (
+                pending_chars + estimated > chunk_chars
+                or len(pending) >= max_examples_per_chunk
+            ):
                 flush()
             pending.append(example)
             pending_chars += estimated
@@ -227,6 +254,52 @@ def stamp_unit_plan(unit: Unit, *, run_id: str, queue_plan_id: str) -> Unit:
     )
 
 
+def _stamp_unit_plan_positional(unit: Unit, run_id: str, queue_plan_id: str) -> Unit:
+    return stamp_unit_plan(unit, run_id=run_id, queue_plan_id=queue_plan_id)
+
+
+def _unit_key(unit: Unit) -> str:
+    return unit.key
+
+
+def _fallback_unit_id(path: Path) -> str:
+    return path.stem
+
+
+def _output_unit_id(path: Path, expected_queue_plan_id: str | None) -> str | None:
+    return _output_shard_unit_key(path, expected_queue_plan_id=expected_queue_plan_id)
+
+
+def _pending_path_for_new_unit(run_dir: Path, queue_idx: int, unit: Unit) -> Path:
+    return run_dir / "pending" / f"{queue_idx:05d}-{unit.key}.json"
+
+
+def _running_path_for_claim(run_dir: Path, pending_path: Path, _unit: Unit) -> Path:
+    return run_dir / "running" / pending_path.name
+
+
+def _output_path_for_unit(run_dir: Path, unit: Unit) -> Path:
+    return run_dir / "outputs" / f"{unit.key}.h5"
+
+
+def _output_is_valid_for_unit(path: Path, unit: Unit) -> bool:
+    return _shard_is_complete(path, expected_unit=unit)
+
+
+def _pending_path_for_running_unit(
+    run_dir: Path, running_path: Path, _unit: Unit
+) -> Path:
+    return run_dir / "pending" / running_path.name
+
+
+def _done_path_for_running_unit(run_dir: Path, running_path: Path, _unit: Unit) -> Path:
+    return run_dir / "done" / running_path.name
+
+
+def _pending_path_for_done_unit(run_dir: Path, unit: Unit) -> Path:
+    return run_dir / "pending" / f"{unit.key}.json"
+
+
 def _dataset_source_sha256(dataset: Any) -> str | None:
     source_path = getattr(dataset, "source_path", None)
     if source_path is None:
@@ -248,8 +321,12 @@ def _example_manifest_sha256(examples: list[Any]) -> str:
                 "detected_text_sha256": _text_sha256(example.detected_text),
                 "messages_sha256": stable_sha256(example.messages),
                 "source_dataset": example.source_dataset,
-                "raw_label": None if example.raw_label is None else str(example.raw_label),
-                "label_schema": getattr(example.label_schema, "value", str(example.label_schema)),
+                "raw_label": None
+                if example.raw_label is None
+                else str(example.raw_label),
+                "label_schema": getattr(
+                    example.label_schema, "value", str(example.label_schema)
+                ),
             }
         )
     return stable_sha256(payload)
@@ -322,37 +399,17 @@ def build_plan_manifest(args: argparse.Namespace, units: list[Unit]) -> dict[str
     }
 
 
-def prepare_queue_plan(args: argparse.Namespace, units: list[Unit], *, overwrite_queue: bool) -> dict[str, Any]:
+def prepare_queue_plan(
+    args: argparse.Namespace, units: list[Unit], *, overwrite_queue: bool
+) -> dict[str, Any]:
     run_dir = Path(args.run_dir).resolve()
     manifest = build_plan_manifest(args, units)
-    queue_plan_id = stable_sha256(manifest)
-    plan_path = run_dir / "queue_plan.json"
-    if plan_path.exists() and not overwrite_queue:
-        existing = read_json(plan_path)
-        if existing.get("queue_plan_id") != queue_plan_id:
-            raise SystemExit(
-                f"Existing queue plan differs for {run_dir}: "
-                f"{existing.get('queue_plan_id')} != {queue_plan_id}. "
-                "Use a fresh run directory or --overwrite-queue intentionally."
-            )
-        return existing
-    return {
-        "schema_version": PLAN_SCHEMA_VERSION,
-        "run_id": new_run_id(),
-        "queue_plan_id": queue_plan_id,
-        "created_at": now(),
-        "git_commit": current_git_commit(Path(args.project_root).resolve()),
-        "command": command_line(),
-        "manifest": manifest,
-    }
-
-
-def write_queue_plan(run_dir: Path, plan: dict[str, Any]) -> None:
-    write_json(run_dir / "queue_plan.json", plan)
-
-
-def load_queue_plan(run_dir: Path) -> dict[str, Any]:
-    return read_json(run_dir / "queue_plan.json")
+    return dynamic_queue.prepare_queue_plan(
+        project_root=Path(args.project_root).resolve(),
+        run_dir=run_dir,
+        manifest=manifest,
+        overwrite_queue=overwrite_queue,
+    )
 
 
 def planned_unit_keys_from_plan(plan: dict[str, Any]) -> set[str]:
@@ -365,77 +422,42 @@ def planned_unit_keys_from_plan(plan: dict[str, Any]) -> set[str]:
 
 
 def queue_unit_ids(run_dir: Path) -> set[str]:
-    existing: set[str] = set()
-    for name in ("pending", "running", "done", "failed"):
-        for path in (run_dir / name).glob("*.json"):
-            try:
-                existing.add(deserialise_unit(read_json(path)).key)
-            except Exception:
-                existing.add(path.stem)
-    for path in (run_dir / "outputs").glob("*.h5"):
-        unit_key = _output_shard_unit_key(path)
-        if unit_key is not None:
-            existing.add(unit_key)
-    return existing
+    return dynamic_queue.queue_unit_ids(
+        run_dir,
+        state_names=QUEUE_STATE_DIRS,
+        output_glob="*.h5",
+        deserialise_unit=deserialise_unit,
+        unit_id=_unit_key,
+        output_unit_id=_output_unit_id,
+        fallback_unit_id=_fallback_unit_id,
+    )
 
 
 def run_dir_has_queue_state(run_dir: Path) -> bool:
-    for name, pattern in (
-        ("pending", "*.json"),
-        ("running", "*.json"),
-        ("done", "*.json"),
-        ("failed", "*.json"),
-        ("outputs", "*.h5"),
-    ):
-        if any((run_dir / name).glob(pattern)):
-            return True
-    return False
+    return dynamic_queue.run_dir_has_queue_state(run_dir, QUEUE_STATE_SPECS)
 
 
 def claim_unit(run_dir: Path) -> tuple[Path, Unit] | None:
-    for path in sorted((run_dir / "pending").glob("*.json")):
-        try:
-            unit = deserialise_unit(read_json(path))
-        except Exception:
-            continue
-        dest = run_dir / "running" / path.name
-        try:
-            os.replace(path, dest)
-            return dest, unit
-        except OSError:
-            continue
-    return None
+    return dynamic_queue.claim_unit(
+        run_dir,
+        deserialise_unit=deserialise_unit,
+        running_path=_running_path_for_claim,
+    )
 
 
 def requeue_running_units(run_dir: Path) -> tuple[int, int]:
     """Return stale running units to the pending queue before restart."""
-    requeued = 0
-    promoted = 0
-    for running_path in sorted((run_dir / "running").glob("*.json")):
-        try:
-            unit = deserialise_unit(read_json(running_path))
-        except Exception:
-            running_path.unlink(missing_ok=True)
-            continue
-        output_path = run_dir / "outputs" / f"{unit.key}.h5"
-        if _shard_is_complete(output_path, expected_unit=unit):
-            done_path = run_dir / "done" / running_path.name
-            if not done_path.exists():
-                os.replace(running_path, done_path)
-            else:
-                running_path.unlink()
-            promoted += 1
-            continue
-
-        pending_path = run_dir / "pending" / running_path.name
-        if pending_path.exists():
-            running_path.unlink()
-            continue
-
-        os.replace(running_path, pending_path)
-        requeued += 1
-
-    return requeued, promoted
+    return dynamic_queue.requeue_running_units(
+        run_dir,
+        deserialise_unit=deserialise_unit,
+        serialise_unit=serialise_unit,
+        output_path=_output_path_for_unit,
+        output_is_valid=_output_is_valid_for_unit,
+        pending_path=_pending_path_for_running_unit,
+        done_path=_done_path_for_running_unit,
+        move_to_pending=True,
+        count_existing_pending=False,
+    )
 
 
 def repair_stale_done_units(run_dir: Path) -> tuple[int, int]:
@@ -444,37 +466,23 @@ def repair_stale_done_units(run_dir: Path) -> tuple[int, int]:
     Returns:
         A tuple of (requeued_units, removed_duplicate_units).
     """
-    done_dir = run_dir / "done"
-    pending_dir = run_dir / "pending"
-    requeued = 0
-    removed = 0
-    seen_unit_ids: set[str] = set()
-    for done_path in sorted(done_dir.glob("*.json")):
-        try:
-            unit = deserialise_unit(read_json(done_path))
-        except Exception:
-            done_path.unlink(missing_ok=True)
-            removed += 1
-            continue
-
-        unit_id = unit.key
-        if unit_id in seen_unit_ids:
-            done_path.unlink(missing_ok=True)
-            removed += 1
-            continue
-        seen_unit_ids.add(unit_id)
-
-        output_path = run_dir / "outputs" / f"{unit_id}.h5"
-        if not _shard_is_complete(output_path, expected_unit=unit):
-            done_path.unlink(missing_ok=True)
-            pending_path = pending_dir / f"{unit_id}.json"
-            if not pending_path.exists():
-                write_json(pending_path, serialise_unit(unit))
-                requeued += 1
-    return requeued, removed
+    return dynamic_queue.repair_stale_done_units(
+        run_dir,
+        deserialise_unit=deserialise_unit,
+        unit_id=_unit_key,
+        serialise_unit=serialise_unit,
+        output_path=_output_path_for_unit,
+        output_is_valid=_output_is_valid_for_unit,
+        pending_path=_pending_path_for_done_unit,
+    )
 
 
-def _shard_is_complete(path: Path, *, expected_unit: Unit | None = None, expected_queue_plan_id: str | None = None) -> bool:
+def _shard_is_complete(
+    path: Path,
+    *,
+    expected_unit: Unit | None = None,
+    expected_queue_plan_id: str | None = None,
+) -> bool:
     if not path.exists() or path.stat().st_size == 0:
         return False
     try:
@@ -484,7 +492,11 @@ def _shard_is_complete(path: Path, *, expected_unit: Unit | None = None, expecte
             if expected_unit is not None and expected_unit.queue_plan_id:
                 if str(handle.attrs.get("dynamic_unit_key", "")) != expected_unit.key:
                     return False
-                if expected_unit.queue_plan_id and str(handle.attrs.get("queue_plan_id", "")) != expected_unit.queue_plan_id:
+                if (
+                    expected_unit.queue_plan_id
+                    and str(handle.attrs.get("queue_plan_id", ""))
+                    != expected_unit.queue_plan_id
+                ):
                     return False
             if expected_queue_plan_id is not None:
                 if str(handle.attrs.get("queue_plan_id", "")) != expected_queue_plan_id:
@@ -494,14 +506,18 @@ def _shard_is_complete(path: Path, *, expected_unit: Unit | None = None, expecte
                 return False
 
             if (layer_container := handle.get("layers")) is not None:
-                if isinstance(layer_container, h5py.Group) and _has_layer_dataset(layer_container):
+                if isinstance(layer_container, h5py.Group) and _has_layer_dataset(
+                    layer_container
+                ):
                     return True
             return _has_layer_dataset(handle)
     except Exception:
         return False
 
 
-def _output_shard_unit_key(path: Path, *, expected_queue_plan_id: str | None = None) -> str | None:
+def _output_shard_unit_key(
+    path: Path, *, expected_queue_plan_id: str | None = None
+) -> str | None:
     if not _shard_is_complete(path, expected_queue_plan_id=expected_queue_plan_id):
         return None
     try:
@@ -532,12 +548,7 @@ def _has_layer_dataset(group: Any) -> bool:
 
 
 def count_state(run_dir: Path) -> dict[str, int]:
-    state = {
-        name: len(list((run_dir / name).glob("*.json")))
-        for name in ("pending", "running", "done", "failed", "completed")
-    }
-    state["outputs"] = len(list((run_dir / "outputs").glob("*.h5")))
-    return state
+    return dynamic_queue.count_state(run_dir, COUNT_STATE_SPECS)
 
 
 def audit_run_state(
@@ -547,82 +558,19 @@ def audit_run_state(
     queue_plan_id: str | None,
 ) -> dict[str, Any]:
     ensure_dirs(run_dir)
-    membership: dict[str, list[str]] = {unit_key: [] for unit_key in planned_unit_keys}
-    malformed_queue_files: list[str] = []
-    unexpected_units: list[str] = []
-    duplicate_units: dict[str, list[str]] = {}
-    invalid_output_files: list[str] = []
-    duplicate_output_keys: dict[str, list[str]] = {}
-    valid_output_units: set[str] = set()
-    output_markers_by_key: dict[str, list[str]] = {}
-
-    for state_name in ("pending", "running", "done", "failed"):
-        for path in sorted((run_dir / state_name).glob("*.json")):
-            try:
-                unit = deserialise_unit(read_json(path))
-            except Exception:
-                malformed_queue_files.append(str(path))
-                continue
-            marker = f"{state_name}:{path.name}"
-            if queue_plan_id is not None and unit.queue_plan_id != queue_plan_id:
-                unexpected_units.append(marker)
-                continue
-            if unit.key not in membership:
-                unexpected_units.append(marker)
-                continue
-            membership[unit.key].append(marker)
-
-    for path in sorted((run_dir / "outputs").glob("*.h5")):
-        unit_key = _output_shard_unit_key(path, expected_queue_plan_id=queue_plan_id)
-        if unit_key is None:
-            invalid_output_files.append(str(path))
-            continue
-        marker = f"outputs:{path.name}"
-        if unit_key not in membership:
-            unexpected_units.append(marker)
-            continue
-        membership[unit_key].append(marker)
-        valid_output_units.add(unit_key)
-        output_markers_by_key.setdefault(unit_key, []).append(marker)
-
-    for unit_key, markers in sorted(membership.items()):
-        state_markers = [marker for marker in markers if not marker.startswith("outputs:")]
-        if len(state_markers) > 1:
-            duplicate_units[unit_key] = state_markers
-    for unit_key, markers in sorted(output_markers_by_key.items()):
-        if len(markers) > 1:
-            duplicate_output_keys[unit_key] = markers
-
-    missing_units = [unit_key for unit_key, markers in sorted(membership.items()) if not markers]
-    done_without_output = [
-        unit_key
-        for unit_key, markers in sorted(membership.items())
-        if any(marker.startswith("done:") for marker in markers)
-        and unit_key not in valid_output_units
-    ]
-    output_without_done = [
-        unit_key
-        for unit_key, markers in sorted(membership.items())
-        if unit_key in valid_output_units
-        and not any(marker.startswith("done:") for marker in markers)
-    ]
-    issues = {
-        "malformed_queue_files": malformed_queue_files,
-        "invalid_output_files": invalid_output_files,
-        "unexpected_units": unexpected_units,
-        "missing_units": missing_units,
-        "duplicate_units": duplicate_units,
-        "done_without_output": done_without_output,
-        "output_without_done": output_without_done,
-        "duplicate_output_keys": duplicate_output_keys,
-    }
-    return {
-        "ok": not any(bool(value) for value in issues.values()),
-        "planned": len(planned_unit_keys),
-        "state": count_state(run_dir),
-        "valid_outputs": len(valid_output_units),
-        "issues": issues,
-    }
+    return dynamic_queue.audit_queue_state(
+        run_dir,
+        planned_unit_ids=planned_unit_keys,
+        queue_plan_id=queue_plan_id,
+        state_names=QUEUE_STATE_DIRS,
+        output_glob="*.h5",
+        deserialise_unit=deserialise_unit,
+        unit_id=_unit_key,
+        unit_queue_plan_id=lambda unit: unit.queue_plan_id,
+        output_unit_id=_output_unit_id,
+        count_state_fn=count_state,
+        include_duplicate_output_ids=True,
+    )
 
 
 def build_chunk_dataset(project_root: Path, unit: Unit):
@@ -637,7 +585,9 @@ def build_chunk_dataset(project_root: Path, unit: Unit):
         resolved = dataset.source_path
     elif unit.source_type == "rollout":
         rollout_path = Path(unit.rollout_path)
-        resolved = rollout_path if rollout_path.is_absolute() else project_root / rollout_path
+        resolved = (
+            rollout_path if rollout_path.is_absolute() else project_root / rollout_path
+        )
         dataset = ActivationDataset.from_rollout(resolved, task=unit.task)
     else:
         raise ValueError(f"Unsupported unit source_type: {unit.source_type!r}")
@@ -675,7 +625,9 @@ def stamp_activation_shard(path: Path, unit: Unit) -> None:
         if unit.source_sha256:
             handle.attrs["dynamic_source_sha256"] = unit.source_sha256
         if unit.example_manifest_sha256:
-            handle.attrs["dynamic_example_manifest_sha256"] = unit.example_manifest_sha256
+            handle.attrs["dynamic_example_manifest_sha256"] = (
+                unit.example_manifest_sha256
+            )
         metadata = handle.get("metadata")
         if isinstance(metadata, h5py.Group):
             for task_metadata in metadata.values():
@@ -712,7 +664,16 @@ def run_worker(args: argparse.Namespace) -> int:
     processed = 0
 
     while not (run_dir / "STOP").exists():
-        write_json(heartbeat, {"time": now(), "gpu": gpu, "slot": slot_id, "state": "waiting", "processed": processed})
+        write_json(
+            heartbeat,
+            {
+                "time": now(),
+                "gpu": gpu,
+                "slot": slot_id,
+                "state": "waiting",
+                "processed": processed,
+            },
+        )
         claimed = claim_unit(run_dir)
         if claimed is None:
             time.sleep(args.idle_sleep)
@@ -799,22 +760,17 @@ def run_worker(args: argparse.Namespace) -> int:
                 f"task={unit.task} error={exc!r}",
                 flush=True,
             )
-    write_json(heartbeat, {"time": now(), "gpu": gpu, "slot": slot_id, "state": "stopped", "processed": processed})
+    write_json(
+        heartbeat,
+        {
+            "time": now(),
+            "gpu": gpu,
+            "slot": slot_id,
+            "state": "stopped",
+            "processed": processed,
+        },
+    )
     return 0
-
-
-def gpu_snapshot() -> str:
-    try:
-        return subprocess.check_output(
-            [
-                "nvidia-smi",
-                "--query-gpu=index,memory.used,memory.total,utilization.gpu",
-                "--format=csv,noheader,nounits",
-            ],
-            text=True,
-        ).strip()
-    except Exception as exc:
-        return f"nvidia-smi failed: {exc!r}"
 
 
 def run_supervisor(args: argparse.Namespace) -> int:
@@ -822,12 +778,18 @@ def run_supervisor(args: argparse.Namespace) -> int:
     run_dir = Path(args.run_dir).resolve()
     ensure_dirs(run_dir)
     planned_units = plan_units_from_args(args)
-    if not args.overwrite_queue and not (run_dir / "queue_plan.json").exists() and run_dir_has_queue_state(run_dir):
+    if (
+        not args.overwrite_queue
+        and not (run_dir / "queue_plan.json").exists()
+        and run_dir_has_queue_state(run_dir)
+    ):
         raise SystemExit(
             f"Existing queue/output state in {run_dir} has no queue_plan.json. "
             "Use --overwrite-queue or a fresh run directory."
         )
-    queue_plan = prepare_queue_plan(args, planned_units, overwrite_queue=args.overwrite_queue)
+    queue_plan = prepare_queue_plan(
+        args, planned_units, overwrite_queue=args.overwrite_queue
+    )
     run_id = str(queue_plan["run_id"])
     queue_plan_id = str(queue_plan["queue_plan_id"])
     planned_unit_keys = {unit.key for unit in planned_units}
@@ -864,8 +826,14 @@ def run_supervisor(args: argparse.Namespace) -> int:
         )
         pending_files = sorted((run_dir / "pending").glob("*.json"))
         if not args.plan_only and not args.allow_empty_queue:
-            if not pending_files and not list((run_dir / "running").glob("*.json")) and status["valid_outputs"] < status["planned"]:
-                print("SUPERVISOR_GUARD pending=0 running=0 but output coverage is incomplete. Inspect status.")
+            if (
+                not pending_files
+                and not list((run_dir / "running").glob("*.json"))
+                and status["valid_outputs"] < status["planned"]
+            ):
+                print(
+                    "SUPERVISOR_GUARD pending=0 running=0 but output coverage is incomplete. Inspect status."
+                )
                 return 0
         write_json(
             run_dir / "run_metadata.json",
@@ -901,7 +869,9 @@ def run_supervisor(args: argparse.Namespace) -> int:
             print(f"PLAN_QUEUE_PLAN_ID={queue_plan_id}")
             print(f"PLAN_PENDING_UNITS={len(units)}")
             print(f"PLAN_BY_TASK={json.dumps(queue_by_task, sort_keys=True)}")
-            print(f"PLAN_BY_SOURCE_TYPE={json.dumps(queue_by_source_type, sort_keys=True)}")
+            print(
+                f"PLAN_BY_SOURCE_TYPE={json.dumps(queue_by_source_type, sort_keys=True)}"
+            )
             total_examples = sum(len(unit.examples) for unit in units)
             print(f"PLAN_EXAMPLES_TOTAL={total_examples}")
             for unit in sorted(units, key=lambda unit: (unit.task, unit.chunk_id))[:10]:
@@ -953,7 +923,16 @@ def run_supervisor(args: argparse.Namespace) -> int:
                 cmd.append("--capture-logits")
             cmd.extend(["--compression", args.compression])
             handle = worker_log.open("a")
-            workers.append(subprocess.Popen(cmd, cwd=project_root, env=env_base, stdout=handle, stderr=subprocess.STDOUT, text=True))
+            workers.append(
+                subprocess.Popen(
+                    cmd,
+                    cwd=project_root,
+                    env=env_base,
+                    stdout=handle,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                )
+            )
 
         print(
             f"SUPERVISOR_START time={now()} run_dir={run_dir} workers={len(workers)} "
@@ -981,7 +960,9 @@ def run_supervisor(args: argparse.Namespace) -> int:
                 )
                 print(gpu_snapshot(), flush=True)
                 if failed:
-                    raise SystemExit("Extraction worker failed. Inspect run_dir/failed and worker logs.")
+                    raise SystemExit(
+                        "Extraction worker failed. Inspect run_dir/failed and worker logs."
+                    )
                 if pending == 0 and running == 0:
                     if status["valid_outputs"] != status["planned"] or not status["ok"]:
                         raise SystemExit(
@@ -997,7 +978,9 @@ def run_supervisor(args: argparse.Namespace) -> int:
                     print(f"SUPERVISOR_DONE time={now()}", flush=True)
                     return 0
                 if alive == 0:
-                    raise SystemExit("All extraction workers exited before queue completion.")
+                    raise SystemExit(
+                        "All extraction workers exited before queue completion."
+                    )
                 time.sleep(args.poll_seconds)
         finally:
             (run_dir / "STOP").write_text(now() + "\n")
@@ -1009,18 +992,23 @@ def run_supervisor(args: argparse.Namespace) -> int:
         lock.release()
 
 
-def merge_outputs(args: argparse.Namespace, *, expected_queue_plan_id: str | None = None) -> None:
+def merge_outputs(
+    args: argparse.Namespace, *, expected_queue_plan_id: str | None = None
+) -> None:
     project_root = Path(args.project_root).resolve()
     run_dir = Path(args.run_dir).resolve()
     shard_paths = [
         path
         for path in sorted(run_dir.glob("outputs/*.h5"))
-        if _output_shard_unit_key(path, expected_queue_plan_id=expected_queue_plan_id) is not None
+        if _output_shard_unit_key(path, expected_queue_plan_id=expected_queue_plan_id)
+        is not None
     ]
     if not shard_paths:
         raise SystemExit(f"No activation shards found under {run_dir / 'outputs'}.")
     output_path = Path(args.output)
-    output_path = output_path if output_path.is_absolute() else project_root / output_path
+    output_path = (
+        output_path if output_path.is_absolute() else project_root / output_path
+    )
     from intelligent_liars.activations import merge_activation_hdf5_shards
 
     summary = merge_activation_hdf5_shards(
@@ -1051,7 +1039,9 @@ def run_status(args: argparse.Namespace) -> int:
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Dynamic multi-process activation extraction runner.")
+    parser = argparse.ArgumentParser(
+        description="Dynamic multi-process activation extraction runner."
+    )
     sub = parser.add_subparsers(dest="cmd", required=True)
 
     common = argparse.ArgumentParser(add_help=False)
@@ -1062,7 +1052,9 @@ def parse_args() -> argparse.Namespace:
     common.add_argument("--max-length", type=int)
     common.add_argument("--no-verify-masks", action="store_true")
     common.add_argument("--capture-logits", action="store_true")
-    common.add_argument("--storage-dtype", choices=("float16", "float32"), default="float16")
+    common.add_argument(
+        "--storage-dtype", choices=("float16", "float32"), default="float16"
+    )
     common.add_argument("--compression", choices=("gzip", "lzf", "none"), default="lzf")
     common.add_argument("--generated-model", default=DEFAULT_GENERATED_MODEL)
 
