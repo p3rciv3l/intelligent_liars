@@ -1540,6 +1540,21 @@ def merge_activation_shards(
         "--merge-strategy",
         help='Merge strategy: "auto", "concat", or "copy-disjoint".',
     ),
+    expected_queue_plan_id: str | None = typer.Option(
+        None,
+        "--expected-queue-plan-id",
+        help="Require all input shards with queue metadata to match this queue plan id.",
+    ),
+    require_queue_plan_id: bool = typer.Option(
+        False,
+        "--require-queue-plan-id",
+        help="Reject input shards that do not carry queue_plan_id metadata.",
+    ),
+    force_stale_merge_lock: bool = typer.Option(
+        False,
+        "--force-stale-merge-lock",
+        help="Break an output merge lock only when it is on this host and the recorded PID is dead.",
+    ),
 ) -> None:
     """Merge independently extracted activation HDF5 shards."""
 
@@ -1556,6 +1571,9 @@ def merge_activation_shards(
         overwrite=overwrite,
         compression=compression,
         merge_strategy=merge_strategy,
+        expected_queue_plan_id=expected_queue_plan_id,
+        require_queue_plan_id=require_queue_plan_id,
+        force_stale_merge_lock=force_stale_merge_lock,
     )
     for task in summary.tasks:
         console.print(

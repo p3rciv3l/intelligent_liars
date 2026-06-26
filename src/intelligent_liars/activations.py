@@ -15,6 +15,7 @@ from typing import Any, Iterable, Literal, Mapping, Sequence
 
 from intelligent_liars.activation_backends import ActivationBackend, TransformersHookBackend, qwen_decoder_layers
 from intelligent_liars.models import ModelBundle, ModelLoadConfig
+from intelligent_liars.run_control import acquire_lock, command_line, install_signal_cleanup, lock_payload, new_run_id
 from intelligent_liars.rollouts import MODEL_SLUG, Message, parse_task_name, qwen_model_slug
 
 
@@ -1700,6 +1701,9 @@ def merge_activation_hdf5_shards(
     overwrite: bool = False,
     compression: Literal["gzip", "lzf", "none"] = "lzf",
     merge_strategy: Literal["auto", "concat", "copy-disjoint"] = "auto",
+    expected_queue_plan_id: str | None = None,
+    require_queue_plan_id: bool = False,
+    force_stale_merge_lock: bool = False,
 ) -> ActivationMergeSummary:
     import h5py
     import numpy as np
@@ -1714,107 +1718,129 @@ def merge_activation_hdf5_shards(
         raise FileExistsError(f"{output_path} already exists. Use overwrite=True to replace it.")
     if merge_strategy not in {"auto", "concat", "copy-disjoint"}:
         raise ValueError(f"Unsupported activation merge strategy: {merge_strategy!r}")
-    if merge_strategy in {"auto", "copy-disjoint"} and _activation_shards_have_disjoint_tasks(shard_paths):
-        return _copy_disjoint_activation_hdf5_tasks(
-            shard_paths,
-            output_path=output_path,
-            overwrite=overwrite,
-        )
-    if merge_strategy == "copy-disjoint":
-        raise FileExistsError(
-            "Cannot copy-disjoint merge activation HDF5 files because at least one task is duplicated."
-        )
-
+    queue_plan_ids = _verify_activation_shard_queue_plan_ids(
+        shard_paths,
+        expected_queue_plan_id=expected_queue_plan_id,
+        require_queue_plan_id=require_queue_plan_id,
+    )
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    tmp_file = tempfile.NamedTemporaryFile(
-        prefix=f".{output_path.name}.merge.",
-        suffix=".h5",
-        dir=output_path.parent,
-        delete=False,
+    merge_lock = acquire_lock(
+        output_path.with_name(f"{output_path.name}.merge.lock"),
+        lock_payload(
+            run_id=new_run_id(),
+            queue_plan_id=expected_queue_plan_id or ",".join(queue_plan_ids) or None,
+            command=command_line(),
+            kind="activation-merge",
+            extra={"output_path": str(output_path)},
+        ),
+        force_stale_lock=force_stale_merge_lock,
     )
-    tmp_file.close()
-    tmp_path = Path(tmp_file.name)
-
-    examples_by_task: dict[str, int] = {}
-    token_rows_by_task: dict[str, int] = {}
+    signal_cleanup = install_signal_cleanup(merge_lock)
     try:
-        with h5py.File(shard_paths[0], "r") as first, h5py.File(tmp_path, "w") as target:
-            _copy_root_attrs(target, first)
-            target.attrs["created_at"] = datetime.now(UTC).isoformat()
-            target.attrs["merged_at"] = datetime.now(UTC).isoformat()
-            target.attrs["merged_shard_count"] = len(shard_paths)
-            target.attrs["source_output_path"] = str(output_path)
-            target.attrs["merged_compression"] = compression
-            target.attrs["merged_strategy"] = "concat"
+        if merge_strategy in {"auto", "copy-disjoint"} and _activation_shards_have_disjoint_tasks(shard_paths):
+            return _copy_disjoint_activation_hdf5_tasks(
+                shard_paths,
+                output_path=output_path,
+                overwrite=overwrite,
+            )
+        if merge_strategy == "copy-disjoint":
+            raise FileExistsError(
+                "Cannot copy-disjoint merge activation HDF5 files because at least one task is duplicated."
+            )
 
-            for shard_path in shard_paths[1:]:
-                with h5py.File(shard_path, "r") as shard:
-                    _verify_root_attrs_compatible(first, shard)
+        tmp_file = tempfile.NamedTemporaryFile(
+            prefix=f".{output_path.name}.merge.",
+            suffix=".h5",
+            dir=output_path.parent,
+            delete=False,
+        )
+        tmp_file.close()
+        tmp_path = Path(tmp_file.name)
 
-            tasks = _tasks_in_activation_shards(shard_paths)
-            for task in tasks:
-                merged = _collect_merged_activation_task(shard_paths, task=task)
-                examples_by_task[task] = len(merged["example_source_indices"])
-                token_rows_by_task[task] = len(merged["labels"])
+        examples_by_task: dict[str, int] = {}
+        token_rows_by_task: dict[str, int] = {}
+        try:
+            with h5py.File(shard_paths[0], "r") as first, h5py.File(tmp_path, "w") as target:
+                _copy_root_attrs(target, first)
+                target.attrs["created_at"] = datetime.now(UTC).isoformat()
+                target.attrs["merged_at"] = datetime.now(UTC).isoformat()
+                target.attrs["merged_shard_count"] = len(shard_paths)
+                target.attrs["source_output_path"] = str(output_path)
+                target.attrs["merged_compression"] = compression
+                target.attrs["merged_strategy"] = "concat"
+                target.attrs["merged_queue_plan_ids_json"] = json.dumps(queue_plan_ids, sort_keys=True)
 
-                metadata = target.require_group("metadata")
-                task_metadata = metadata.create_group(task)
-                for attr_name, attr_value in merged["attrs"].items():
-                    task_metadata.attrs[attr_name] = attr_value
-                task_metadata.attrs["merged_at"] = target.attrs["merged_at"]
-                task_metadata.attrs["merged_shard_count"] = int(merged["shard_count"])
-                task_metadata.attrs["merged_source_paths_json"] = json.dumps(
-                    [str(path) for path in merged["source_paths"]],
-                    sort_keys=True,
-                )
-                task_metadata.attrs["merged_example_count"] = examples_by_task[task]
-                task_metadata.attrs["merged_token_rows"] = token_rows_by_task[task]
+                for shard_path in shard_paths[1:]:
+                    with h5py.File(shard_path, "r") as shard:
+                        _verify_root_attrs_compatible(first, shard)
 
-                for dataset_name in _TOKEN_METADATA_DATASETS:
-                    task_metadata.create_dataset(dataset_name, data=np.asarray(merged[dataset_name]))
-                for dataset_name in _EXAMPLE_INT_METADATA_DATASETS:
-                    task_metadata.create_dataset(dataset_name, data=np.asarray(merged[dataset_name]))
-                string_dtype = h5py.string_dtype(encoding="utf-8")
-                for dataset_name in _EXAMPLE_STRING_METADATA_DATASETS:
-                    task_metadata.create_dataset(
-                        dataset_name,
-                        data=np.asarray(merged[dataset_name], dtype=object),
-                        dtype=string_dtype,
+                tasks = _tasks_in_activation_shards(shard_paths)
+                for task in tasks:
+                    merged = _collect_merged_activation_task(shard_paths, task=task)
+                    examples_by_task[task] = len(merged["example_source_indices"])
+                    token_rows_by_task[task] = len(merged["labels"])
+
+                    metadata = target.require_group("metadata")
+                    task_metadata = metadata.create_group(task)
+                    for attr_name, attr_value in merged["attrs"].items():
+                        task_metadata.attrs[attr_name] = attr_value
+                    task_metadata.attrs["merged_at"] = target.attrs["merged_at"]
+                    task_metadata.attrs["merged_shard_count"] = int(merged["shard_count"])
+                    task_metadata.attrs["merged_source_paths_json"] = json.dumps(
+                        [str(path) for path in merged["source_paths"]],
+                        sort_keys=True,
                     )
+                    task_metadata.attrs["merged_example_count"] = examples_by_task[task]
+                    task_metadata.attrs["merged_token_rows"] = token_rows_by_task[task]
 
-                for layer, payload in sorted(merged["layers"].items()):
-                    layer_group = target.require_group(f"layer_{layer}")
-                    dataset = layer_group.create_dataset(
-                        task,
-                        data=payload["data"],
-                        compression=_normalize_compression_mode(compression),
-                    )
-                    for attr_name, attr_value in payload["attrs"].items():
-                        dataset.attrs[attr_name] = attr_value
+                    for dataset_name in _TOKEN_METADATA_DATASETS:
+                        task_metadata.create_dataset(dataset_name, data=np.asarray(merged[dataset_name]))
+                    for dataset_name in _EXAMPLE_INT_METADATA_DATASETS:
+                        task_metadata.create_dataset(dataset_name, data=np.asarray(merged[dataset_name]))
+                    string_dtype = h5py.string_dtype(encoding="utf-8")
+                    for dataset_name in _EXAMPLE_STRING_METADATA_DATASETS:
+                        task_metadata.create_dataset(
+                            dataset_name,
+                            data=np.asarray(merged[dataset_name], dtype=object),
+                            dtype=string_dtype,
+                        )
 
-                if merged["logits"] is not None:
-                    logits_group = target.require_group("logits")
-                    logits_dataset = logits_group.create_dataset(
-                        task,
-                        data=merged["logits"]["data"],
-                        compression=_normalize_compression_mode(compression),
-                    )
-                    for attr_name, attr_value in merged["logits"]["attrs"].items():
-                        logits_dataset.attrs[attr_name] = attr_value
+                    for layer, payload in sorted(merged["layers"].items()):
+                        layer_group = target.require_group(f"layer_{layer}")
+                        dataset = layer_group.create_dataset(
+                            task,
+                            data=payload["data"],
+                            compression=_normalize_compression_mode(compression),
+                        )
+                        for attr_name, attr_value in payload["attrs"].items():
+                            dataset.attrs[attr_name] = attr_value
 
-        output_path.unlink(missing_ok=True)
-        tmp_path.replace(output_path)
-    except Exception:
-        tmp_path.unlink(missing_ok=True)
-        raise
+                    if merged["logits"] is not None:
+                        logits_group = target.require_group("logits")
+                        logits_dataset = logits_group.create_dataset(
+                            task,
+                            data=merged["logits"]["data"],
+                            compression=_normalize_compression_mode(compression),
+                        )
+                        for attr_name, attr_value in merged["logits"]["attrs"].items():
+                            logits_dataset.attrs[attr_name] = attr_value
 
-    return ActivationMergeSummary(
-        output_path=output_path,
-        shard_paths=shard_paths,
-        tasks=tuple(sorted(examples_by_task)),
-        examples_by_task=examples_by_task,
-        token_rows_by_task=token_rows_by_task,
-    )
+            output_path.unlink(missing_ok=True)
+            tmp_path.replace(output_path)
+        except Exception:
+            tmp_path.unlink(missing_ok=True)
+            raise
+
+        return ActivationMergeSummary(
+            output_path=output_path,
+            shard_paths=shard_paths,
+            tasks=tuple(sorted(examples_by_task)),
+            examples_by_task=examples_by_task,
+            token_rows_by_task=token_rows_by_task,
+        )
+    finally:
+        signal_cleanup.restore()
+        merge_lock.release()
 
 
 def _activation_shards_have_disjoint_tasks(shard_paths: Sequence[Path]) -> bool:
@@ -1825,6 +1851,43 @@ def _activation_shards_have_disjoint_tasks(shard_paths: Sequence[Path]) -> bool:
                 return False
             task_owners[task] = shard_path
     return bool(task_owners)
+
+
+def _activation_shard_queue_plan_id(shard_path: Path) -> str | None:
+    import h5py
+
+    with h5py.File(shard_path, "r") as shard:
+        value = shard.attrs.get("queue_plan_id")
+        if isinstance(value, bytes):
+            value = value.decode("utf-8")
+        if isinstance(value, str) and value:
+            return value
+    return None
+
+
+def _verify_activation_shard_queue_plan_ids(
+    shard_paths: Sequence[Path],
+    *,
+    expected_queue_plan_id: str | None,
+    require_queue_plan_id: bool,
+) -> tuple[str, ...]:
+    queue_plan_ids: list[str] = []
+    for shard_path in shard_paths:
+        queue_plan_id = _activation_shard_queue_plan_id(shard_path)
+        if queue_plan_id is None:
+            if require_queue_plan_id:
+                raise FileExistsError(f"Activation shard is missing queue_plan_id: {shard_path}")
+            continue
+        if expected_queue_plan_id is not None and queue_plan_id != expected_queue_plan_id:
+            raise FileExistsError(
+                f"Activation shard queue_plan_id differs for {shard_path}: "
+                f"{queue_plan_id} != {expected_queue_plan_id}"
+            )
+        queue_plan_ids.append(queue_plan_id)
+    unique_ids = tuple(sorted(set(queue_plan_ids)))
+    if expected_queue_plan_id is not None and not unique_ids:
+        raise FileExistsError(f"No activation shard has expected queue_plan_id={expected_queue_plan_id}.")
+    return unique_ids
 
 
 def _tasks_in_activation_shard(shard_path: Path) -> tuple[str, ...]:
@@ -1880,6 +1943,14 @@ def _copy_disjoint_activation_hdf5_tasks(
             target.attrs["source_output_path"] = str(output_path)
             target.attrs["merged_compression"] = "preserved"
             target.attrs["merged_strategy"] = "copy-disjoint"
+            target.attrs["merged_queue_plan_ids_json"] = json.dumps(
+                _verify_activation_shard_queue_plan_ids(
+                    shard_paths,
+                    expected_queue_plan_id=None,
+                    require_queue_plan_id=False,
+                ),
+                sort_keys=True,
+            )
 
             for shard_path in shard_paths:
                 with h5py.File(shard_path, "r") as shard:

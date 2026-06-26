@@ -21,9 +21,23 @@ from typing import Any
 
 import yaml
 
+from intelligent_liars.models import DEFAULT_MODEL_ID, qwen_model_load_description
+from intelligent_liars.rollouts import DEFAULT_INSIDER_GENERATION_SETTINGS, generation_content_settings
+from intelligent_liars.run_control import (
+    acquire_lock,
+    command_line,
+    current_git_commit,
+    file_sha256,
+    install_signal_cleanup,
+    lock_payload,
+    new_run_id,
+    stable_sha256,
+)
+
 
 DEFAULT_PROMPT_GLOB = "data/insider_trading/prompts/**/*.yaml"
 DEFAULT_LABEL_MODE = "unknown"
+PLAN_SCHEMA_VERSION = 1
 
 
 @dataclass(frozen=True)
@@ -31,6 +45,8 @@ class Unit:
     unit_id: str
     relative_prompt: str
     sample_idx: int
+    dynamic_run_id: str = ""
+    queue_plan_id: str = ""
 
     @property
     def run_id(self) -> str:
@@ -80,6 +96,8 @@ def deserialise_unit(payload: dict[str, Any]) -> Unit:
             unit_id=str(payload["unit_id"]),
             relative_prompt=str(payload["relative_prompt"]),
             sample_idx=int(payload["sample_idx"]),
+            dynamic_run_id=str(payload.get("dynamic_run_id", "")),
+            queue_plan_id=str(payload.get("queue_plan_id", "")),
         )
     relative_prompt, sample_idx = parse_run_id(str(payload["run_id"]))
     return unit_from_prompt(relative_prompt, sample_idx)
@@ -118,6 +136,110 @@ def plan_units(
         for sample_idx in range(samples_per_prompt):
             units.append(unit_from_prompt(relative_prompt, sample_idx))
     return units
+
+
+def stamp_unit_plan(unit: Unit, *, run_id: str, queue_plan_id: str) -> Unit:
+    return Unit(
+        unit_id=unit.unit_id,
+        relative_prompt=unit.relative_prompt,
+        sample_idx=unit.sample_idx,
+        dynamic_run_id=run_id,
+        queue_plan_id=queue_plan_id,
+    )
+
+
+def unit_plan_payload(unit: Unit) -> dict[str, Any]:
+    return {
+        "unit_id": unit.unit_id,
+        "relative_prompt": unit.relative_prompt,
+        "sample_idx": unit.sample_idx,
+        "run_id": unit.run_id,
+    }
+
+
+def build_plan_manifest(
+    *,
+    project_root: Path,
+    prompt_glob: str,
+    samples_per_prompt: int,
+    label_mode: str,
+    units: list[Unit],
+) -> dict[str, Any]:
+    prompts = prompt_paths(project_root, prompt_glob)
+    relative_prompts = [str(path.relative_to(project_root)) for path in prompts]
+    return {
+        "schema_version": PLAN_SCHEMA_VERSION,
+        "kind": "insider_generation_dynamic",
+        "model": {
+            "model_id": DEFAULT_MODEL_ID,
+            "load": qwen_model_load_description(),
+        },
+        "prompts": {
+            "prompt_glob": prompt_glob,
+            "prompt_paths": relative_prompts,
+            "prompt_sha256": {
+                relative_path: file_sha256(project_root / relative_path)
+                for relative_path in relative_prompts
+            },
+        },
+        "generation": {
+            "samples_per_prompt": samples_per_prompt,
+            "label_mode": label_mode,
+            "settings": generation_content_settings(DEFAULT_INSIDER_GENERATION_SETTINGS),
+        },
+        "units": [unit_plan_payload(unit) for unit in units],
+    }
+
+
+def prepare_queue_plan(
+    *,
+    project_root: Path,
+    run_dir: Path,
+    prompt_glob: str,
+    samples_per_prompt: int,
+    label_mode: str,
+    units: list[Unit],
+    overwrite_queue: bool,
+) -> dict[str, Any]:
+    manifest = build_plan_manifest(
+        project_root=project_root,
+        prompt_glob=prompt_glob,
+        samples_per_prompt=samples_per_prompt,
+        label_mode=label_mode,
+        units=units,
+    )
+    queue_plan_id = stable_sha256(manifest)
+    plan_path = run_dir / "queue_plan.json"
+    if plan_path.exists() and not overwrite_queue:
+        existing = read_json(plan_path)
+        if existing.get("queue_plan_id") != queue_plan_id:
+            raise SystemExit(
+                f"Existing queue plan differs for {run_dir}: "
+                f"{existing.get('queue_plan_id')} != {queue_plan_id}. "
+                "Use a fresh run directory or --overwrite-queue intentionally."
+            )
+        return existing
+    return {
+        "schema_version": PLAN_SCHEMA_VERSION,
+        "run_id": new_run_id(),
+        "queue_plan_id": queue_plan_id,
+        "created_at": now(),
+        "git_commit": current_git_commit(project_root),
+        "command": command_line(),
+        "manifest": manifest,
+    }
+
+
+def write_queue_plan(run_dir: Path, plan: dict[str, Any]) -> None:
+    write_json(run_dir / "queue_plan.json", plan)
+
+
+def load_queue_plan(run_dir: Path) -> dict[str, Any]:
+    return read_json(run_dir / "queue_plan.json")
+
+
+def planned_unit_ids_from_plan(plan: dict[str, Any]) -> set[str]:
+    return {str(item["unit_id"]) for item in plan.get("manifest", {}).get("units", [])}
 
 
 def planned_units_by_id(
@@ -159,13 +281,20 @@ def queue_unit_ids(run_dir: Path) -> set[str]:
     return existing
 
 
+def run_dir_has_queue_state(run_dir: Path) -> bool:
+    for name in ("pending", "running", "done", "failed", "outputs"):
+        if any((run_dir / name).glob("*.json")):
+            return True
+    return False
+
+
 def clear_queue(run_dir: Path) -> None:
     for name in ("pending", "running", "done", "failed", "outputs"):
         for path in (run_dir / name).glob("*.json"):
             path.unlink()
 
 
-def seed_completed_output(run_dir: Path, output_path: Path) -> int:
+def seed_completed_output(run_dir: Path, output_path: Path, *, run_id: str = "", queue_plan_id: str = "") -> int:
     records = read_json(output_path)
     if not isinstance(records, list):
         raise ValueError(f"Completed output must contain a list: {output_path}")
@@ -174,6 +303,12 @@ def seed_completed_output(run_dir: Path, output_path: Path) -> int:
         metadata = record.get("metadata") or {}
         relative_prompt, sample_idx = parse_run_id(str(metadata.get("run_id")))
         unit = unit_from_prompt(relative_prompt, sample_idx)
+        unit = stamp_unit_plan(unit, run_id=run_id, queue_plan_id=queue_plan_id)
+        record_metadata = record.setdefault("metadata", {})
+        if run_id:
+            record_metadata["dynamic_run_id"] = run_id
+        if queue_plan_id:
+            record_metadata["queue_plan_id"] = queue_plan_id
         shard_path = run_dir / "outputs" / f"{unit.unit_id}.json"
         done_path = run_dir / "done" / f"{unit.unit_id}.json"
         if not shard_path.exists():
@@ -184,11 +319,11 @@ def seed_completed_output(run_dir: Path, output_path: Path) -> int:
     return seeded
 
 
-def _is_valid_output_shard(path: Path) -> bool:
-    return _output_shard_unit(path) is not None
+def _is_valid_output_shard(path: Path, *, expected_queue_plan_id: str | None = None) -> bool:
+    return _output_shard_unit(path, expected_queue_plan_id=expected_queue_plan_id) is not None
 
 
-def _output_shard_unit(path: Path) -> Unit | None:
+def _output_shard_unit(path: Path, *, expected_queue_plan_id: str | None = None) -> Unit | None:
     if not path.exists() or path.stat().st_size == 0:
         return None
     try:
@@ -206,6 +341,9 @@ def _output_shard_unit(path: Path) -> Unit | None:
     run_id = metadata.get("run_id")
     if not isinstance(run_id, str):
         return None
+    if expected_queue_plan_id is not None:
+        if metadata.get("queue_plan_id") != expected_queue_plan_id:
+            return None
     try:
         relative_prompt, sample_idx = parse_run_id(run_id)
     except Exception:
@@ -213,7 +351,13 @@ def _output_shard_unit(path: Path) -> Unit | None:
     unit = unit_from_prompt(relative_prompt, sample_idx)
     if path.stem != unit.unit_id:
         return None
-    return unit
+    return Unit(
+        unit_id=unit.unit_id,
+        relative_prompt=unit.relative_prompt,
+        sample_idx=unit.sample_idx,
+        dynamic_run_id=str(metadata.get("dynamic_run_id", "")),
+        queue_plan_id=str(metadata.get("queue_plan_id", "")),
+    )
 
 
 def _recover_unit_from_running_path(
@@ -251,7 +395,7 @@ def repair_stale_done_units(run_dir: Path) -> tuple[int, int]:
         seen_unit_ids.add(unit.unit_id)
 
         output_path = run_dir / "outputs" / f"{unit.unit_id}.json"
-        if not _is_valid_output_shard(output_path):
+        if not _is_valid_output_shard(output_path, expected_queue_plan_id=unit.queue_plan_id or None):
             done_path.unlink(missing_ok=True)
             pending_path = pending_dir / f"{unit.unit_id}.json"
             if not pending_path.exists():
@@ -268,6 +412,9 @@ def create_queue(
     samples_per_prompt: int,
     overwrite_queue: bool,
     seed_completed_output_path: Path | None,
+    run_id: str = "",
+    queue_plan_id: str = "",
+    units: list[Unit] | None = None,
 ) -> tuple[int, int, int]:
     ensure_dirs(run_dir)
     if overwrite_queue:
@@ -276,8 +423,13 @@ def create_queue(
         repair_stale_done_units(run_dir)
     seeded = 0
     if seed_completed_output_path is not None:
-        seeded = seed_completed_output(run_dir, seed_completed_output_path)
-    units = plan_units(
+        seeded = seed_completed_output(
+            run_dir,
+            seed_completed_output_path,
+            run_id=run_id,
+            queue_plan_id=queue_plan_id,
+        )
+    units = units or plan_units(
         project_root=project_root,
         prompt_glob=prompt_glob,
         samples_per_prompt=samples_per_prompt,
@@ -285,10 +437,11 @@ def create_queue(
     existing = queue_unit_ids(run_dir)
     queued = 0
     for unit in units:
-        if unit.unit_id in existing:
+        stamped = stamp_unit_plan(unit, run_id=run_id, queue_plan_id=queue_plan_id)
+        if stamped.unit_id in existing:
             continue
-        write_json(run_dir / "pending" / f"{unit.unit_id}.json", serialise_unit(unit))
-        existing.add(unit.unit_id)
+        write_json(run_dir / "pending" / f"{stamped.unit_id}.json", serialise_unit(stamped))
+        existing.add(stamped.unit_id)
         queued += 1
     return len(units), queued, seeded
 
@@ -325,7 +478,7 @@ def requeue_running_units(
                 path.unlink(missing_ok=True)
                 continue
         output_path = run_dir / "outputs" / f"{unit.unit_id}.json"
-        if _is_valid_output_shard(output_path):
+        if _is_valid_output_shard(output_path, expected_queue_plan_id=unit.queue_plan_id or None):
             done_path = run_dir / "done" / f"{unit.unit_id}.json"
             if not done_path.exists():
                 os.replace(path, done_path)
@@ -347,13 +500,26 @@ def audit_run_state(
     run_dir: Path,
     prompt_glob: str,
     samples_per_prompt: int,
+    label_mode: str = DEFAULT_LABEL_MODE,
+    queue_plan: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Read-only audit of queue/output consistency before remote resume."""
-    planned = planned_units_by_id(
+    units = plan_units(
         project_root=project_root,
         prompt_glob=prompt_glob,
         samples_per_prompt=samples_per_prompt,
     )
+    planned = {unit.unit_id: unit for unit in units}
+    queue_plan = queue_plan or prepare_queue_plan(
+        project_root=project_root,
+        run_dir=run_dir,
+        prompt_glob=prompt_glob,
+        samples_per_prompt=samples_per_prompt,
+        label_mode=label_mode,
+        units=units,
+        overwrite_queue=False,
+    )
+    queue_plan_id = str(queue_plan["queue_plan_id"])
     membership: dict[str, list[str]] = {unit_id: [] for unit_id in planned}
     malformed_queue_files: list[str] = []
     unexpected_units: list[str] = []
@@ -369,6 +535,9 @@ def audit_run_state(
                     malformed_queue_files.append(str(path))
                     continue
             marker = f"{state_name}:{path.name}"
+            if unit.queue_plan_id != queue_plan_id:
+                unexpected_units.append(marker)
+                continue
             if unit.unit_id not in membership:
                 unexpected_units.append(marker)
                 continue
@@ -377,7 +546,7 @@ def audit_run_state(
     valid_output_units: set[str] = set()
     invalid_output_files: list[str] = []
     for path in sorted((run_dir / "outputs").glob("*.json")):
-        unit = _output_shard_unit(path)
+        unit = _output_shard_unit(path, expected_queue_plan_id=queue_plan_id)
         if unit is None:
             invalid_output_files.append(str(path))
             continue
@@ -419,6 +588,7 @@ def audit_run_state(
     return {
         "ok": ok,
         "planned": len(planned),
+        "queue_plan_id": queue_plan_id,
         "state": count_state(run_dir),
         "valid_outputs": len(valid_output_units),
         "issues": issues,
@@ -486,6 +656,8 @@ def run_worker(args: argparse.Namespace) -> int:
             metadata["dynamic_unit_id"] = unit.unit_id
             metadata["dynamic_slot_id"] = slot_id
             metadata["dynamic_gpu"] = str(args.gpu)
+            metadata["dynamic_run_id"] = unit.dynamic_run_id
+            metadata["queue_plan_id"] = unit.queue_plan_id
             write_json(output_path, [record])
             os.replace(running_path, run_dir / "done" / f"{unit.unit_id}.json")
             processed += 1
@@ -524,148 +696,260 @@ def gpu_snapshot() -> str:
         return f"nvidia-smi failed: {exc!r}"
 
 
-def merge_outputs(args: argparse.Namespace) -> None:
+def merge_outputs(args: argparse.Namespace, *, expected_queue_plan_id: str | None = None) -> None:
     run_dir = Path(args.run_dir).resolve()
     output_path = Path(args.output)
     project_root = Path(args.project_root).resolve()
     output_path = output_path if output_path.is_absolute() else project_root / output_path
+    merge_lock = acquire_lock(
+        output_path.with_name(f"{output_path.name}.merge.lock"),
+        lock_payload(
+            run_id=new_run_id(),
+            queue_plan_id=expected_queue_plan_id,
+            command=command_line(),
+            kind="insider-json-merge",
+            extra={"output_path": str(output_path)},
+        ),
+        force_stale_lock=getattr(args, "force_stale_merge_lock", False),
+    )
+    signal_cleanup = install_signal_cleanup(merge_lock)
     records: list[dict[str, Any]] = []
     seen_units: set[str] = set()
-    shard_paths = sorted((run_dir / "outputs").glob("*.json"))
-    for path in shard_paths:
-        unit = _output_shard_unit(path)
-        if unit is None:
-            raise SystemExit(f"Invalid output shard: {path}")
-        if unit.unit_id in seen_units:
-            raise SystemExit(f"Duplicate output shard for unit {unit.unit_id}: {path}")
-        seen_units.add(unit.unit_id)
-        payload = read_json(path)
-        records.extend(payload)
-    if args.require_count is not None and len(records) != args.require_count:
-        raise SystemExit(f"Expected {args.require_count} merged records, found {len(records)}.")
-    records.sort(key=lambda record: str((record.get("metadata") or {}).get("run_id", "")))
-    write_json(output_path, records)
-    print(f"MERGE_DONE time={now()} shards={len(shard_paths)} records={len(records)} output={output_path}", flush=True)
+    try:
+        shard_paths = sorted((run_dir / "outputs").glob("*.json"))
+        for path in shard_paths:
+            unit = _output_shard_unit(path, expected_queue_plan_id=expected_queue_plan_id)
+            if unit is None:
+                raise SystemExit(f"Invalid output shard: {path}")
+            if unit.unit_id in seen_units:
+                raise SystemExit(f"Duplicate output shard for unit {unit.unit_id}: {path}")
+            seen_units.add(unit.unit_id)
+            payload = read_json(path)
+            records.extend(payload)
+        if args.require_count is not None and len(records) != args.require_count:
+            raise SystemExit(f"Expected {args.require_count} merged records, found {len(records)}.")
+        records.sort(key=lambda record: str((record.get("metadata") or {}).get("run_id", "")))
+        write_json(output_path, records)
+        print(f"MERGE_DONE time={now()} shards={len(shard_paths)} records={len(records)} output={output_path}", flush=True)
+    finally:
+        signal_cleanup.restore()
+        merge_lock.release()
 
 
 def run_supervisor(args: argparse.Namespace) -> int:
     project_root = Path(args.project_root).resolve()
     run_dir = Path(args.run_dir).resolve()
     ensure_dirs(run_dir)
-    planned_units = planned_units_by_id(
+    planned_units_list = plan_units(
         project_root=project_root,
         prompt_glob=args.prompt_glob,
         samples_per_prompt=args.samples_per_prompt,
     )
-    if not args.plan_only:
-        (run_dir / "STOP").unlink(missing_ok=True)
-    requeued, promoted = requeue_running_units(run_dir, planned_units=planned_units)
-    repaired_done, removed_done = repair_stale_done_units(run_dir)
-    planned, queued, seeded = create_queue(
+    planned_units = {unit.unit_id: unit for unit in planned_units_list}
+    if not args.overwrite_queue and not (run_dir / "queue_plan.json").exists() and run_dir_has_queue_state(run_dir):
+        raise SystemExit(
+            f"Existing queue/output state in {run_dir} has no queue_plan.json. "
+            "Run migrate-plan-metadata, use --overwrite-queue, or use a fresh run directory."
+        )
+    queue_plan = prepare_queue_plan(
         project_root=project_root,
         run_dir=run_dir,
         prompt_glob=args.prompt_glob,
         samples_per_prompt=args.samples_per_prompt,
+        label_mode=args.label_mode,
+        units=planned_units_list,
         overwrite_queue=args.overwrite_queue,
-        seed_completed_output_path=args.seed_completed_output,
     )
-    write_json(
-        run_dir / "run_metadata.json",
-        {
-            "time": now(),
-            "project_root": str(project_root),
-            "run_dir": str(run_dir),
-            "prompt_glob": args.prompt_glob,
-            "samples_per_prompt": args.samples_per_prompt,
-            "label_mode": args.label_mode,
-            "planned_units": planned,
-            "queued_new_units": queued,
-            "seeded_output_shards": seeded,
-            "requeued_running_units": requeued,
-            "promoted_running_units": promoted,
-            "repaired_done_units": repaired_done,
-            "removed_done_units": removed_done,
-            "gpus": parse_csv(args.gpus),
-        },
+    run_id = str(queue_plan["run_id"])
+    queue_plan_id = str(queue_plan["queue_plan_id"])
+    lock = acquire_lock(
+        run_dir / "run.lock",
+        lock_payload(
+            run_id=run_id,
+            queue_plan_id=queue_plan_id,
+            command=command_line(),
+            kind="insider-supervisor",
+        ),
+        force_stale_lock=getattr(args, "force_stale_lock", False),
     )
-    if not args.plan_only and not args.allow_empty_queue:
-        if not list((run_dir / "pending").glob("*.json")) and not list((run_dir / "running").glob("*.json")):
+    signal_cleanup = install_signal_cleanup(lock)
+    try:
+        write_queue_plan(run_dir, queue_plan)
+        if not args.plan_only:
+            (run_dir / "STOP").unlink(missing_ok=True)
+        requeued, promoted = requeue_running_units(run_dir, planned_units=planned_units)
+        repaired_done, removed_done = repair_stale_done_units(run_dir)
+        planned, queued, seeded = create_queue(
+            project_root=project_root,
+            run_dir=run_dir,
+            prompt_glob=args.prompt_glob,
+            samples_per_prompt=args.samples_per_prompt,
+            overwrite_queue=args.overwrite_queue,
+            seed_completed_output_path=args.seed_completed_output,
+            run_id=run_id,
+            queue_plan_id=queue_plan_id,
+            units=planned_units_list,
+        )
+        status = audit_run_state(
+            project_root=project_root,
+            run_dir=run_dir,
+            prompt_glob=args.prompt_glob,
+            samples_per_prompt=args.samples_per_prompt,
+            label_mode=args.label_mode,
+            queue_plan=queue_plan,
+        )
+        write_json(
+            run_dir / "run_metadata.json",
+            {
+                "time": now(),
+                "project_root": str(project_root),
+                "run_dir": str(run_dir),
+                "prompt_glob": args.prompt_glob,
+                "samples_per_prompt": args.samples_per_prompt,
+                "label_mode": args.label_mode,
+                "planned_units": planned,
+                "run_id": run_id,
+                "queue_plan_id": queue_plan_id,
+                "queued_new_units": queued,
+                "seeded_output_shards": seeded,
+                "requeued_running_units": requeued,
+                "promoted_running_units": promoted,
+                "repaired_done_units": repaired_done,
+                "removed_done_units": removed_done,
+                "gpus": parse_csv(args.gpus),
+                "status": status,
+            },
+        )
+        if not args.plan_only and not args.allow_empty_queue:
+            if (
+                not list((run_dir / "pending").glob("*.json"))
+                and not list((run_dir / "running").glob("*.json"))
+                and status["valid_outputs"] < status["planned"]
+            ):
+                print(
+                    "SUPERVISOR_GUARD pending=0 running=0 but output coverage is incomplete. "
+                    "Inspect status."
+                )
+                return 0
+        if args.plan_only:
             print(
-                "SUPERVISOR_GUARD pending=0 running=0; queue empty. "
-                "Use --allow-empty-queue to proceed."
+                json.dumps(
+                    {
+                        "planned": planned,
+                        "queued": queued,
+                        "seeded": seeded,
+                        "queue_plan_id": queue_plan_id,
+                        "state": count_state(run_dir),
+                    },
+                    sort_keys=True,
+                )
             )
             return 0
-    if args.plan_only:
-        print(json.dumps({"planned": planned, "queued": queued, "seeded": seeded, "state": count_state(run_dir)}, sort_keys=True))
-        return 0
 
-    workers: list[subprocess.Popen[str]] = []
-    env_base = os.environ.copy()
-    env_base.setdefault("PYTHONPATH", "src")
-    env_base.setdefault("HF_HUB_DISABLE_XET", "1")
-    for idx, gpu in enumerate(parse_csv(args.gpus)):
-        slot_id = f"slot-{idx:02d}-gpu-{gpu}"
-        worker_log = run_dir / "logs" / f"worker-{slot_id}.log"
-        worker_log.parent.mkdir(parents=True, exist_ok=True)
-        command = [
-            sys.executable,
-            str(Path(__file__).resolve()),
-            "worker",
-            "--project-root",
-            str(project_root),
-            "--run-dir",
-            str(run_dir),
-            "--prompt-glob",
-            args.prompt_glob,
-            "--samples-per-prompt",
-            str(args.samples_per_prompt),
-            "--label-mode",
-            args.label_mode,
-            "--gpu",
-            str(gpu),
-            "--slot-index",
-            str(idx),
-            "--slot-id",
-            slot_id,
-        ]
-        handle = worker_log.open("a")
-        workers.append(subprocess.Popen(command, cwd=project_root, env=env_base, stdout=handle, stderr=subprocess.STDOUT, text=True))
+        workers: list[subprocess.Popen[str]] = []
+        env_base = os.environ.copy()
+        env_base.setdefault("PYTHONPATH", "src")
+        env_base.setdefault("HF_HUB_DISABLE_XET", "1")
+        for idx, gpu in enumerate(parse_csv(args.gpus)):
+            slot_id = f"slot-{idx:02d}-gpu-{gpu}"
+            worker_log = run_dir / "logs" / f"worker-{slot_id}.log"
+            worker_log.parent.mkdir(parents=True, exist_ok=True)
+            command = [
+                sys.executable,
+                str(Path(__file__).resolve()),
+                "worker",
+                "--project-root",
+                str(project_root),
+                "--run-dir",
+                str(run_dir),
+                "--prompt-glob",
+                args.prompt_glob,
+                "--samples-per-prompt",
+                str(args.samples_per_prompt),
+                "--label-mode",
+                args.label_mode,
+                "--gpu",
+                str(gpu),
+                "--slot-index",
+                str(idx),
+                "--slot-id",
+                slot_id,
+            ]
+            handle = worker_log.open("a")
+            workers.append(subprocess.Popen(command, cwd=project_root, env=env_base, stdout=handle, stderr=subprocess.STDOUT, text=True))
 
-    print(
-        f"SUPERVISOR_START time={now()} run_dir={run_dir} workers={len(workers)} "
-        f"planned={planned} queued={queued} seeded={seeded}",
-        flush=True,
-    )
-    try:
-        while True:
-            state = count_state(run_dir)
-            alive = sum(worker.poll() is None for worker in workers)
-            print(f"STATUS time={now()} alive={alive} state={json.dumps(state, sort_keys=True)}", flush=True)
-            print(gpu_snapshot(), flush=True)
-            if state["failed"]:
-                raise SystemExit("Insider generation worker failed. Inspect run_dir/failed and worker logs.")
-            if state["pending"] == 0 and state["running"] == 0:
-                (run_dir / "STOP").write_text(now() + "\n")
-                time.sleep(args.idle_sleep)
-                for worker in workers:
-                    if worker.poll() is None:
-                        worker.terminate()
-                merge_outputs(args)
-                print(f"SUPERVISOR_DONE time={now()}", flush=True)
-                return 0
-            if alive == 0:
-                raise SystemExit("All insider generation workers exited before queue completion.")
-            time.sleep(args.poll_seconds)
+        print(
+            f"SUPERVISOR_START time={now()} run_dir={run_dir} workers={len(workers)} "
+            f"planned={planned} queued={queued} seeded={seeded} queue_plan_id={queue_plan_id}",
+            flush=True,
+        )
+        try:
+            while True:
+                status = audit_run_state(
+                    project_root=project_root,
+                    run_dir=run_dir,
+                    prompt_glob=args.prompt_glob,
+                    samples_per_prompt=args.samples_per_prompt,
+                    label_mode=args.label_mode,
+                    queue_plan=queue_plan,
+                )
+                state = status["state"]
+                alive = sum(worker.poll() is None for worker in workers)
+                print(
+                    f"STATUS time={now()} alive={alive} "
+                    f"planned={status['planned']} valid_outputs={status['valid_outputs']} "
+                    f"state={json.dumps(state, sort_keys=True)} "
+                    f"issues={json.dumps(status['issues'], sort_keys=True)}",
+                    flush=True,
+                )
+                print(gpu_snapshot(), flush=True)
+                if state["failed"]:
+                    raise SystemExit("Insider generation worker failed. Inspect run_dir/failed and worker logs.")
+                if state["pending"] == 0 and state["running"] == 0:
+                    if status["valid_outputs"] != status["planned"] or not status["ok"]:
+                        raise SystemExit(
+                            "Queue markers are empty but validated output coverage is incomplete or mismatched. "
+                            f"status={json.dumps(status, sort_keys=True)}"
+                        )
+                    (run_dir / "STOP").write_text(now() + "\n")
+                    time.sleep(args.idle_sleep)
+                    for worker in workers:
+                        if worker.poll() is None:
+                            worker.terminate()
+                    merge_outputs(args, expected_queue_plan_id=queue_plan_id)
+                    print(f"SUPERVISOR_DONE time={now()}", flush=True)
+                    return 0
+                if alive == 0:
+                    raise SystemExit("All insider generation workers exited before queue completion.")
+                time.sleep(args.poll_seconds)
+        finally:
+            (run_dir / "STOP").write_text(now() + "\n")
+            for worker in workers:
+                if worker.poll() is None:
+                    worker.terminate()
     finally:
-        (run_dir / "STOP").write_text(now() + "\n")
-        for worker in workers:
-            if worker.poll() is None:
-                worker.terminate()
+        signal_cleanup.restore()
+        lock.release()
 
 
 def run_plan(args: argparse.Namespace) -> int:
     project_root = Path(args.project_root).resolve()
     run_dir = Path(args.run_dir).resolve()
+    units = plan_units(
+        project_root=project_root,
+        prompt_glob=args.prompt_glob,
+        samples_per_prompt=args.samples_per_prompt,
+    )
+    queue_plan = prepare_queue_plan(
+        project_root=project_root,
+        run_dir=run_dir,
+        prompt_glob=args.prompt_glob,
+        samples_per_prompt=args.samples_per_prompt,
+        label_mode=args.label_mode,
+        units=units,
+        overwrite_queue=args.overwrite_queue,
+    )
+    write_queue_plan(run_dir, queue_plan)
     planned, queued, seeded = create_queue(
         project_root=project_root,
         run_dir=run_dir,
@@ -673,8 +957,11 @@ def run_plan(args: argparse.Namespace) -> int:
         samples_per_prompt=args.samples_per_prompt,
         overwrite_queue=args.overwrite_queue,
         seed_completed_output_path=args.seed_completed_output,
+        run_id=str(queue_plan["run_id"]),
+        queue_plan_id=str(queue_plan["queue_plan_id"]),
+        units=units,
     )
-    print(json.dumps({"planned": planned, "queued": queued, "seeded": seeded, "state": count_state(run_dir)}, sort_keys=True))
+    print(json.dumps({"planned": planned, "queued": queued, "seeded": seeded, "queue_plan_id": queue_plan["queue_plan_id"], "state": count_state(run_dir)}, sort_keys=True))
     return 0
 
 
@@ -697,14 +984,118 @@ def run_audit(args: argparse.Namespace) -> int:
         run_dir=Path(args.run_dir).resolve(),
         prompt_glob=args.prompt_glob,
         samples_per_prompt=args.samples_per_prompt,
+        label_mode=args.label_mode,
     )
     print(json.dumps(report, indent=2, sort_keys=True))
     return 0 if report["ok"] else 1
 
 
 def run_status(args: argparse.Namespace) -> int:
-    print(json.dumps(count_state(Path(args.run_dir).resolve()), sort_keys=True))
-    return 0
+    report = audit_run_state(
+        project_root=Path(args.project_root).resolve(),
+        run_dir=Path(args.run_dir).resolve(),
+        prompt_glob=args.prompt_glob,
+        samples_per_prompt=args.samples_per_prompt,
+        label_mode=args.label_mode,
+    )
+    print(json.dumps(report, indent=2, sort_keys=True))
+    return 0 if report["ok"] else 1
+
+
+def run_migrate_plan_metadata(args: argparse.Namespace) -> int:
+    project_root = Path(args.project_root).resolve()
+    run_dir = Path(args.run_dir).resolve()
+    units = plan_units(
+        project_root=project_root,
+        prompt_glob=args.prompt_glob,
+        samples_per_prompt=args.samples_per_prompt,
+    )
+    planned = {unit.unit_id: unit for unit in units}
+    queue_plan = prepare_queue_plan(
+        project_root=project_root,
+        run_dir=run_dir,
+        prompt_glob=args.prompt_glob,
+        samples_per_prompt=args.samples_per_prompt,
+        label_mode=args.label_mode,
+        units=units,
+        overwrite_queue=args.overwrite_queue_plan,
+    )
+    run_id = str(queue_plan["run_id"])
+    queue_plan_id = str(queue_plan["queue_plan_id"])
+
+    output_updates: list[tuple[Path, list[Any], str]] = []
+    migrated_markers = 0
+    invalid_outputs: list[str] = []
+    unexpected_outputs: list[str] = []
+    output_paths = sorted((run_dir / "outputs").glob("*.json"))
+    for path in output_paths:
+        unit = _output_shard_unit(path, expected_queue_plan_id=None)
+        if unit is None:
+            invalid_outputs.append(str(path))
+            continue
+        if unit.unit_id not in planned:
+            unexpected_outputs.append(str(path))
+            continue
+        payload = read_json(path)
+        metadata = payload[0].setdefault("metadata", {})
+        if metadata.get("queue_plan_id") not in (None, "", queue_plan_id):
+            invalid_outputs.append(str(path))
+            continue
+        if metadata.get("queue_plan_id") != queue_plan_id or metadata.get("dynamic_run_id") != run_id:
+            metadata["queue_plan_id"] = queue_plan_id
+            metadata["dynamic_run_id"] = run_id
+            metadata["dynamic_unit_id"] = unit.unit_id
+            output_updates.append((path, payload, unit.unit_id))
+
+    if invalid_outputs or unexpected_outputs:
+        raise SystemExit(
+            "Refusing migration because output audit is not exact: "
+            f"invalid_outputs={invalid_outputs} unexpected_outputs={unexpected_outputs}"
+        )
+    if args.expected_valid_outputs is not None and len(output_paths) != args.expected_valid_outputs:
+        raise SystemExit(
+            f"Expected {args.expected_valid_outputs} output shards before migration, "
+            f"found {len(output_paths)}."
+        )
+
+    for path, payload, _unit_id in output_updates:
+        write_json(path, payload)
+    migrated_outputs = len(output_updates)
+
+    for state_name in ("pending", "running", "done", "failed"):
+        for path in sorted((run_dir / state_name).glob("*.json")):
+            try:
+                unit = deserialise_unit(read_json(path))
+            except Exception:
+                continue
+            if unit.unit_id not in planned:
+                continue
+            stamped = stamp_unit_plan(planned[unit.unit_id], run_id=run_id, queue_plan_id=queue_plan_id)
+            write_json(path, serialise_unit(stamped))
+            migrated_markers += 1
+
+    write_queue_plan(run_dir, queue_plan)
+    report = audit_run_state(
+        project_root=project_root,
+        run_dir=run_dir,
+        prompt_glob=args.prompt_glob,
+        samples_per_prompt=args.samples_per_prompt,
+        label_mode=args.label_mode,
+        queue_plan=queue_plan,
+    )
+    print(
+        json.dumps(
+            {
+                "queue_plan_id": queue_plan_id,
+                "migrated_outputs": migrated_outputs,
+                "migrated_markers": migrated_markers,
+                "status": report,
+            },
+            indent=2,
+            sort_keys=True,
+        )
+    )
+    return 0 if report["ok"] else 1
 
 
 def add_common(parser: argparse.ArgumentParser) -> None:
@@ -731,6 +1122,16 @@ def parse_args() -> argparse.Namespace:
     supervisor.add_argument("--overwrite-queue", action="store_true")
     supervisor.add_argument("--seed-completed-output", type=Path)
     supervisor.add_argument("--require-count", type=int)
+    supervisor.add_argument(
+        "--force-stale-lock",
+        action="store_true",
+        help="Break run.lock only when it is on this host and the recorded PID is dead.",
+    )
+    supervisor.add_argument(
+        "--force-stale-merge-lock",
+        action="store_true",
+        help="Break output merge lock only when it is on this host and the recorded PID is dead.",
+    )
     supervisor.add_argument("--poll-seconds", type=float, default=30.0)
     supervisor.add_argument("--idle-sleep", type=float, default=5.0)
     supervisor.add_argument("--plan-only", action="store_true")
@@ -750,6 +1151,12 @@ def parse_args() -> argparse.Namespace:
     add_common(merge)
     merge.add_argument("--output", required=True)
     merge.add_argument("--require-count", type=int)
+    merge.add_argument("--expected-queue-plan-id")
+    merge.add_argument(
+        "--force-stale-merge-lock",
+        action="store_true",
+        help="Break output merge lock only when it is on this host and the recorded PID is dead.",
+    )
 
     requeue = sub.add_parser("requeue-stale")
     requeue.add_argument("--run-dir", required=True)
@@ -761,7 +1168,16 @@ def parse_args() -> argparse.Namespace:
     add_common(audit)
 
     status = sub.add_parser("status")
-    status.add_argument("--run-dir", required=True)
+    add_common(status)
+
+    migrate = sub.add_parser("migrate-plan-metadata")
+    add_common(migrate)
+    migrate.add_argument("--expected-valid-outputs", type=int)
+    migrate.add_argument(
+        "--overwrite-queue-plan",
+        action="store_true",
+        help="Replace an existing queue_plan.json if the computed plan differs.",
+    )
     return parser.parse_args()
 
 
@@ -774,7 +1190,7 @@ def main() -> int:
     if args.cmd == "supervisor":
         return run_supervisor(args)
     if args.cmd == "merge":
-        merge_outputs(args)
+        merge_outputs(args, expected_queue_plan_id=args.expected_queue_plan_id)
         return 0
     if args.cmd == "requeue-stale":
         return run_requeue_stale(args)
@@ -782,6 +1198,8 @@ def main() -> int:
         return run_audit(args)
     if args.cmd == "status":
         return run_status(args)
+    if args.cmd == "migrate-plan-metadata":
+        return run_migrate_plan_metadata(args)
     raise AssertionError(args.cmd)
 
 

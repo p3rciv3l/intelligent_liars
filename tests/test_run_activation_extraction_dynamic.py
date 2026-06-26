@@ -274,3 +274,142 @@ def test_count_state_counts_h5_outputs(tmp_path):
     assert state["failed"] == 1
     assert state["completed"] == 1
     assert state["outputs"] == 1
+
+
+def test_activation_plan_id_excludes_runtime_scheduling_knobs(monkeypatch, tmp_path):
+    dynamic = _load_dynamic_module()
+    dataset = ActivationDataset(
+        task="claims__definitional_gemini_600_full",
+        examples=(_example(0, 0), _example(1, 0)),
+        dataset_id="claims__definitional_gemini_600_full",
+    )
+    monkeypatch.setattr(
+        ActivationDataset,
+        "from_named_task",
+        staticmethod(lambda *args, **kwargs: dataset),
+    )
+
+    base = {
+        "path": None,
+        "task": ["claims__definitional_gemini_600_full"],
+        "run_dir": str(tmp_path / "run"),
+        "project_root": str(tmp_path),
+        "chunk_chars": 12_000,
+        "max_examples_per_chunk": 16,
+        "limit": None,
+        "generated_model": "qwen3-vl-8b-thinking",
+        "layers": "all",
+        "batch_size": 1,
+        "max_length": None,
+        "no_verify_masks": False,
+        "capture_logits": False,
+        "storage_dtype": "float16",
+        "compression": "lzf",
+        "gpus": "0",
+        "poll_seconds": 30,
+    }
+    first_args = argparse.Namespace(**base)
+    second_args = argparse.Namespace(**{**base, "gpus": "0,1", "poll_seconds": 5})
+    changed_args = argparse.Namespace(**{**base, "no_verify_masks": True})
+
+    units = dynamic.plan_units_from_args(first_args)
+    first_id = dynamic.stable_sha256(dynamic.build_plan_manifest(first_args, units))
+    second_id = dynamic.stable_sha256(dynamic.build_plan_manifest(second_args, units))
+    changed_id = dynamic.stable_sha256(dynamic.build_plan_manifest(changed_args, units))
+
+    assert first_id == second_id
+    assert first_id != changed_id
+
+
+def test_audit_run_state_uses_validated_current_plan_outputs(tmp_path):
+    dynamic = _load_dynamic_module()
+    run_dir = tmp_path / "run"
+    dynamic.ensure_dirs(run_dir)
+    unit = dynamic.Unit(
+        chunk_id="00000-claims__definitional_gemini_600_full",
+        task="claims__definitional_gemini_600_full",
+        rollout_path="claims__definitional_gemini_600_full",
+        source_type="named_task",
+        examples=(dynamic.ExampleKey(1, 0),),
+        estimated_chars=10,
+        dynamic_run_id="run-1",
+        queue_plan_id="plan-1",
+    )
+    dynamic.write_json(run_dir / "done" / f"{unit.key}.json", dynamic.serialise_unit(unit))
+    with h5py.File(run_dir / "outputs" / f"{unit.key}.h5", "w") as handle:
+        handle.attrs["dynamic_unit_key"] = unit.key
+        handle.attrs["queue_plan_id"] = "plan-1"
+        metadata = handle.create_group("metadata")
+        metadata.create_dataset("dummy", data=[0])
+        handle.create_group("layers").create_group("layer_0").create_dataset(
+            "claims__definitional_gemini_600_full",
+            data=[[0.0]],
+        )
+
+    report = dynamic.audit_run_state(
+        run_dir,
+        planned_unit_keys={unit.key},
+        queue_plan_id="plan-1",
+    )
+
+    assert report["ok"] is True
+    assert report["valid_outputs"] == 1
+
+
+def test_audit_run_state_rejects_done_marker_without_current_plan_output(tmp_path):
+    dynamic = _load_dynamic_module()
+    run_dir = tmp_path / "run"
+    dynamic.ensure_dirs(run_dir)
+    unit = dynamic.Unit(
+        chunk_id="00000-claims__definitional_gemini_600_full",
+        task="claims__definitional_gemini_600_full",
+        rollout_path="claims__definitional_gemini_600_full",
+        source_type="named_task",
+        examples=(dynamic.ExampleKey(1, 0),),
+        estimated_chars=10,
+        dynamic_run_id="run-1",
+        queue_plan_id="plan-1",
+    )
+    dynamic.write_json(run_dir / "done" / f"{unit.key}.json", dynamic.serialise_unit(unit))
+    with h5py.File(run_dir / "outputs" / f"{unit.key}.h5", "w") as handle:
+        metadata = handle.create_group("metadata")
+        metadata.create_dataset("dummy", data=[0])
+        handle.create_group("layers").create_group("layer_0").create_dataset(
+            "claims__definitional_gemini_600_full",
+            data=[[0.0]],
+        )
+
+    report = dynamic.audit_run_state(
+        run_dir,
+        planned_unit_keys={unit.key},
+        queue_plan_id="plan-1",
+    )
+
+    assert report["ok"] is False
+    assert report["valid_outputs"] == 0
+    assert report["issues"]["done_without_output"] == [unit.key]
+    assert report["issues"]["invalid_output_files"]
+
+
+def test_audit_run_state_rejects_legacy_queue_marker_under_current_plan(tmp_path):
+    dynamic = _load_dynamic_module()
+    run_dir = tmp_path / "run"
+    dynamic.ensure_dirs(run_dir)
+    unit = dynamic.Unit(
+        chunk_id="00000-claims__definitional_gemini_600_full",
+        task="claims__definitional_gemini_600_full",
+        rollout_path="claims__definitional_gemini_600_full",
+        source_type="named_task",
+        examples=(dynamic.ExampleKey(1, 0),),
+        estimated_chars=10,
+    )
+    dynamic.write_json(run_dir / "pending" / f"{unit.key}.json", dynamic.serialise_unit(unit))
+
+    report = dynamic.audit_run_state(
+        run_dir,
+        planned_unit_keys={unit.key},
+        queue_plan_id="plan-1",
+    )
+
+    assert report["ok"] is False
+    assert report["issues"]["unexpected_units"] == [f"pending:{unit.key}.json"]

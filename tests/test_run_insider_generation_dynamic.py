@@ -25,7 +25,24 @@ messages:
   - role: user
     content: Should we trade?
 misalignment_string: execute_trade
-""".strip()
+	""".strip()
+    )
+
+
+def _current_queue_plan(dynamic, project_root: Path, run_dir: Path, *, samples_per_prompt: int):
+    units = dynamic.plan_units(
+        project_root=project_root,
+        prompt_glob="data/insider_trading/prompts/**/*.yaml",
+        samples_per_prompt=samples_per_prompt,
+    )
+    return dynamic.prepare_queue_plan(
+        project_root=project_root,
+        run_dir=run_dir,
+        prompt_glob="data/insider_trading/prompts/**/*.yaml",
+        samples_per_prompt=samples_per_prompt,
+        label_mode="unknown",
+        units=units,
+        overwrite_queue=True,
     )
 
 
@@ -182,10 +199,22 @@ def test_audit_run_state_reports_clean_partial_queue(tmp_path):
     _write_prompt(tmp_path, "data/insider_trading/prompts/default/a.yaml")
     run_dir = tmp_path / "run"
     dynamic.ensure_dirs(run_dir)
-    done_unit = dynamic.unit_from_prompt("data/insider_trading/prompts/default/a.yaml", 0)
-    pending_unit = dynamic.unit_from_prompt("data/insider_trading/prompts/default/a.yaml", 1)
+    plan = _current_queue_plan(dynamic, tmp_path, run_dir, samples_per_prompt=2)
+    done_unit = dynamic.stamp_unit_plan(
+        dynamic.unit_from_prompt("data/insider_trading/prompts/default/a.yaml", 0),
+        run_id=plan["run_id"],
+        queue_plan_id=plan["queue_plan_id"],
+    )
+    pending_unit = dynamic.stamp_unit_plan(
+        dynamic.unit_from_prompt("data/insider_trading/prompts/default/a.yaml", 1),
+        run_id=plan["run_id"],
+        queue_plan_id=plan["queue_plan_id"],
+    )
     dynamic.write_json(run_dir / "done" / f"{done_unit.unit_id}.json", dynamic.serialise_unit(done_unit))
-    dynamic.write_json(run_dir / "outputs" / f"{done_unit.unit_id}.json", [{"metadata": {"run_id": done_unit.run_id}}])
+    dynamic.write_json(
+        run_dir / "outputs" / f"{done_unit.unit_id}.json",
+        [{"metadata": {"run_id": done_unit.run_id, "queue_plan_id": plan["queue_plan_id"], "dynamic_run_id": plan["run_id"]}}],
+    )
     dynamic.write_json(run_dir / "pending" / f"{pending_unit.unit_id}.json", dynamic.serialise_unit(pending_unit))
 
     report = dynamic.audit_run_state(
@@ -206,7 +235,12 @@ def test_audit_run_state_reports_done_without_output(tmp_path):
     _write_prompt(tmp_path, "data/insider_trading/prompts/default/a.yaml")
     run_dir = tmp_path / "run"
     dynamic.ensure_dirs(run_dir)
-    done_unit = dynamic.unit_from_prompt("data/insider_trading/prompts/default/a.yaml", 0)
+    plan = _current_queue_plan(dynamic, tmp_path, run_dir, samples_per_prompt=1)
+    done_unit = dynamic.stamp_unit_plan(
+        dynamic.unit_from_prompt("data/insider_trading/prompts/default/a.yaml", 0),
+        run_id=plan["run_id"],
+        queue_plan_id=plan["queue_plan_id"],
+    )
     dynamic.write_json(run_dir / "done" / f"{done_unit.unit_id}.json", dynamic.serialise_unit(done_unit))
 
     report = dynamic.audit_run_state(
@@ -218,6 +252,112 @@ def test_audit_run_state_reports_done_without_output(tmp_path):
 
     assert report["ok"] is False
     assert report["issues"]["done_without_output"] == [done_unit.unit_id]
+
+
+def test_audit_run_state_rejects_legacy_queue_marker_under_current_plan(tmp_path):
+    dynamic = _load_dynamic_module()
+    _write_prompt(tmp_path, "data/insider_trading/prompts/default/a.yaml")
+    run_dir = tmp_path / "run"
+    dynamic.ensure_dirs(run_dir)
+    unit = dynamic.unit_from_prompt("data/insider_trading/prompts/default/a.yaml", 0)
+    dynamic.write_json(run_dir / "pending" / f"{unit.unit_id}.json", dynamic.serialise_unit(unit))
+
+    report = dynamic.audit_run_state(
+        project_root=tmp_path,
+        run_dir=run_dir,
+        prompt_glob="data/insider_trading/prompts/**/*.yaml",
+        samples_per_prompt=1,
+    )
+
+    assert report["ok"] is False
+    assert report["issues"]["unexpected_units"] == [f"pending:{unit.unit_id}.json"]
+
+
+def test_audit_run_state_rejects_legacy_output_without_plan_id(tmp_path):
+    dynamic = _load_dynamic_module()
+    _write_prompt(tmp_path, "data/insider_trading/prompts/default/a.yaml")
+    run_dir = tmp_path / "run"
+    dynamic.ensure_dirs(run_dir)
+    done_unit = dynamic.unit_from_prompt("data/insider_trading/prompts/default/a.yaml", 0)
+    dynamic.write_json(run_dir / "done" / f"{done_unit.unit_id}.json", dynamic.serialise_unit(done_unit))
+    dynamic.write_json(run_dir / "outputs" / f"{done_unit.unit_id}.json", [{"metadata": {"run_id": done_unit.run_id}}])
+
+    report = dynamic.audit_run_state(
+        project_root=tmp_path,
+        run_dir=run_dir,
+        prompt_glob="data/insider_trading/prompts/**/*.yaml",
+        samples_per_prompt=1,
+    )
+
+    assert report["ok"] is False
+    assert report["valid_outputs"] == 0
+    assert report["issues"]["invalid_output_files"]
+
+
+def test_migrate_plan_metadata_stamps_legacy_outputs_explicitly(tmp_path):
+    dynamic = _load_dynamic_module()
+    _write_prompt(tmp_path, "data/insider_trading/prompts/default/a.yaml")
+    run_dir = tmp_path / "run"
+    dynamic.ensure_dirs(run_dir)
+    unit = dynamic.unit_from_prompt("data/insider_trading/prompts/default/a.yaml", 0)
+    dynamic.write_json(run_dir / "done" / f"{unit.unit_id}.json", dynamic.serialise_unit(unit))
+    dynamic.write_json(run_dir / "outputs" / f"{unit.unit_id}.json", [{"metadata": {"run_id": unit.run_id}}])
+
+    args = type(
+        "Args",
+        (),
+        {
+            "project_root": tmp_path,
+            "run_dir": run_dir,
+            "prompt_glob": "data/insider_trading/prompts/**/*.yaml",
+            "samples_per_prompt": 1,
+            "label_mode": "unknown",
+            "expected_valid_outputs": 1,
+            "overwrite_queue_plan": False,
+        },
+    )()
+
+    assert dynamic.run_migrate_plan_metadata(args) == 0
+    output = dynamic.read_json(run_dir / "outputs" / f"{unit.unit_id}.json")
+    plan = dynamic.read_json(run_dir / "queue_plan.json")
+    assert output[0]["metadata"]["queue_plan_id"] == plan["queue_plan_id"]
+    assert dynamic.read_json(run_dir / "done" / f"{unit.unit_id}.json")["queue_plan_id"] == plan["queue_plan_id"]
+
+
+def test_migrate_plan_metadata_does_not_partially_stamp_outputs_on_failure(tmp_path):
+    dynamic = _load_dynamic_module()
+    _write_prompt(tmp_path, "data/insider_trading/prompts/default/a.yaml")
+    run_dir = tmp_path / "run"
+    dynamic.ensure_dirs(run_dir)
+    unit = dynamic.unit_from_prompt("data/insider_trading/prompts/default/a.yaml", 0)
+    output_path = run_dir / "outputs" / f"{unit.unit_id}.json"
+    dynamic.write_json(output_path, [{"metadata": {"run_id": unit.run_id}}])
+    dynamic.write_json(run_dir / "outputs" / "zz-invalid.json", [{"metadata": {"run_id": "not-a-run-id"}}])
+
+    args = type(
+        "Args",
+        (),
+        {
+            "project_root": tmp_path,
+            "run_dir": run_dir,
+            "prompt_glob": "data/insider_trading/prompts/**/*.yaml",
+            "samples_per_prompt": 1,
+            "label_mode": "unknown",
+            "expected_valid_outputs": 2,
+            "overwrite_queue_plan": False,
+        },
+    )()
+
+    try:
+        dynamic.run_migrate_plan_metadata(args)
+    except SystemExit:
+        pass
+    else:
+        raise AssertionError("migration should fail on invalid output")
+
+    output = dynamic.read_json(output_path)
+    assert "queue_plan_id" not in output[0]["metadata"]
+    assert "dynamic_run_id" not in output[0]["metadata"]
 
 
 def test_merge_outputs_sorts_records_and_requires_count(tmp_path):

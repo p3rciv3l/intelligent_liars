@@ -34,6 +34,7 @@ from intelligent_liars.activations import (
 )
 from intelligent_liars.activation_backends import prepare_model_inputs, qwen3_vl_decoder_surface
 from intelligent_liars.models import DEFAULT_MODEL_ID, ModelBundle, ModelLoadConfig
+from intelligent_liars.run_control import LockHeldError, acquire_lock, lock_payload
 from intelligent_liars.nnsight_backend import NnsightActivationBackend, _save_selected_rows
 
 
@@ -1505,6 +1506,54 @@ def test_merge_activation_hdf5_shards_respects_compression_mode(tmp_path):
     with h5py.File(merged_path, "r") as merged:
         assert merged["layer_0/roleplaying__plain"].compression == "lzf"
         assert merged.attrs["merged_compression"] == "lzf"
+
+
+def test_merge_activation_hdf5_shards_refuses_live_merge_lock(tmp_path):
+    torch = pytest.importorskip("torch")
+
+    shard = tmp_path / "shard.h5"
+    merged_path = tmp_path / "merged.h5"
+    write_activation_hdf5(
+        output_path=shard,
+        task="roleplaying__plain",
+        layers=(0,),
+        activations_by_layer={0: [torch.tensor([[1.0, 2.0]])]},
+        source_indices=[10],
+        output_indices=[0],
+        labels=[HONEST],
+        example_indices=[0],
+        token_positions=[5],
+        example_splits=[0, 1],
+        example_source_indices=[10],
+        example_output_indices=[0],
+        example_labels=[HONEST],
+        example_token_counts=[1],
+        detected_answer_texts=["yes"],
+        decoded_answer_texts=["yes"],
+        char_spans_json=["[[0, 3]]"],
+        messages_json=['[{"role": "assistant", "content": "yes"}]'],
+        rendered_texts=["<assistant>yes"],
+        source_datasets=["roleplaying.json"],
+        raw_labels_json=["1"],
+        label_schemas=[LabelSchema.ROLEPLAYING_1_TO_7.value],
+        example_metadata_json=['{"source_index": 10}'],
+        model_id=DEFAULT_MODEL_ID,
+        backend_name="unit-test",
+        surface_names={0: "decoder_layer_0_answer_tokens"},
+        preserved_input_keys=("attention_mask", "input_ids"),
+        dataset_id="roleplaying.json",
+        processor_id=DEFAULT_MODEL_ID,
+        overwrite=False,
+    )
+    lock = acquire_lock(
+        merged_path.with_name(f"{merged_path.name}.merge.lock"),
+        lock_payload(run_id="merge-1", queue_plan_id=None),
+    )
+    try:
+        with pytest.raises(LockHeldError, match="Lock exists"):
+            merge_activation_hdf5_shards([shard], output_path=merged_path)
+    finally:
+        lock.release()
 
 
 class FakeSaveTensor:

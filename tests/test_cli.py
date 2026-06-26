@@ -227,12 +227,25 @@ def test_generate_sycophancy_pair_mode_does_not_load_model(tmp_path, monkeypatch
 def test_merge_activation_shards_cli_resolves_paths(tmp_path, monkeypatch):
     seen = {}
 
-    def fake_merge(paths, *, output_path, overwrite, compression, merge_strategy):
+    def fake_merge(
+        paths,
+        *,
+        output_path,
+        overwrite,
+        compression,
+        merge_strategy,
+        expected_queue_plan_id,
+        require_queue_plan_id,
+        force_stale_merge_lock,
+    ):
         seen["paths"] = paths
         seen["output_path"] = output_path
         seen["overwrite"] = overwrite
         seen["compression"] = compression
         seen["merge_strategy"] = merge_strategy
+        seen["expected_queue_plan_id"] = expected_queue_plan_id
+        seen["require_queue_plan_id"] = require_queue_plan_id
+        seen["force_stale_merge_lock"] = force_stale_merge_lock
         return ActivationMergeSummary(
             output_path=output_path,
             shard_paths=tuple(paths),
@@ -264,6 +277,9 @@ def test_merge_activation_shards_cli_resolves_paths(tmp_path, monkeypatch):
     assert seen["overwrite"] is True
     assert seen["compression"] == "lzf"
     assert seen["merge_strategy"] == "auto"
+    assert seen["expected_queue_plan_id"] is None
+    assert seen["require_queue_plan_id"] is False
+    assert seen["force_stale_merge_lock"] is False
     assert "examples=2" in result.output
     assert "token_rows=3" in result.output
 
