@@ -1048,6 +1048,9 @@ def test_train_probes_cli_resolves_paths_and_options(tmp_path, monkeypatch):
             "5",
             "--c",
             "0.25",
+            "--general-domain-probe",
+            "--general-task-class-cap",
+            "17",
         ],
     )
 
@@ -1060,8 +1063,11 @@ def test_train_probes_cli_resolves_paths_and_options(tmp_path, monkeypatch):
     assert captured["random_seed"] == 7
     assert captured["max_iter"] == 5
     assert captured["regularization_c"] == 0.25
+    assert captured["train_general_domain_probe"] is True
+    assert captured["general_task_class_cap"] == 17
     assert "within_task=2" in result.output
     assert "directions=2" in result.output
+    assert "general_domain=0" in result.output
 
 
 def test_preflight_probes_cli_resolves_paths_and_options(tmp_path, monkeypatch):

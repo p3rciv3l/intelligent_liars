@@ -1699,6 +1699,17 @@ def train_probes(
         min=1e-9,
         help="Inverse L2 regularization strength for logistic regression.",
     ),
+    train_general_domain_probe: bool = typer.Option(
+        False,
+        "--general-domain-probe",
+        help="Also train one pooled general-domain probe per layer over the selected tasks.",
+    ),
+    general_task_class_cap: int = typer.Option(
+        1000,
+        "--general-task-class-cap",
+        min=1,
+        help="Maximum examples per task/label bucket for the general-domain probe.",
+    ),
 ) -> None:
     """Train simple linear probes on mean-pooled answer-token activations."""
 
@@ -1712,6 +1723,8 @@ def train_probes(
         random_seed=random_seed,
         max_iter=max_iter,
         regularization_c=regularization_c,
+        train_general_domain_probe=train_general_domain_probe,
+        general_task_class_cap=general_task_class_cap,
     )
     console.print(
         "[green]Trained probes[/green] "
@@ -1720,5 +1733,7 @@ def train_probes(
         f"within_task={summary.within_task_results} "
         f"cross_task={summary.cross_task_results} "
         f"directions={summary.direction_results} "
+        f"general_domain={summary.general_domain_results} "
+        f"general_domain_directions={summary.general_domain_direction_results} "
         f"path={summary.output_path}"
     )

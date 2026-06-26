@@ -34,6 +34,8 @@ class ProbeTrainingSummary:
     within_task_results: int
     cross_task_results: int
     direction_results: int
+    general_domain_results: int = 0
+    general_domain_direction_results: int = 0
 
 
 @dataclass(frozen=True)
@@ -91,6 +93,13 @@ class _ProbePreflightTaskMetadata:
 class _TaskSplit:
     train_indices: np.ndarray
     test_indices: np.ndarray
+
+
+@dataclass(frozen=True)
+class _BalancedProbeSample:
+    features: np.ndarray
+    labels: np.ndarray
+    task_label_counts: dict[str, dict[str, int]]
 
 
 def preflight_probe_training(
@@ -265,6 +274,8 @@ def train_probe_directions(
     random_seed: int = 0,
     max_iter: int = 1000,
     regularization_c: float = 1.0,
+    train_general_domain_probe: bool = False,
+    general_task_class_cap: int | None = 1000,
 ) -> ProbeTrainingSummary:
     """Train simple linear probes over mean-pooled answer-token activations.
 
@@ -281,6 +292,8 @@ def train_probe_directions(
         raise ValueError("regularization_c must be positive.")
     if max_iter < 1:
         raise ValueError("max_iter must be positive.")
+    if general_task_class_cap is not None and general_task_class_cap < 1:
+        raise ValueError("general_task_class_cap must be positive when provided.")
 
     input_path = input_path.resolve()
     output_path = output_path.resolve()
@@ -310,50 +323,120 @@ def train_probe_directions(
         within_task_results: list[dict[str, Any]] = []
         cross_task_results: list[dict[str, Any]] = []
         direction_results: list[dict[str, Any]] = []
+        general_domain_results: list[dict[str, Any]] = []
+        general_domain_direction_results: list[dict[str, Any]] = []
         for layer in selected_layers:
             pooled_by_task = {
                 task: _mean_pool_layer(handle[f"layer_{layer}/{task}"], task_metadata[task].example_splits)
                 for task in selected_tasks
             }
+            split_classifiers: dict[str, LogisticRegression] = {}
             for task in selected_tasks:
                 metadata = task_metadata[task]
                 split = task_splits[task]
-                result = _fit_and_evaluate_probe(
-                    x_train=pooled_by_task[task][split.train_indices],
-                    y_train=metadata.labels[split.train_indices],
+                train_features = pooled_by_task[task][split.train_indices]
+                train_labels = metadata.labels[split.train_indices]
+                classifier = _fit_probe_classifier(
+                    train_features,
+                    train_labels,
+                    random_seed=random_seed,
+                    max_iter=max_iter,
+                    regularization_c=regularization_c,
+                )
+                split_classifiers[task] = classifier
+                result = _evaluate_fitted_probe(
+                    classifier=classifier,
+                    y_train=train_labels,
                     x_test=pooled_by_task[task][split.test_indices],
                     y_test=metadata.labels[split.test_indices],
                     layer=layer,
                     train_task=task,
                     test_task=task,
                     result_kind="within_task",
-                    random_seed=random_seed,
-                    max_iter=max_iter,
-                    regularization_c=regularization_c,
                 )
                 within_task_results.append(result)
 
             for train_task in selected_tasks:
                 source_metadata = task_metadata[train_task]
                 source_split = task_splits[train_task]
+                source_train_labels = source_metadata.labels[source_split.train_indices]
+                classifier = split_classifiers[train_task]
                 for test_task in selected_tasks:
                     if test_task == train_task:
                         continue
                     target_metadata = task_metadata[test_task]
-                    result = _fit_and_evaluate_probe(
-                        x_train=pooled_by_task[train_task][source_split.train_indices],
-                        y_train=source_metadata.labels[source_split.train_indices],
+                    result = _evaluate_fitted_probe(
+                        classifier=classifier,
+                        y_train=source_train_labels,
                         x_test=pooled_by_task[test_task],
                         y_test=target_metadata.labels,
                         layer=layer,
                         train_task=train_task,
                         test_task=test_task,
                         result_kind="cross_task",
+                    )
+                    cross_task_results.append(result)
+
+            if train_general_domain_probe:
+                general_train_sample = _make_balanced_probe_sample(
+                    pooled_by_task=pooled_by_task,
+                    task_metadata=task_metadata,
+                    indices_by_task={
+                        task: task_splits[task].train_indices
+                        for task in selected_tasks
+                    },
+                    tasks=selected_tasks,
+                    task_class_cap=general_task_class_cap,
+                    random_seed=random_seed + int(layer) * 1009,
+                )
+                general_classifier = _fit_probe_classifier(
+                    general_train_sample.features,
+                    general_train_sample.labels,
+                    random_seed=random_seed,
+                    max_iter=max_iter,
+                    regularization_c=regularization_c,
+                )
+                for test_task in selected_tasks:
+                    target_metadata = task_metadata[test_task]
+                    target_split = task_splits[test_task]
+                    general_domain_results.append(
+                        _evaluate_fitted_probe(
+                            classifier=general_classifier,
+                            y_train=general_train_sample.labels,
+                            x_test=pooled_by_task[test_task][target_split.test_indices],
+                            y_test=target_metadata.labels[target_split.test_indices],
+                            layer=layer,
+                            train_task="general_domain",
+                            test_task=test_task,
+                            result_kind="general_domain",
+                            train_task_label_counts=general_train_sample.task_label_counts,
+                        )
+                    )
+
+                general_final_sample = _make_balanced_probe_sample(
+                    pooled_by_task=pooled_by_task,
+                    task_metadata=task_metadata,
+                    indices_by_task={
+                        task: np.arange(task_metadata[task].example_count, dtype=np.int64)
+                        for task in selected_tasks
+                    },
+                    tasks=selected_tasks,
+                    task_class_cap=general_task_class_cap,
+                    random_seed=random_seed + int(layer) * 1009 + 503,
+                )
+                general_domain_direction_results.append(
+                    _fit_final_direction(
+                        x_train=general_final_sample.features,
+                        y_train=general_final_sample.labels,
+                        layer=layer,
+                        task="general_domain",
+                        trained_on="balanced_capped_all_selected_task_examples",
                         random_seed=random_seed,
                         max_iter=max_iter,
                         regularization_c=regularization_c,
+                        train_task_label_counts=general_final_sample.task_label_counts,
                     )
-                    cross_task_results.append(result)
+                )
 
             for task in selected_tasks:
                 metadata = task_metadata[task]
@@ -384,16 +467,29 @@ def train_probe_directions(
             "random_seed": random_seed,
             "max_iter": max_iter,
             "regularization_c": regularization_c,
+            "train_general_domain_probe": train_general_domain_probe,
+            "general_task_class_cap": general_task_class_cap,
             "model": "sklearn.linear_model.LogisticRegression",
             "solver": "liblinear",
             "class_weight": "balanced",
             "cross_task_eval": "source_train_split_to_all_target_examples",
+            "general_domain_train": "pooled selected task train splits, capped per task and label",
         },
         "directions": direction_results,
         "tasks": task_summaries,
         "within_task": within_task_results,
         "cross_task": cross_task_results,
     }
+    if train_general_domain_probe:
+        output["general_domain"] = {
+            "evaluations": general_domain_results,
+            "directions": general_domain_direction_results,
+            "training_policy": {
+                "task_class_cap": general_task_class_cap,
+                "split_source": "per-task train split for evaluation; all examples for final direction",
+                "sampling": "deterministic without replacement within each task/label bucket",
+            },
+        }
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(json.dumps(output, indent=2, sort_keys=True) + "\n")
     return ProbeTrainingSummary(
@@ -404,6 +500,8 @@ def train_probe_directions(
         within_task_results=len(within_task_results),
         cross_task_results=len(cross_task_results),
         direction_results=len(direction_results),
+        general_domain_results=len(general_domain_results),
+        general_domain_direction_results=len(general_domain_direction_results),
     )
 
 
@@ -803,6 +901,49 @@ def _task_summary(metadata: _TaskMetadata) -> dict[str, Any]:
     }
 
 
+def _make_balanced_probe_sample(
+    *,
+    pooled_by_task: dict[str, np.ndarray],
+    task_metadata: dict[str, _TaskMetadata],
+    indices_by_task: dict[str, np.ndarray],
+    tasks: Sequence[str],
+    task_class_cap: int | None,
+    random_seed: int,
+) -> _BalancedProbeSample:
+    rng = np.random.default_rng(random_seed)
+    feature_parts: list[np.ndarray] = []
+    label_parts: list[np.ndarray] = []
+    task_label_counts: dict[str, dict[str, int]] = {}
+    for task in tasks:
+        labels = task_metadata[task].labels
+        base_indices = np.asarray(indices_by_task[task], dtype=np.int64)
+        selected_for_task: list[np.ndarray] = []
+        task_label_counts[task] = {"honest": 0, "deceptive": 0}
+        for label, label_name in ((HONEST_LABEL, "honest"), (DECEPTIVE_LABEL, "deceptive")):
+            label_indices = base_indices[labels[base_indices] == label]
+            if task_class_cap is not None and label_indices.shape[0] > task_class_cap:
+                label_indices = np.sort(rng.choice(label_indices, size=task_class_cap, replace=False))
+            selected_for_task.append(label_indices)
+            task_label_counts[task][label_name] = int(label_indices.shape[0])
+        selected_indices = np.concatenate(selected_for_task)
+        if selected_indices.size == 0:
+            continue
+        feature_parts.append(pooled_by_task[task][selected_indices])
+        label_parts.append(labels[selected_indices])
+    if not feature_parts:
+        raise ValueError("No examples selected for general-domain probe training.")
+
+    features = np.concatenate(feature_parts, axis=0)
+    labels = np.concatenate(label_parts, axis=0)
+    if set(np.unique(labels).tolist()) != {HONEST_LABEL, DECEPTIVE_LABEL}:
+        raise ValueError("General-domain probe sample must contain both honest and deceptive examples.")
+    return _BalancedProbeSample(
+        features=features,
+        labels=labels,
+        task_label_counts=task_label_counts,
+    )
+
+
 def _mean_pool_layer(dataset: Any, example_splits: np.ndarray) -> np.ndarray:
     if int(example_splits[-1]) != int(dataset.shape[0]):
         raise ValueError(
@@ -837,11 +978,35 @@ def _fit_and_evaluate_probe(
         max_iter=max_iter,
         regularization_c=regularization_c,
     )
+    return _evaluate_fitted_probe(
+        classifier=classifier,
+        y_train=y_train,
+        x_test=x_test,
+        y_test=y_test,
+        layer=layer,
+        train_task=train_task,
+        test_task=test_task,
+        result_kind=result_kind,
+    )
+
+
+def _evaluate_fitted_probe(
+    *,
+    classifier: LogisticRegression,
+    y_train: np.ndarray,
+    x_test: np.ndarray,
+    y_test: np.ndarray,
+    layer: int,
+    train_task: str,
+    test_task: str,
+    result_kind: str,
+    train_task_label_counts: dict[str, dict[str, int]] | None = None,
+) -> dict[str, Any]:
     predictions = classifier.predict(x_test)
     scores = classifier.decision_function(x_test)
     auc = _auc_or_none(y_test, scores)
     coef = classifier.coef_[0].astype(np.float64)
-    return {
+    result = {
         "kind": result_kind,
         "task": test_task,
         "train_task": train_task,
@@ -858,6 +1023,9 @@ def _fit_and_evaluate_probe(
         "direction_sign_convention": DIRECTION_SIGN_CONVENTION,
         "intercept": float(classifier.intercept_[0]),
     }
+    if train_task_label_counts is not None:
+        result["train_task_label_counts"] = train_task_label_counts
+    return result
 
 
 def _fit_final_direction(
@@ -866,9 +1034,11 @@ def _fit_final_direction(
     y_train: np.ndarray,
     layer: int,
     task: str,
+    trained_on: str = "all_examples",
     random_seed: int,
     max_iter: int,
     regularization_c: float,
+    train_task_label_counts: dict[str, dict[str, int]] | None = None,
 ) -> dict[str, Any]:
     classifier = _fit_probe_classifier(
         x_train,
@@ -878,11 +1048,11 @@ def _fit_final_direction(
         regularization_c=regularization_c,
     )
     coef = classifier.coef_[0].astype(np.float64)
-    return {
+    result = {
         "kind": "final_direction",
         "task": task,
         "layer": int(layer),
-        "trained_on": "all_examples",
+        "trained_on": trained_on,
         "train_examples": int(y_train.shape[0]),
         "train_label_counts": _label_counts(y_train),
         "feature_count": int(coef.shape[0]),
@@ -891,6 +1061,9 @@ def _fit_final_direction(
         "direction_sign_convention": DIRECTION_SIGN_CONVENTION,
         "intercept": float(classifier.intercept_[0]),
     }
+    if train_task_label_counts is not None:
+        result["train_task_label_counts"] = train_task_label_counts
+    return result
 
 
 def _fit_probe_classifier(

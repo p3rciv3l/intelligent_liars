@@ -6,6 +6,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+import intelligent_liars.probes as probes
 from intelligent_liars.probes import (
     DIRECTION_SIGN_CONVENTION,
     PROBE_PREFLIGHT_FORMAT,
@@ -136,6 +137,87 @@ def test_train_probe_directions_splits_and_reports_by_example(tmp_path):
         assert len(direction["direction_vector"]) == 3
         assert direction["direction_norm"] > 0
         assert direction["direction_sign_convention"] == DIRECTION_SIGN_CONVENTION
+
+
+def test_train_probe_directions_reuses_split_classifiers_for_cross_task_eval(tmp_path, monkeypatch):
+    input_path = tmp_path / "activations.h5"
+    output_path = tmp_path / "probe-results.json"
+    _write_probe_fixture(input_path)
+
+    fit_calls = 0
+    real_fit_probe_classifier = probes._fit_probe_classifier
+
+    def counting_fit_probe_classifier(*args, **kwargs):
+        nonlocal fit_calls
+        fit_calls += 1
+        return real_fit_probe_classifier(*args, **kwargs)
+
+    monkeypatch.setattr(probes, "_fit_probe_classifier", counting_fit_probe_classifier)
+
+    summary = train_probe_directions(
+        input_path=input_path,
+        output_path=output_path,
+        layers="0-1",
+        test_size=0.5,
+        random_seed=3,
+    )
+
+    assert summary.within_task_results == 4
+    assert summary.cross_task_results == 4
+    assert summary.direction_results == 4
+    assert fit_calls == 8
+
+
+def test_train_probe_directions_can_train_general_domain_probe(tmp_path):
+    input_path = tmp_path / "activations.h5"
+    output_path = tmp_path / "probe-results.json"
+    _write_probe_fixture(input_path)
+
+    summary = train_probe_directions(
+        input_path=input_path,
+        output_path=output_path,
+        layers="0",
+        test_size=0.5,
+        random_seed=3,
+        train_general_domain_probe=True,
+        general_task_class_cap=2,
+    )
+
+    assert summary.general_domain_results == 2
+    assert summary.general_domain_direction_results == 1
+
+    payload = json.loads(output_path.read_text())
+    assert payload["settings"]["train_general_domain_probe"] is True
+    assert payload["settings"]["general_task_class_cap"] == 2
+    general = payload["general_domain"]
+    assert general["training_policy"]["task_class_cap"] == 2
+    assert len(general["evaluations"]) == 2
+    assert len(general["directions"]) == 1
+
+    for result in general["evaluations"]:
+        assert result["kind"] == "general_domain"
+        assert result["train_task"] == "general_domain"
+        assert result["train_examples"] == 8
+        assert result["train_label_counts"] == {"honest": 4, "deceptive": 4}
+        assert result["test_examples"] == 4
+        assert result["test_label_counts"] == {"honest": 2, "deceptive": 2}
+        assert result["balanced_accuracy"] == 1.0
+        assert result["train_task_label_counts"] == {
+            "roleplaying__plain": {"honest": 2, "deceptive": 2},
+            "sandbagging_v2__wmdp_mmlu": {"honest": 2, "deceptive": 2},
+        }
+
+    direction = general["directions"][0]
+    assert direction["kind"] == "final_direction"
+    assert direction["task"] == "general_domain"
+    assert direction["trained_on"] == "balanced_capped_all_selected_task_examples"
+    assert direction["train_examples"] == 8
+    assert direction["train_label_counts"] == {"honest": 4, "deceptive": 4}
+    assert len(direction["direction_vector"]) == 3
+    assert direction["train_task_label_counts"] == {
+        "roleplaying__plain": {"honest": 2, "deceptive": 2},
+        "sandbagging_v2__wmdp_mmlu": {"honest": 2, "deceptive": 2},
+    }
 
 
 def test_train_probe_directions_rejects_nonzero_example_splits(tmp_path):
