@@ -1,0 +1,728 @@
+{
+  "activation_store": {
+    "dtype": "float16",
+    "hidden_dim": 4096,
+    "layer_indices": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8,
+      9,
+      10,
+      11,
+      12,
+      13,
+      14,
+      15,
+      16,
+      17,
+      18,
+      19,
+      20,
+      21,
+      22,
+      23,
+      24,
+      25,
+      26,
+      27,
+      28,
+      29,
+      30,
+      31,
+      32,
+      33,
+      34,
+      35
+    ],
+    "layers": 36,
+    "tasks": 20,
+    "total_examples": 76257,
+    "total_token_rows": 277989
+  },
+  "artifact": {
+    "path": "/Users/student/Desktop/ai/intelligent_liars/artifacts/activations/activation_all_text_20260624/extracted_feats_all_text_qwen3-vl-8b-thinking.h5",
+    "size_bytes": 62394047728,
+    "size_gib": 58.109
+  },
+  "created_at": "2026-06-26T01:24:00.890842+00:00",
+  "format": "qwen_answer_token_probe_preflight_v1",
+  "input_path": "/Users/student/Desktop/ai/intelligent_liars/artifacts/activations/activation_all_text_20260624/extracted_feats_all_text_qwen3-vl-8b-thinking.h5",
+  "io_memory_estimate": {
+    "all_layer_count": 36,
+    "hdf5_file_bytes": 62394047728,
+    "hdf5_file_gib": 58.109,
+    "pooled_feature_matrix_bytes_per_layer_float32": 1249394688,
+    "pooled_feature_matrix_gib_per_layer_float32": 1.1636,
+    "raw_activation_bytes_all_layers": 81982291968,
+    "raw_activation_bytes_per_layer": 2277285888,
+    "raw_activation_bytes_selected_layers": 20495572992,
+    "raw_activation_gib_all_layers": 76.352,
+    "raw_activation_gib_per_layer": 2.1209,
+    "raw_activation_gib_selected_layers": 19.088,
+    "recommendation": "Pool and fit one layer at a time; do not materialize all layer tensors together.",
+    "selected_layer_count": 9
+  },
+  "phase": "preflight_only_no_training",
+  "policy": {
+    "layer_policy": {
+      "all_layers_available": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11,
+        12,
+        13,
+        14,
+        15,
+        16,
+        17,
+        18,
+        19,
+        20,
+        21,
+        22,
+        23,
+        24,
+        25,
+        26,
+        27,
+        28,
+        29,
+        30,
+        31,
+        32,
+        33,
+        34,
+        35
+      ],
+      "initial_pass": "sparse decoder-layer pilot",
+      "selected_layers": [
+        3,
+        7,
+        11,
+        15,
+        19,
+        23,
+        27,
+        31,
+        35
+      ],
+      "selected_layers_arg": "3,7,11,15,19,23,27,31,35"
+    },
+    "metrics": {
+      "primary": [
+        "balanced_accuracy",
+        "roc_auc"
+      ],
+      "reason": "Several tasks are imbalanced, so raw accuracy is not enough.",
+      "secondary": [
+        "accuracy"
+      ]
+    },
+    "random_seed": 0,
+    "split_policy": "per-task stratified held-out split",
+    "split_unit": "example",
+    "status_policy": {
+      "blocked": "The task is too small, missing a class, or otherwise scientifically misleading for the next probe phase.",
+      "eval_only": "Both labels are present and the task is usable as a target/test set, but it is not large enough to be a training source.",
+      "trainable": "Both labels are present, each class meets the training threshold, and the planned held-out split keeps enough examples per class."
+    },
+    "test_size": 0.25,
+    "thresholds": {
+      "min_eval_examples_per_class": 5,
+      "min_test_examples_per_class": 5,
+      "min_train_examples_per_class": 20
+    }
+  },
+  "recommendations": {
+    "blocked_tasks": [
+      "insider_trading__upscale"
+    ],
+    "caveats": [
+      "This report is metadata-only and did not train probes.",
+      "Eval-only tasks should be used as target/test sets, not as training sources.",
+      "Blocked tasks should stay out of the next probe training run."
+    ],
+    "eval_only_tasks": [
+      "insider_trading__onpolicy"
+    ],
+    "future_train_command_not_executed": "PYTHONPATH=src .venv/bin/python -m intelligent_liars train-probes --input /Users/student/Desktop/ai/intelligent_liars/artifacts/activations/activation_all_text_20260624/extracted_feats_all_text_qwen3-vl-8b-thinking.h5 --output results/probes/preflight_sparse_probe_results.json --layers 3,7,11,15,19,23,27,31,35 --test-size 0.25 --random-seed 0 --task claims__definitional_gemini_600_full --task claims__evidential_gemini_600_full --task claims__fictional_gemini_600_full --task claims__logical_gemini_600_full --task ethics__commonsense --task geometry_of_truth__best --task geometry_of_truth__mixed --task insider_trading_doubledown__onpolicy --task internal_state__animals --task internal_state__cities --task internal_state__companies --task internal_state__elements --task internal_state__facts --task internal_state__inventions --task repe_honesty__IF_dishonest --task roleplaying__plain --task sandbagging_v2__wmdp_mmlu --task sycophancy__mmlu_stem_same_conf_all",
+    "selected_layers": [
+      3,
+      7,
+      11,
+      15,
+      19,
+      23,
+      27,
+      31,
+      35
+    ],
+    "selected_layers_arg": "3,7,11,15,19,23,27,31,35",
+    "trainable_tasks": [
+      "claims__definitional_gemini_600_full",
+      "claims__evidential_gemini_600_full",
+      "claims__fictional_gemini_600_full",
+      "claims__logical_gemini_600_full",
+      "ethics__commonsense",
+      "geometry_of_truth__best",
+      "geometry_of_truth__mixed",
+      "insider_trading_doubledown__onpolicy",
+      "internal_state__animals",
+      "internal_state__cities",
+      "internal_state__companies",
+      "internal_state__elements",
+      "internal_state__facts",
+      "internal_state__inventions",
+      "repe_honesty__IF_dishonest",
+      "roleplaying__plain",
+      "sandbagging_v2__wmdp_mmlu",
+      "sycophancy__mmlu_stem_same_conf_all"
+    ]
+  },
+  "tasks": [
+    {
+      "class_balance_ratio": 1.0,
+      "estimated_split": {
+        "test_examples": 297,
+        "test_label_counts": {
+          "deceptive": 148,
+          "honest": 149
+        },
+        "train_examples": 889,
+        "train_label_counts": {
+          "deceptive": 445,
+          "honest": 444
+        }
+      },
+      "examples": 1186,
+      "label_counts": {
+        "deceptive": 593,
+        "honest": 593
+      },
+      "max_class_examples": 593,
+      "min_class_examples": 593,
+      "reason": "meets per-class and held-out split thresholds for within-task probe training",
+      "status": "trainable",
+      "task": "claims__definitional_gemini_600_full",
+      "token_rows": 18208,
+      "unsupported_labels": []
+    },
+    {
+      "class_balance_ratio": 1.0,
+      "estimated_split": {
+        "test_examples": 291,
+        "test_label_counts": {
+          "deceptive": 145,
+          "honest": 146
+        },
+        "train_examples": 873,
+        "train_label_counts": {
+          "deceptive": 437,
+          "honest": 436
+        }
+      },
+      "examples": 1164,
+      "label_counts": {
+        "deceptive": 582,
+        "honest": 582
+      },
+      "max_class_examples": 582,
+      "min_class_examples": 582,
+      "reason": "meets per-class and held-out split thresholds for within-task probe training",
+      "status": "trainable",
+      "task": "claims__evidential_gemini_600_full",
+      "token_rows": 13081,
+      "unsupported_labels": []
+    },
+    {
+      "class_balance_ratio": 1.0,
+      "estimated_split": {
+        "test_examples": 300,
+        "test_label_counts": {
+          "deceptive": 150,
+          "honest": 150
+        },
+        "train_examples": 900,
+        "train_label_counts": {
+          "deceptive": 450,
+          "honest": 450
+        }
+      },
+      "examples": 1200,
+      "label_counts": {
+        "deceptive": 600,
+        "honest": 600
+      },
+      "max_class_examples": 600,
+      "min_class_examples": 600,
+      "reason": "meets per-class and held-out split thresholds for within-task probe training",
+      "status": "trainable",
+      "task": "claims__fictional_gemini_600_full",
+      "token_rows": 18255,
+      "unsupported_labels": []
+    },
+    {
+      "class_balance_ratio": 1.0,
+      "estimated_split": {
+        "test_examples": 288,
+        "test_label_counts": {
+          "deceptive": 144,
+          "honest": 144
+        },
+        "train_examples": 862,
+        "train_label_counts": {
+          "deceptive": 431,
+          "honest": 431
+        }
+      },
+      "examples": 1150,
+      "label_counts": {
+        "deceptive": 575,
+        "honest": 575
+      },
+      "max_class_examples": 575,
+      "min_class_examples": 575,
+      "reason": "meets per-class and held-out split thresholds for within-task probe training",
+      "status": "trainable",
+      "task": "claims__logical_gemini_600_full",
+      "token_rows": 12011,
+      "unsupported_labels": []
+    },
+    {
+      "class_balance_ratio": 1.0,
+      "estimated_split": {
+        "test_examples": 1000,
+        "test_label_counts": {
+          "deceptive": 500,
+          "honest": 500
+        },
+        "train_examples": 3000,
+        "train_label_counts": {
+          "deceptive": 1500,
+          "honest": 1500
+        }
+      },
+      "examples": 4000,
+      "label_counts": {
+        "deceptive": 2000,
+        "honest": 2000
+      },
+      "max_class_examples": 2000,
+      "min_class_examples": 2000,
+      "reason": "meets per-class and held-out split thresholds for within-task probe training",
+      "status": "trainable",
+      "task": "ethics__commonsense",
+      "token_rows": 10000,
+      "unsupported_labels": []
+    },
+    {
+      "class_balance_ratio": 1.0,
+      "estimated_split": {
+        "test_examples": 1738,
+        "test_label_counts": {
+          "deceptive": 869,
+          "honest": 869
+        },
+        "train_examples": 5214,
+        "train_label_counts": {
+          "deceptive": 2607,
+          "honest": 2607
+        }
+      },
+      "examples": 6952,
+      "label_counts": {
+        "deceptive": 3476,
+        "honest": 3476
+      },
+      "max_class_examples": 3476,
+      "min_class_examples": 3476,
+      "reason": "meets per-class and held-out split thresholds for within-task probe training",
+      "status": "trainable",
+      "task": "geometry_of_truth__best",
+      "token_rows": 6952,
+      "unsupported_labels": []
+    },
+    {
+      "class_balance_ratio": 0.9995025906735752,
+      "estimated_split": {
+        "test_examples": 12060,
+        "test_label_counts": {
+          "deceptive": 6028,
+          "honest": 6032
+        },
+        "train_examples": 36178,
+        "train_label_counts": {
+          "deceptive": 18085,
+          "honest": 18093
+        }
+      },
+      "examples": 48238,
+      "label_counts": {
+        "deceptive": 24113,
+        "honest": 24125
+      },
+      "max_class_examples": 24125,
+      "min_class_examples": 24113,
+      "reason": "meets per-class and held-out split thresholds for within-task probe training",
+      "status": "trainable",
+      "task": "geometry_of_truth__mixed",
+      "token_rows": 48238,
+      "unsupported_labels": []
+    },
+    {
+      "class_balance_ratio": 0.09345794392523364,
+      "estimated_split": {
+        "test_examples": 30,
+        "test_label_counts": {
+          "deceptive": 3,
+          "honest": 27
+        },
+        "train_examples": 87,
+        "train_label_counts": {
+          "deceptive": 7,
+          "honest": 80
+        }
+      },
+      "examples": 117,
+      "label_counts": {
+        "deceptive": 10,
+        "honest": 107
+      },
+      "max_class_examples": 107,
+      "min_class_examples": 10,
+      "reason": "has both labels but only 10 examples in the smaller class; training sources need at least 20 per class",
+      "status": "eval_only",
+      "task": "insider_trading__onpolicy",
+      "token_rows": 9712,
+      "unsupported_labels": []
+    },
+    {
+      "class_balance_ratio": 1.0,
+      "estimated_split": null,
+      "examples": 6,
+      "label_counts": {
+        "deceptive": 3,
+        "honest": 3
+      },
+      "max_class_examples": 3,
+      "min_class_examples": 3,
+      "reason": "only 3 examples in the smaller class; minimum for a stable target/test set is 5",
+      "status": "blocked",
+      "task": "insider_trading__upscale",
+      "token_rows": 489,
+      "unsupported_labels": []
+    },
+    {
+      "class_balance_ratio": 0.42857142857142855,
+      "estimated_split": {
+        "test_examples": 23,
+        "test_label_counts": {
+          "deceptive": 16,
+          "honest": 7
+        },
+        "train_examples": 67,
+        "train_label_counts": {
+          "deceptive": 47,
+          "honest": 20
+        }
+      },
+      "examples": 90,
+      "label_counts": {
+        "deceptive": 63,
+        "honest": 27
+      },
+      "max_class_examples": 63,
+      "min_class_examples": 27,
+      "reason": "meets per-class and held-out split thresholds for within-task probe training",
+      "status": "trainable",
+      "task": "insider_trading_doubledown__onpolicy",
+      "token_rows": 10230,
+      "unsupported_labels": []
+    },
+    {
+      "class_balance_ratio": 1.0,
+      "estimated_split": {
+        "test_examples": 252,
+        "test_label_counts": {
+          "deceptive": 126,
+          "honest": 126
+        },
+        "train_examples": 756,
+        "train_label_counts": {
+          "deceptive": 378,
+          "honest": 378
+        }
+      },
+      "examples": 1008,
+      "label_counts": {
+        "deceptive": 504,
+        "honest": 504
+      },
+      "max_class_examples": 504,
+      "min_class_examples": 504,
+      "reason": "meets per-class and held-out split thresholds for within-task probe training",
+      "status": "trainable",
+      "task": "internal_state__animals",
+      "token_rows": 11875,
+      "unsupported_labels": []
+    },
+    {
+      "class_balance_ratio": 1.0,
+      "estimated_split": {
+        "test_examples": 365,
+        "test_label_counts": {
+          "deceptive": 182,
+          "honest": 183
+        },
+        "train_examples": 1093,
+        "train_label_counts": {
+          "deceptive": 547,
+          "honest": 546
+        }
+      },
+      "examples": 1458,
+      "label_counts": {
+        "deceptive": 729,
+        "honest": 729
+      },
+      "max_class_examples": 729,
+      "min_class_examples": 729,
+      "reason": "meets per-class and held-out split thresholds for within-task probe training",
+      "status": "trainable",
+      "task": "internal_state__cities",
+      "token_rows": 13954,
+      "unsupported_labels": []
+    },
+    {
+      "class_balance_ratio": 1.0,
+      "estimated_split": {
+        "test_examples": 300,
+        "test_label_counts": {
+          "deceptive": 150,
+          "honest": 150
+        },
+        "train_examples": 900,
+        "train_label_counts": {
+          "deceptive": 450,
+          "honest": 450
+        }
+      },
+      "examples": 1200,
+      "label_counts": {
+        "deceptive": 600,
+        "honest": 600
+      },
+      "max_class_examples": 600,
+      "min_class_examples": 600,
+      "reason": "meets per-class and held-out split thresholds for within-task probe training",
+      "status": "trainable",
+      "task": "internal_state__companies",
+      "token_rows": 16094,
+      "unsupported_labels": []
+    },
+    {
+      "class_balance_ratio": 1.0,
+      "estimated_split": {
+        "test_examples": 233,
+        "test_label_counts": {
+          "deceptive": 116,
+          "honest": 117
+        },
+        "train_examples": 697,
+        "train_label_counts": {
+          "deceptive": 349,
+          "honest": 348
+        }
+      },
+      "examples": 930,
+      "label_counts": {
+        "deceptive": 465,
+        "honest": 465
+      },
+      "max_class_examples": 465,
+      "min_class_examples": 465,
+      "reason": "meets per-class and held-out split thresholds for within-task probe training",
+      "status": "trainable",
+      "task": "internal_state__elements",
+      "token_rows": 10461,
+      "unsupported_labels": []
+    },
+    {
+      "class_balance_ratio": 0.996742671009772,
+      "estimated_split": {
+        "test_examples": 154,
+        "test_label_counts": {
+          "deceptive": 77,
+          "honest": 77
+        },
+        "train_examples": 459,
+        "train_label_counts": {
+          "deceptive": 230,
+          "honest": 229
+        }
+      },
+      "examples": 613,
+      "label_counts": {
+        "deceptive": 307,
+        "honest": 306
+      },
+      "max_class_examples": 307,
+      "min_class_examples": 306,
+      "reason": "meets per-class and held-out split thresholds for within-task probe training",
+      "status": "trainable",
+      "task": "internal_state__facts",
+      "token_rows": 7186,
+      "unsupported_labels": []
+    },
+    {
+      "class_balance_ratio": 0.8879310344827587,
+      "estimated_split": {
+        "test_examples": 219,
+        "test_label_counts": {
+          "deceptive": 103,
+          "honest": 116
+        },
+        "train_examples": 657,
+        "train_label_counts": {
+          "deceptive": 309,
+          "honest": 348
+        }
+      },
+      "examples": 876,
+      "label_counts": {
+        "deceptive": 412,
+        "honest": 464
+      },
+      "max_class_examples": 464,
+      "min_class_examples": 412,
+      "reason": "meets per-class and held-out split thresholds for within-task probe training",
+      "status": "trainable",
+      "task": "internal_state__inventions",
+      "token_rows": 8585,
+      "unsupported_labels": []
+    },
+    {
+      "class_balance_ratio": 1.0,
+      "estimated_split": {
+        "test_examples": 153,
+        "test_label_counts": {
+          "deceptive": 76,
+          "honest": 77
+        },
+        "train_examples": 459,
+        "train_label_counts": {
+          "deceptive": 230,
+          "honest": 229
+        }
+      },
+      "examples": 612,
+      "label_counts": {
+        "deceptive": 306,
+        "honest": 306
+      },
+      "max_class_examples": 306,
+      "min_class_examples": 306,
+      "reason": "meets per-class and held-out split thresholds for within-task probe training",
+      "status": "trainable",
+      "task": "repe_honesty__IF_dishonest",
+      "token_rows": 7283,
+      "unsupported_labels": []
+    },
+    {
+      "class_balance_ratio": 0.47533632286995514,
+      "estimated_split": {
+        "test_examples": 83,
+        "test_label_counts": {
+          "deceptive": 56,
+          "honest": 27
+        },
+        "train_examples": 246,
+        "train_label_counts": {
+          "deceptive": 167,
+          "honest": 79
+        }
+      },
+      "examples": 329,
+      "label_counts": {
+        "deceptive": 223,
+        "honest": 106
+      },
+      "max_class_examples": 223,
+      "min_class_examples": 106,
+      "reason": "meets per-class and held-out split thresholds for within-task probe training",
+      "status": "trainable",
+      "task": "roleplaying__plain",
+      "token_rows": 11576,
+      "unsupported_labels": []
+    },
+    {
+      "class_balance_ratio": 0.7534246575342466,
+      "estimated_split": {
+        "test_examples": 32,
+        "test_label_counts": {
+          "deceptive": 14,
+          "honest": 18
+        },
+        "train_examples": 96,
+        "train_label_counts": {
+          "deceptive": 41,
+          "honest": 55
+        }
+      },
+      "examples": 128,
+      "label_counts": {
+        "deceptive": 55,
+        "honest": 73
+      },
+      "max_class_examples": 73,
+      "min_class_examples": 55,
+      "reason": "meets per-class and held-out split thresholds for within-task probe training",
+      "status": "trainable",
+      "task": "sandbagging_v2__wmdp_mmlu",
+      "token_rows": 38799,
+      "unsupported_labels": []
+    },
+    {
+      "class_balance_ratio": 1.0,
+      "estimated_split": {
+        "test_examples": 1250,
+        "test_label_counts": {
+          "deceptive": 625,
+          "honest": 625
+        },
+        "train_examples": 3750,
+        "train_label_counts": {
+          "deceptive": 1875,
+          "honest": 1875
+        }
+      },
+      "examples": 5000,
+      "label_counts": {
+        "deceptive": 2500,
+        "honest": 2500
+      },
+      "max_class_examples": 2500,
+      "min_class_examples": 2500,
+      "reason": "meets per-class and held-out split thresholds for within-task probe training",
+      "status": "trainable",
+      "task": "sycophancy__mmlu_stem_same_conf_all",
+      "token_rows": 5000,
+      "unsupported_labels": []
+    }
+  ]
+}

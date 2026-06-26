@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import math
+import shlex
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -16,7 +17,12 @@ from sklearn.model_selection import train_test_split
 HONEST_LABEL = 0
 DECEPTIVE_LABEL = 1
 PROBE_RESULT_FORMAT = "qwen_answer_token_probe_results_v2"
+PROBE_PREFLIGHT_FORMAT = "qwen_answer_token_probe_preflight_v1"
 DIRECTION_SIGN_CONVENTION = "sklearn_logistic_coef_positive_points_honest_to_deceptive"
+PROBE_PREFLIGHT_SPARSE_LAYERS = (3, 7, 11, 15, 19, 23, 27, 31, 35)
+TRAINABLE_TASK_STATUS = "trainable"
+EVAL_ONLY_TASK_STATUS = "eval_only"
+BLOCKED_TASK_STATUS = "blocked"
 
 
 @dataclass(frozen=True)
@@ -28,6 +34,25 @@ class ProbeTrainingSummary:
     within_task_results: int
     cross_task_results: int
     direction_results: int
+
+
+@dataclass(frozen=True)
+class ProbePreflightSummary:
+    output_path: Path | None
+    input_path: Path
+    report: dict[str, Any]
+
+    @property
+    def trainable_tasks(self) -> tuple[str, ...]:
+        return tuple(self.report["recommendations"]["trainable_tasks"])
+
+    @property
+    def eval_only_tasks(self) -> tuple[str, ...]:
+        return tuple(self.report["recommendations"]["eval_only_tasks"])
+
+    @property
+    def blocked_tasks(self) -> tuple[str, ...]:
+        return tuple(self.report["recommendations"]["blocked_tasks"])
 
 
 @dataclass(frozen=True)
@@ -48,9 +73,186 @@ class _TaskMetadata:
 
 
 @dataclass(frozen=True)
+class _ProbePreflightTaskMetadata:
+    task: str
+    labels: np.ndarray
+    example_splits: np.ndarray
+
+    @property
+    def example_count(self) -> int:
+        return int(self.labels.shape[0])
+
+    @property
+    def token_rows(self) -> int:
+        return int(self.example_splits[-1])
+
+
+@dataclass(frozen=True)
 class _TaskSplit:
     train_indices: np.ndarray
     test_indices: np.ndarray
+
+
+def preflight_probe_training(
+    *,
+    input_path: Path,
+    output_path: Path | None = None,
+    tasks: Sequence[str] | None = None,
+    test_size: float = 0.25,
+    random_seed: int = 0,
+    min_train_examples_per_class: int = 20,
+    min_eval_examples_per_class: int = 5,
+    min_test_examples_per_class: int = 5,
+) -> ProbePreflightSummary:
+    """Write a metadata-only readiness report for later probe training.
+
+    This function is deliberately not a training entrypoint. It reads HDF5
+    metadata and activation dataset shapes/dtypes, but never materializes
+    activation tensors or fits a probe.
+    """
+
+    import h5py
+
+    if not 0.0 < test_size < 1.0:
+        raise ValueError("test_size must be between 0 and 1.")
+    if min_train_examples_per_class < 1:
+        raise ValueError("min_train_examples_per_class must be positive.")
+    if min_eval_examples_per_class < 1:
+        raise ValueError("min_eval_examples_per_class must be positive.")
+    if min_test_examples_per_class < 1:
+        raise ValueError("min_test_examples_per_class must be positive.")
+
+    input_path = input_path.resolve()
+    resolved_output_path = output_path.resolve() if output_path is not None else None
+
+    with h5py.File(input_path, "r") as handle:
+        _validate_activation_hdf5(handle, input_path=input_path)
+        selected_tasks = _select_tasks(handle, tasks)
+        common_layers = _common_layers_for_tasks(handle, selected_tasks)
+        recommended_layers = _recommend_sparse_probe_layers(common_layers)
+        task_metadata = {
+            task: _read_preflight_task_metadata(handle, task)
+            for task in selected_tasks
+        }
+        task_reports = [
+            _probe_preflight_task_report(
+                metadata,
+                test_size=test_size,
+                random_seed=random_seed,
+                min_train_examples_per_class=min_train_examples_per_class,
+                min_eval_examples_per_class=min_eval_examples_per_class,
+                min_test_examples_per_class=min_test_examples_per_class,
+            )
+            for metadata in task_metadata.values()
+        ]
+        activation_shape = _activation_shape_summary(
+            handle,
+            tasks=selected_tasks,
+            layers=common_layers,
+        )
+
+    trainable_tasks = tuple(report["task"] for report in task_reports if report["status"] == TRAINABLE_TASK_STATUS)
+    eval_only_tasks = tuple(report["task"] for report in task_reports if report["status"] == EVAL_ONLY_TASK_STATUS)
+    blocked_tasks = tuple(report["task"] for report in task_reports if report["status"] == BLOCKED_TASK_STATUS)
+    total_examples = sum(int(report["examples"]) for report in task_reports)
+    total_token_rows = sum(int(report["token_rows"]) for report in task_reports)
+    selected_layers_arg = ",".join(str(layer) for layer in recommended_layers)
+
+    output = {
+        "format": PROBE_PREFLIGHT_FORMAT,
+        "created_at": datetime.now(UTC).isoformat(),
+        "phase": "preflight_only_no_training",
+        "input_path": str(input_path),
+        "artifact": {
+            "path": str(input_path),
+            "size_bytes": input_path.stat().st_size,
+            "size_gib": _bytes_to_gib(input_path.stat().st_size),
+        },
+        "activation_store": {
+            "tasks": len(selected_tasks),
+            "layers": len(common_layers),
+            "layer_indices": list(common_layers),
+            "hidden_dim": activation_shape["hidden_dim"],
+            "dtype": activation_shape["dtype"],
+            "total_examples": total_examples,
+            "total_token_rows": total_token_rows,
+        },
+        "policy": {
+            "split_unit": "example",
+            "split_policy": "per-task stratified held-out split",
+            "test_size": test_size,
+            "random_seed": random_seed,
+            "status_policy": {
+                TRAINABLE_TASK_STATUS: (
+                    "Both labels are present, each class meets the training threshold, "
+                    "and the planned held-out split keeps enough examples per class."
+                ),
+                EVAL_ONLY_TASK_STATUS: (
+                    "Both labels are present and the task is usable as a target/test set, "
+                    "but it is not large enough to be a training source."
+                ),
+                BLOCKED_TASK_STATUS: (
+                    "The task is too small, missing a class, or otherwise scientifically misleading "
+                    "for the next probe phase."
+                ),
+            },
+            "thresholds": {
+                "min_train_examples_per_class": min_train_examples_per_class,
+                "min_eval_examples_per_class": min_eval_examples_per_class,
+                "min_test_examples_per_class": min_test_examples_per_class,
+            },
+            "metrics": {
+                "primary": ["balanced_accuracy", "roc_auc"],
+                "secondary": ["accuracy"],
+                "reason": "Several tasks are imbalanced, so raw accuracy is not enough.",
+            },
+            "layer_policy": {
+                "initial_pass": "sparse decoder-layer pilot",
+                "selected_layers": list(recommended_layers),
+                "selected_layers_arg": selected_layers_arg,
+                "all_layers_available": list(common_layers),
+            },
+        },
+        "recommendations": {
+            "trainable_tasks": list(trainable_tasks),
+            "eval_only_tasks": list(eval_only_tasks),
+            "blocked_tasks": list(blocked_tasks),
+            "selected_layers": list(recommended_layers),
+            "selected_layers_arg": selected_layers_arg,
+            "future_train_command_not_executed": _future_train_probe_command(
+                input_path=input_path,
+                trainable_tasks=trainable_tasks,
+                layers_arg=selected_layers_arg,
+                test_size=test_size,
+                random_seed=random_seed,
+            ),
+            "caveats": [
+                "This report is metadata-only and did not train probes.",
+                "Eval-only tasks should be used as target/test sets, not as training sources.",
+                "Blocked tasks should stay out of the next probe training run.",
+            ],
+        },
+        "io_memory_estimate": _probe_io_memory_estimate(
+            file_size_bytes=input_path.stat().st_size,
+            total_examples=total_examples,
+            total_token_rows=total_token_rows,
+            hidden_dim=int(activation_shape["hidden_dim"]),
+            dtype_itemsize=int(activation_shape["dtype_itemsize"]),
+            selected_layer_count=len(recommended_layers),
+            all_layer_count=len(common_layers),
+        ),
+        "tasks": task_reports,
+    }
+
+    if resolved_output_path is not None:
+        resolved_output_path.parent.mkdir(parents=True, exist_ok=True)
+        resolved_output_path.write_text(json.dumps(output, indent=2, sort_keys=True) + "\n")
+
+    return ProbePreflightSummary(
+        output_path=resolved_output_path,
+        input_path=input_path,
+        report=output,
+    )
 
 
 def train_probe_directions(
@@ -262,6 +464,26 @@ def _select_layers(handle: Any, tasks: Sequence[str], layer_spec: str) -> tuple[
     return tuple(sorted(selected))
 
 
+def _common_layers_for_tasks(handle: Any, tasks: Sequence[str]) -> tuple[int, ...]:
+    available_by_task: dict[str, set[int]] = {}
+    for task in tasks:
+        available_by_task[task] = {
+            int(group_name.removeprefix("layer_"))
+            for group_name in handle.keys()
+            if group_name.startswith("layer_") and task in handle[group_name]
+        }
+    common_layers = set.intersection(*(layers for layers in available_by_task.values()))
+    if not common_layers:
+        raise ValueError(f"No common layers found for tasks: {list(tasks)}")
+    return tuple(sorted(common_layers))
+
+
+def _recommend_sparse_probe_layers(available_layers: Sequence[int]) -> tuple[int, ...]:
+    available = tuple(sorted(int(layer) for layer in available_layers))
+    canonical = tuple(layer for layer in PROBE_PREFLIGHT_SPARSE_LAYERS if layer in available)
+    return canonical or available
+
+
 def _read_task_metadata(handle: Any, task: str) -> _TaskMetadata:
     metadata = handle[f"metadata/{task}"]
     labels = np.asarray(metadata["example_labels"][:], dtype=np.int64)
@@ -292,6 +514,247 @@ def _read_task_metadata(handle: Any, task: str) -> _TaskMetadata:
         example_source_indices=np.asarray(metadata["example_source_indices"][:], dtype=np.int64),
         example_output_indices=np.asarray(metadata["example_output_indices"][:], dtype=np.int64),
     )
+
+
+def _read_preflight_task_metadata(handle: Any, task: str) -> _ProbePreflightTaskMetadata:
+    metadata = handle[f"metadata/{task}"]
+    labels = np.asarray(metadata["example_labels"][:], dtype=np.int64)
+    example_splits = np.asarray(metadata["example_splits"][:], dtype=np.int64)
+    if example_splits.shape[0] != labels.shape[0] + 1:
+        raise ValueError(
+            f"metadata/{task}/example_splits length {example_splits.shape[0]} does not match "
+            f"example_labels length {labels.shape[0]}."
+        )
+    if example_splits.shape[0] == 0 or int(example_splits[0]) != 0:
+        raise ValueError(f"metadata/{task}/example_splits must start at 0.")
+    if np.any(np.diff(example_splits) <= 0):
+        raise ValueError(f"metadata/{task}/example_splits must be strictly increasing.")
+    if "example_token_counts" in metadata:
+        token_counts = np.asarray(metadata["example_token_counts"][:], dtype=np.int64)
+        split_counts = np.diff(example_splits)
+        if token_counts.shape != labels.shape or not np.array_equal(token_counts, split_counts):
+            raise ValueError(f"metadata/{task}/example_token_counts does not match example_splits.")
+    if labels.size == 0:
+        raise ValueError(f"Task {task!r} has no examples.")
+    return _ProbePreflightTaskMetadata(
+        task=task,
+        labels=labels,
+        example_splits=example_splits,
+    )
+
+
+def _probe_preflight_task_report(
+    metadata: _ProbePreflightTaskMetadata,
+    *,
+    test_size: float,
+    random_seed: int,
+    min_train_examples_per_class: int,
+    min_eval_examples_per_class: int,
+    min_test_examples_per_class: int,
+) -> dict[str, Any]:
+    label_counts = _label_counts(metadata.labels)
+    unsupported = sorted(set(int(label) for label in metadata.labels) - {HONEST_LABEL, DECEPTIVE_LABEL})
+    status, reason, estimated_split = _probe_preflight_status(
+        labels=metadata.labels,
+        task=metadata.task,
+        unsupported_labels=unsupported,
+        test_size=test_size,
+        random_seed=random_seed,
+        label_counts=label_counts,
+        min_train_examples_per_class=min_train_examples_per_class,
+        min_eval_examples_per_class=min_eval_examples_per_class,
+        min_test_examples_per_class=min_test_examples_per_class,
+    )
+    min_class_examples = min(label_counts["honest"], label_counts["deceptive"])
+    max_class_examples = max(label_counts["honest"], label_counts["deceptive"])
+    return {
+        "task": metadata.task,
+        "status": status,
+        "reason": reason,
+        "examples": metadata.example_count,
+        "token_rows": metadata.token_rows,
+        "label_counts": label_counts,
+        "unsupported_labels": unsupported,
+        "min_class_examples": int(min_class_examples),
+        "max_class_examples": int(max_class_examples),
+        "class_balance_ratio": float(min_class_examples / max_class_examples) if max_class_examples else 0.0,
+        "estimated_split": estimated_split,
+    }
+
+
+def _probe_preflight_status(
+    *,
+    labels: np.ndarray,
+    task: str,
+    unsupported_labels: Sequence[int],
+    test_size: float,
+    random_seed: int,
+    label_counts: dict[str, int],
+    min_train_examples_per_class: int,
+    min_eval_examples_per_class: int,
+    min_test_examples_per_class: int,
+) -> tuple[str, str, dict[str, Any] | None]:
+    if unsupported_labels:
+        return (
+            BLOCKED_TASK_STATUS,
+            f"contains non-binary labels {list(unsupported_labels)}; probe training expects honest/deceptive labels only",
+            None,
+        )
+    if label_counts["honest"] == 0 or label_counts["deceptive"] == 0:
+        return (
+            BLOCKED_TASK_STATUS,
+            "missing one of the two required classes; balanced probe metrics would be misleading",
+            None,
+        )
+
+    min_class_examples = min(label_counts["honest"], label_counts["deceptive"])
+    if min_class_examples < min_eval_examples_per_class:
+        return (
+            BLOCKED_TASK_STATUS,
+            (
+                f"only {min_class_examples} examples in the smaller class; "
+                f"minimum for a stable target/test set is {min_eval_examples_per_class}"
+            ),
+            None,
+        )
+    if min_class_examples < 2:
+        return (
+            BLOCKED_TASK_STATUS,
+            (
+                f"only {min_class_examples} examples in the smaller class; "
+                "at least 2 per class are required for a stratified held-out split"
+            ),
+            None,
+        )
+
+    split = _make_example_split(labels, test_size=test_size, random_seed=random_seed, task=task)
+    split_report = {
+        "train_examples": int(split.train_indices.shape[0]),
+        "test_examples": int(split.test_indices.shape[0]),
+        "train_label_counts": _label_counts(labels[split.train_indices]),
+        "test_label_counts": _label_counts(labels[split.test_indices]),
+    }
+    test_label_counts = split_report["test_label_counts"]
+    min_test_examples = min(test_label_counts["honest"], test_label_counts["deceptive"])
+    if min_class_examples < min_train_examples_per_class:
+        return (
+            EVAL_ONLY_TASK_STATUS,
+            (
+                f"has both labels but only {min_class_examples} examples in the smaller class; "
+                f"training sources need at least {min_train_examples_per_class} per class"
+            ),
+            split_report,
+        )
+    if min_test_examples < min_test_examples_per_class:
+        return (
+            EVAL_ONLY_TASK_STATUS,
+            (
+                f"planned held-out split leaves only {min_test_examples} examples in the smaller test class; "
+                f"minimum is {min_test_examples_per_class}"
+            ),
+            split_report,
+        )
+    return (
+        TRAINABLE_TASK_STATUS,
+        "meets per-class and held-out split thresholds for within-task probe training",
+        split_report,
+    )
+
+
+def _activation_shape_summary(
+    handle: Any,
+    *,
+    tasks: Sequence[str],
+    layers: Sequence[int],
+) -> dict[str, Any]:
+    hidden_dims: set[int] = set()
+    dtypes: set[str] = set()
+    dtype_itemsizes: set[int] = set()
+    for layer in layers:
+        for task in tasks:
+            dataset = handle[f"layer_{layer}/{task}"]
+            if len(dataset.shape) != 2:
+                raise ValueError(f"layer_{layer}/{task} must be a 2D activation dataset.")
+            hidden_dims.add(int(dataset.shape[1]))
+            dtype = np.dtype(dataset.dtype)
+            dtypes.add(str(dtype))
+            dtype_itemsizes.add(int(dtype.itemsize))
+    if len(hidden_dims) != 1:
+        raise ValueError(f"Hidden dim is inconsistent across selected layers/tasks: {sorted(hidden_dims)}")
+    if len(dtypes) != 1 or len(dtype_itemsizes) != 1:
+        raise ValueError(f"Activation dtype is inconsistent across selected layers/tasks: {sorted(dtypes)}")
+    return {
+        "hidden_dim": next(iter(hidden_dims)),
+        "dtype": next(iter(dtypes)),
+        "dtype_itemsize": next(iter(dtype_itemsizes)),
+    }
+
+
+def _probe_io_memory_estimate(
+    *,
+    file_size_bytes: int,
+    total_examples: int,
+    total_token_rows: int,
+    hidden_dim: int,
+    dtype_itemsize: int,
+    selected_layer_count: int,
+    all_layer_count: int,
+) -> dict[str, Any]:
+    raw_one_layer = total_token_rows * hidden_dim * dtype_itemsize
+    pooled_one_layer_float32 = total_examples * hidden_dim * np.dtype("float32").itemsize
+    selected_layers = raw_one_layer * selected_layer_count
+    all_layers = raw_one_layer * all_layer_count
+    return {
+        "hdf5_file_bytes": int(file_size_bytes),
+        "hdf5_file_gib": _bytes_to_gib(file_size_bytes),
+        "raw_activation_bytes_per_layer": int(raw_one_layer),
+        "raw_activation_gib_per_layer": _bytes_to_gib(raw_one_layer),
+        "raw_activation_bytes_selected_layers": int(selected_layers),
+        "raw_activation_gib_selected_layers": _bytes_to_gib(selected_layers),
+        "raw_activation_bytes_all_layers": int(all_layers),
+        "raw_activation_gib_all_layers": _bytes_to_gib(all_layers),
+        "pooled_feature_matrix_bytes_per_layer_float32": int(pooled_one_layer_float32),
+        "pooled_feature_matrix_gib_per_layer_float32": _bytes_to_gib(pooled_one_layer_float32),
+        "selected_layer_count": int(selected_layer_count),
+        "all_layer_count": int(all_layer_count),
+        "recommendation": "Pool and fit one layer at a time; do not materialize all layer tensors together.",
+    }
+
+
+def _future_train_probe_command(
+    *,
+    input_path: Path,
+    trainable_tasks: Sequence[str],
+    layers_arg: str,
+    test_size: float,
+    random_seed: int,
+) -> str | None:
+    if not trainable_tasks:
+        return None
+    parts = [
+        "PYTHONPATH=src",
+        ".venv/bin/python",
+        "-m",
+        "intelligent_liars",
+        "train-probes",
+        "--input",
+        str(input_path),
+        "--output",
+        "results/probes/preflight_sparse_probe_results.json",
+        "--layers",
+        layers_arg,
+        "--test-size",
+        str(test_size),
+        "--random-seed",
+        str(random_seed),
+    ]
+    for task in trainable_tasks:
+        parts.extend(["--task", task])
+    return " ".join(shlex.quote(part) for part in parts)
+
+
+def _bytes_to_gib(value: int) -> float:
+    return round(value / (1024**3), 4)
 
 
 def _make_example_split(

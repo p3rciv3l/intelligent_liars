@@ -45,7 +45,7 @@ from intelligent_liars.nnsight_backend import (
     NnsightActivationBackend,
     load_nnsight_bundle,
 )
-from intelligent_liars.probes import train_probe_directions
+from intelligent_liars.probes import preflight_probe_training, train_probe_directions
 from intelligent_liars.rollouts import (
     DEFAULT_INSIDER_GENERATION_SETTINGS,
     DEFAULT_ROLLOUT_PROMPT_SET,
@@ -1584,6 +1584,75 @@ def merge_activation_shards(
             f"shards={len(summary.shard_paths)} "
             f"path={summary.output_path}"
         )
+
+
+@app.command("preflight-probes")
+def preflight_probes(
+    input_path: Path = typer.Option(
+        ...,
+        "--input",
+        "-i",
+        help="Activation HDF5 path to inspect before probe training.",
+    ),
+    output_path: Path = typer.Option(
+        ...,
+        "--output",
+        "-o",
+        help="Output JSON path for the metadata-only probe preflight report.",
+    ),
+    tasks: list[str] | None = typer.Option(
+        None,
+        "--task",
+        "-t",
+        help="Activation task to inspect. Repeatable. Defaults to every task in the HDF5.",
+    ),
+    project_root: Path | None = typer.Option(
+        None,
+        help="Project root. Relative input/output paths resolve under this root.",
+    ),
+    test_size: float = typer.Option(
+        0.25,
+        min=0.01,
+        max=0.99,
+        help="Planned held-out fraction for each per-task stratified example split.",
+    ),
+    random_seed: int = typer.Option(0, help="Random seed for planned stratified example splits."),
+    min_train_examples_per_class: int = typer.Option(
+        20,
+        min=1,
+        help="Minimum smaller-class examples for a task to be a training source.",
+    ),
+    min_eval_examples_per_class: int = typer.Option(
+        5,
+        min=1,
+        help="Minimum smaller-class examples for a task to be an eval-only target.",
+    ),
+    min_test_examples_per_class: int = typer.Option(
+        5,
+        min=1,
+        help="Minimum smaller-class examples required in the planned held-out split.",
+    ),
+) -> None:
+    """Write a metadata-only readiness report for later probe training."""
+
+    project_root = _resolve_project_root(project_root)
+    summary = preflight_probe_training(
+        input_path=_project_path(project_root, input_path),
+        output_path=_project_path(project_root, output_path),
+        tasks=tasks,
+        test_size=test_size,
+        random_seed=random_seed,
+        min_train_examples_per_class=min_train_examples_per_class,
+        min_eval_examples_per_class=min_eval_examples_per_class,
+        min_test_examples_per_class=min_test_examples_per_class,
+    )
+    console.print(
+        "[green]Wrote probe preflight[/green] "
+        f"trainable={len(summary.trainable_tasks)} "
+        f"eval_only={len(summary.eval_only_tasks)} "
+        f"blocked={len(summary.blocked_tasks)} "
+        f"path={summary.output_path}"
+    )
 
 
 @app.command("train-probes")

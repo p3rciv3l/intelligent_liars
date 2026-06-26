@@ -34,7 +34,7 @@ from intelligent_liars.judging import (
     JudgePreflight,
 )
 from intelligent_liars.models import DEFAULT_MODEL_ID
-from intelligent_liars.probes import ProbeTrainingSummary
+from intelligent_liars.probes import ProbePreflightSummary, ProbeTrainingSummary
 from intelligent_liars.rollouts import (
     DEFAULT_ROLLOUT_PROMPT_SET,
     DEFAULT_INSIDER_GENERATION_SETTINGS,
@@ -1062,3 +1062,63 @@ def test_train_probes_cli_resolves_paths_and_options(tmp_path, monkeypatch):
     assert captured["regularization_c"] == 0.25
     assert "within_task=2" in result.output
     assert "directions=2" in result.output
+
+
+def test_preflight_probes_cli_resolves_paths_and_options(tmp_path, monkeypatch):
+    captured = {}
+    (tmp_path / "pyproject.toml").write_text("[project]\nname='example'\n")
+    (tmp_path / "src" / "intelligent_liars").mkdir(parents=True)
+
+    def fake_preflight_probe_training(**kwargs):
+        captured.update(kwargs)
+        return ProbePreflightSummary(
+            output_path=kwargs["output_path"],
+            input_path=kwargs["input_path"],
+            report={
+                "recommendations": {
+                    "trainable_tasks": ["roleplaying__plain"],
+                    "eval_only_tasks": ["sycophancy__mmlu_stem_same_conf_all"],
+                    "blocked_tasks": ["insider_trading__upscale"],
+                }
+            },
+        )
+
+    monkeypatch.setattr("intelligent_liars.cli.preflight_probe_training", fake_preflight_probe_training)
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "preflight-probes",
+            "--project-root",
+            str(tmp_path),
+            "--input",
+            "acts.h5",
+            "--output",
+            "docs/validation/probe_preflight.json",
+            "--task",
+            "roleplaying__plain",
+            "--test-size",
+            "0.4",
+            "--random-seed",
+            "7",
+            "--min-train-examples-per-class",
+            "12",
+            "--min-eval-examples-per-class",
+            "3",
+            "--min-test-examples-per-class",
+            "2",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert captured["input_path"] == tmp_path / "acts.h5"
+    assert captured["output_path"] == tmp_path / "docs" / "validation" / "probe_preflight.json"
+    assert captured["tasks"] == ["roleplaying__plain"]
+    assert captured["test_size"] == 0.4
+    assert captured["random_seed"] == 7
+    assert captured["min_train_examples_per_class"] == 12
+    assert captured["min_eval_examples_per_class"] == 3
+    assert captured["min_test_examples_per_class"] == 2
+    assert "trainable=1" in result.output
+    assert "eval_only=1" in result.output
+    assert "blocked=1" in result.output
