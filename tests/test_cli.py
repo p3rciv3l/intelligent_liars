@@ -34,7 +34,7 @@ from intelligent_liars.judging import (
     JudgePreflight,
 )
 from intelligent_liars.models import DEFAULT_MODEL_ID
-from intelligent_liars.probes import ProbePreflightSummary, ProbeTrainingSummary
+from intelligent_liars.probes import PooledFeatureCacheSummary, ProbePreflightSummary, ProbeTrainingSummary
 from intelligent_liars.rollouts import (
     DEFAULT_ROLLOUT_PROMPT_SET,
     DEFAULT_INSIDER_GENERATION_SETTINGS,
@@ -282,6 +282,106 @@ def test_merge_activation_shards_cli_resolves_paths(tmp_path, monkeypatch):
     assert seen["force_stale_merge_lock"] is False
     assert "examples=2" in result.output
     assert "token_rows=3" in result.output
+
+
+def test_cache_pooled_features_cli_resolves_paths(tmp_path, monkeypatch):
+    seen = {}
+
+    def fake_build(**kwargs):
+        seen.update(kwargs)
+        return PooledFeatureCacheSummary(
+            output_path=kwargs["output_path"],
+            input_path=kwargs["input_path"],
+            tasks=tuple(kwargs["tasks"]),
+            layers=(0, 1),
+            hidden_dim=3,
+            feature_datasets=4,
+        )
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("intelligent_liars.cli.build_pooled_feature_cache", fake_build)
+    (tmp_path / "pyproject.toml").write_text("[project]\nname='example'\n")
+    (tmp_path / "src" / "intelligent_liars").mkdir(parents=True)
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "cache-pooled-features",
+            "--input",
+            "tmp/raw.h5",
+            "--output",
+            "tmp/cache.h5",
+            "--layers",
+            "0,1",
+            "--task",
+            "roleplaying__plain",
+            "--task",
+            "sandbagging_v2__wmdp_mmlu",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert seen["input_path"] == tmp_path / "tmp/raw.h5"
+    assert seen["output_path"] == tmp_path / "tmp/cache.h5"
+    assert seen["layers"] == "0,1"
+    assert seen["tasks"] == ["roleplaying__plain", "sandbagging_v2__wmdp_mmlu"]
+    assert seen["compression"] == "lzf"
+    assert "Built pooled feature cache" in result.output
+
+
+def test_train_probes_from_cache_cli_resolves_paths(tmp_path, monkeypatch):
+    seen = {}
+
+    def fake_train(**kwargs):
+        seen.update(kwargs)
+        return ProbeTrainingSummary(
+            output_path=kwargs["output_path"],
+            input_path=kwargs["cache_path"],
+            tasks=tuple(kwargs["tasks"]),
+            layers=(0,),
+            within_task_results=1,
+            cross_task_results=0,
+            direction_results=1,
+        )
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("intelligent_liars.cli.train_probe_directions_from_cache", fake_train)
+    (tmp_path / "pyproject.toml").write_text("[project]\nname='example'\n")
+    (tmp_path / "src" / "intelligent_liars").mkdir(parents=True)
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "train-probes-from-cache",
+            "--cache",
+            "tmp/cache.h5",
+            "--source",
+            "tmp/raw.h5",
+            "--output",
+            "tmp/results.json",
+            "--layers",
+            "0",
+            "--task",
+            "roleplaying__plain",
+            "--test-size",
+            "0.5",
+            "--random-seed",
+            "3",
+            "--c",
+            "0.25",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert seen["cache_path"] == tmp_path / "tmp/cache.h5"
+    assert seen["source_path"] == tmp_path / "tmp/raw.h5"
+    assert seen["output_path"] == tmp_path / "tmp/results.json"
+    assert seen["layers"] == "0"
+    assert seen["tasks"] == ["roleplaying__plain"]
+    assert seen["test_size"] == 0.5
+    assert seen["random_seed"] == 3
+    assert seen["regularization_c"] == 0.25
+    assert "Trained probes from cache" in result.output
 
 
 def test_run_insider_trading_sweep_preflights_before_qwen_load(tmp_path, monkeypatch):

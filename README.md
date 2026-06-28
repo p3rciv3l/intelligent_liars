@@ -96,6 +96,41 @@ uv run --no-sync intelligent-liars train-probes \
 
 Do not train on `insider_trading__upscale` until the label/data issue is fixed.
 Treat `insider_trading__onpolicy` as eval-only unless the class balance changes.
+For the first no-insider sparse pass, also exclude
+`insider_trading_doubledown__onpolicy`.
+
+Optional pooled-feature cache for repeated probe sweeps:
+
+```bash
+PYTHONPATH=src uv run --no-sync intelligent-liars cache-pooled-features \
+  --input artifacts/activations/activation_all_text_20260624/extracted_feats_all_text_qwen3-vl-8b-thinking.h5 \
+  --output artifacts/probe_features/no_insider_sparse_pooled.h5 \
+  --layers 3,7,11,15,19,23,27,31,35 \
+  --task claims__definitional_gemini_600_full \
+  --task claims__evidential_gemini_600_full \
+  --task claims__fictional_gemini_600_full \
+  --task claims__logical_gemini_600_full \
+  --task ethics__commonsense \
+  --task geometry_of_truth__best \
+  --task geometry_of_truth__mixed \
+  --task internal_state__animals \
+  --task internal_state__cities \
+  --task internal_state__companies \
+  --task internal_state__elements \
+  --task internal_state__facts \
+  --task internal_state__inventions \
+  --task repe_honesty__IF_dishonest \
+  --task roleplaying__plain \
+  --task sandbagging_v2__wmdp_mmlu \
+  --task sycophancy__mmlu_stem_same_conf_all
+
+PYTHONPATH=src uv run --no-sync intelligent-liars train-probes-from-cache \
+  --cache artifacts/probe_features/no_insider_sparse_pooled.h5 \
+  --source artifacts/activations/activation_all_text_20260624/extracted_feats_all_text_qwen3-vl-8b-thinking.h5 \
+  --output artifacts/probes/no_insider_sparse_probe_results.json \
+  --layers 3,7,11,15,19,23,27,31,35 \
+  --general-domain-probe
+```
 
 ## Code Map
 

@@ -59,7 +59,12 @@ from intelligent_liars.nnsight_backend import (
     NnsightActivationBackend,
     load_nnsight_bundle,
 )
-from intelligent_liars.probes import preflight_probe_training, train_probe_directions
+from intelligent_liars.probes import (
+    build_pooled_feature_cache,
+    preflight_probe_training,
+    train_probe_directions,
+    train_probe_directions_from_cache,
+)
 from intelligent_liars.rollouts import (
     DEFAULT_INSIDER_GENERATION_SETTINGS,
     DEFAULT_ROLLOUT_GENERATION_SETTINGS,
@@ -92,7 +97,12 @@ from intelligent_liars.cli_insider import (
     grade_insider_trading,
     run_insider_trading_sweep,
 )
-from intelligent_liars.cli_probes import preflight_probes, train_probes
+from intelligent_liars.cli_probes import (
+    cache_pooled_features,
+    preflight_probes,
+    train_probes,
+    train_probes_from_cache,
+)
 from intelligent_liars.cli_rollouts import (
     generate_rollouts,
     grade_rollouts,
@@ -134,6 +144,8 @@ __all__ = [
     "_source_index_filter",
     "_validate_insider_prompt_glob",
     "app",
+    "build_pooled_feature_cache",
+    "cache_pooled_features",
     "check_env",
     "check_environment",
     "console",
@@ -174,7 +186,9 @@ __all__ = [
     "run_qwen_sweep",
     "seed_everything",
     "train_probe_directions",
+    "train_probe_directions_from_cache",
     "train_probes",
+    "train_probes_from_cache",
     "typer",
     "validate_insider_trading_generation_resume",
 ]

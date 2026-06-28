@@ -18,6 +18,7 @@ HONEST_LABEL = 0
 DECEPTIVE_LABEL = 1
 PROBE_RESULT_FORMAT = "qwen_answer_token_probe_results_v2"
 PROBE_PREFLIGHT_FORMAT = "qwen_answer_token_probe_preflight_v1"
+POOLED_FEATURE_CACHE_FORMAT = "qwen_answer_token_pooled_features_v1"
 DIRECTION_SIGN_CONVENTION = "sklearn_logistic_coef_positive_points_honest_to_deceptive"
 PROBE_PREFLIGHT_SPARSE_LAYERS = (3, 7, 11, 15, 19, 23, 27, 31, 35)
 TRAINABLE_TASK_STATUS = "trainable"
@@ -36,6 +37,16 @@ class ProbeTrainingSummary:
     direction_results: int
     general_domain_results: int = 0
     general_domain_direction_results: int = 0
+
+
+@dataclass(frozen=True)
+class PooledFeatureCacheSummary:
+    output_path: Path
+    input_path: Path
+    tasks: tuple[str, ...]
+    layers: tuple[int, ...]
+    hidden_dim: int
+    feature_datasets: int
 
 
 @dataclass(frozen=True)
@@ -299,163 +310,334 @@ def train_probe_directions(
     output_path = output_path.resolve()
 
     with h5py.File(input_path, "r") as handle:
-        _validate_activation_hdf5(handle, input_path=input_path)
-        selected_tasks = _select_tasks(handle, tasks)
-        selected_layers = _select_layers(handle, selected_tasks, layers)
+        source = _RawFeatureSource(handle, input_path=input_path)
+        output, summary = _train_probe_directions_from_source(
+            source=source,
+            input_path=input_path,
+            output_path=output_path,
+            tasks=tasks,
+            layers=layers,
+            test_size=test_size,
+            random_seed=random_seed,
+            max_iter=max_iter,
+            regularization_c=regularization_c,
+            train_general_domain_probe=train_general_domain_probe,
+            general_task_class_cap=general_task_class_cap,
+            input_kind="activation_hdf5",
+        )
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(json.dumps(output, indent=2, sort_keys=True) + "\n")
+    return summary
+
+
+def train_probe_directions_from_cache(
+    *,
+    cache_path: Path,
+    output_path: Path,
+    tasks: Sequence[str] | None = None,
+    layers: str = "all",
+    source_path: Path | None = None,
+    test_size: float = 0.25,
+    random_seed: int = 0,
+    max_iter: int = 1000,
+    regularization_c: float = 1.0,
+    train_general_domain_probe: bool = False,
+    general_task_class_cap: int | None = 1000,
+) -> ProbeTrainingSummary:
+    """Train simple linear probes from a pooled-feature cache."""
+
+    import h5py
+
+    if not 0.0 < test_size < 1.0:
+        raise ValueError("test_size must be between 0 and 1.")
+    if regularization_c <= 0:
+        raise ValueError("regularization_c must be positive.")
+    if max_iter < 1:
+        raise ValueError("max_iter must be positive.")
+    if general_task_class_cap is not None and general_task_class_cap < 1:
+        raise ValueError("general_task_class_cap must be positive when provided.")
+
+    cache_path = cache_path.resolve()
+    output_path = output_path.resolve()
+    resolved_source_path = source_path.resolve() if source_path is not None else None
+
+    with h5py.File(cache_path, "r") as handle:
+        source = _CachedFeatureSource(
+            handle,
+            cache_path=cache_path,
+            expected_source_path=resolved_source_path,
+        )
+        output, summary = _train_probe_directions_from_source(
+            source=source,
+            input_path=cache_path,
+            output_path=output_path,
+            tasks=tasks,
+            layers=layers,
+            test_size=test_size,
+            random_seed=random_seed,
+            max_iter=max_iter,
+            regularization_c=regularization_c,
+            train_general_domain_probe=train_general_domain_probe,
+            general_task_class_cap=general_task_class_cap,
+            input_kind="pooled_feature_cache",
+        )
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(json.dumps(output, indent=2, sort_keys=True) + "\n")
+    return summary
+
+
+def build_pooled_feature_cache(
+    *,
+    input_path: Path,
+    output_path: Path,
+    tasks: Sequence[str] | None = None,
+    layers: str = "all",
+    dtype: str = "float32",
+    compression: str | None = "lzf",
+) -> PooledFeatureCacheSummary:
+    """Build an HDF5 cache of mean-pooled per-example feature matrices."""
+
+    import h5py
+
+    if np.dtype(dtype) != np.dtype("float32"):
+        raise ValueError("Pooled feature cache currently supports dtype='float32' only.")
+
+    input_path = input_path.resolve()
+    output_path = output_path.resolve()
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    with h5py.File(input_path, "r") as source_handle:
+        source = _RawFeatureSource(source_handle, input_path=input_path)
+        selected_tasks = source.select_tasks(tasks)
+        selected_layers = source.select_layers(selected_tasks, layers)
         task_metadata = {
-            task: _read_task_metadata(handle, task)
+            task: source.read_task_metadata(task)
             for task in selected_tasks
         }
-        task_splits = {
-            task: _make_example_split(
-                metadata.labels,
-                test_size=test_size,
-                random_seed=random_seed,
-                task=task,
-            )
-            for task, metadata in task_metadata.items()
-        }
-        task_summaries = {
-            task: _task_summary(metadata)
-            for task, metadata in task_metadata.items()
-        }
+        hidden_dim = _activation_shape_summary(
+            source_handle,
+            tasks=selected_tasks,
+            layers=selected_layers,
+        )["hidden_dim"]
+        source_stat = input_path.stat()
+        with h5py.File(output_path, "w") as cache_handle:
+            cache_handle.attrs["format"] = POOLED_FEATURE_CACHE_FORMAT
+            cache_handle.attrs["created_at"] = datetime.now(UTC).isoformat()
+            cache_handle.attrs["pooling"] = "mean_answer_tokens_per_example"
+            cache_handle.attrs["dtype"] = str(np.dtype(dtype))
+            cache_handle.attrs["hidden_dim"] = int(hidden_dim)
+            cache_handle.attrs["selected_layers"] = np.asarray(selected_layers, dtype=np.int64)
+            cache_handle.attrs["selected_tasks_json"] = json.dumps(list(selected_tasks), sort_keys=True)
+            cache_handle.attrs["label_convention"] = "HONEST=0, DECEPTIVE=1"
+            cache_handle.attrs["source_path"] = str(input_path)
+            cache_handle.attrs["source_size_bytes"] = int(source_stat.st_size)
+            cache_handle.attrs["source_mtime_ns"] = int(source_stat.st_mtime_ns)
+            cache_handle.attrs["source_format"] = str(source_handle.attrs.get("format", ""))
 
-        within_task_results: list[dict[str, Any]] = []
-        cross_task_results: list[dict[str, Any]] = []
-        direction_results: list[dict[str, Any]] = []
-        general_domain_results: list[dict[str, Any]] = []
-        general_domain_direction_results: list[dict[str, Any]] = []
-        for layer in selected_layers:
-            pooled_by_task = {
-                task: _mean_pool_layer(handle[f"layer_{layer}/{task}"], task_metadata[task].example_splits)
-                for task in selected_tasks
-            }
-            split_classifiers: dict[str, LogisticRegression] = {}
-            for task in selected_tasks:
-                metadata = task_metadata[task]
-                split = task_splits[task]
-                train_features = pooled_by_task[task][split.train_indices]
-                train_labels = metadata.labels[split.train_indices]
-                classifier = _fit_probe_classifier(
-                    train_features,
-                    train_labels,
-                    random_seed=random_seed,
-                    max_iter=max_iter,
-                    regularization_c=regularization_c,
-                )
-                split_classifiers[task] = classifier
+            metadata_group = cache_handle.require_group("metadata")
+            for task, metadata in task_metadata.items():
+                target = metadata_group.create_group(task)
+                target.create_dataset("example_labels", data=metadata.labels.astype(np.int8))
+                target.create_dataset("example_splits", data=metadata.example_splits.astype(np.int64))
+                target.create_dataset("example_token_counts", data=np.diff(metadata.example_splits).astype(np.int64))
+                target.create_dataset("example_source_indices", data=metadata.example_source_indices.astype(np.int64))
+                target.create_dataset("example_output_indices", data=metadata.example_output_indices.astype(np.int64))
+
+            for layer in selected_layers:
+                layer_group = cache_handle.require_group(f"layer_{layer}")
+                for task in selected_tasks:
+                    pooled = source.pooled_features(layer, task).astype(dtype, copy=False)
+                    layer_group.create_dataset(task, data=pooled, compression=compression)
+
+    return PooledFeatureCacheSummary(
+        output_path=output_path,
+        input_path=input_path,
+        tasks=selected_tasks,
+        layers=selected_layers,
+        hidden_dim=int(hidden_dim),
+        feature_datasets=len(selected_tasks) * len(selected_layers),
+    )
+
+
+def _train_probe_directions_from_source(
+    *,
+    source: "_FeatureSource",
+    input_path: Path,
+    output_path: Path,
+    tasks: Sequence[str] | None,
+    layers: str,
+    test_size: float,
+    random_seed: int,
+    max_iter: int,
+    regularization_c: float,
+    train_general_domain_probe: bool,
+    general_task_class_cap: int | None,
+    input_kind: str,
+) -> tuple[dict[str, Any], ProbeTrainingSummary]:
+    selected_tasks = source.select_tasks(tasks)
+    selected_layers = source.select_layers(selected_tasks, layers)
+    task_metadata = {
+        task: source.read_task_metadata(task)
+        for task in selected_tasks
+    }
+    task_splits = {
+        task: _make_example_split(
+            metadata.labels,
+            test_size=test_size,
+            random_seed=random_seed,
+            task=task,
+        )
+        for task, metadata in task_metadata.items()
+    }
+    task_summaries = {
+        task: _task_summary(metadata)
+        for task, metadata in task_metadata.items()
+    }
+
+    within_task_results: list[dict[str, Any]] = []
+    cross_task_results: list[dict[str, Any]] = []
+    direction_results: list[dict[str, Any]] = []
+    general_domain_results: list[dict[str, Any]] = []
+    general_domain_direction_results: list[dict[str, Any]] = []
+    for layer in selected_layers:
+        pooled_by_task = {
+            task: source.pooled_features(layer, task)
+            for task in selected_tasks
+        }
+        _validate_pooled_feature_shapes(
+            pooled_by_task=pooled_by_task,
+            task_metadata=task_metadata,
+            layer=layer,
+        )
+        split_classifiers: dict[str, LogisticRegression] = {}
+        for task in selected_tasks:
+            metadata = task_metadata[task]
+            split = task_splits[task]
+            train_features = pooled_by_task[task][split.train_indices]
+            train_labels = metadata.labels[split.train_indices]
+            classifier = _fit_probe_classifier(
+                train_features,
+                train_labels,
+                random_seed=random_seed,
+                max_iter=max_iter,
+                regularization_c=regularization_c,
+            )
+            split_classifiers[task] = classifier
+            result = _evaluate_fitted_probe(
+                classifier=classifier,
+                y_train=train_labels,
+                x_test=pooled_by_task[task][split.test_indices],
+                y_test=metadata.labels[split.test_indices],
+                layer=layer,
+                train_task=task,
+                test_task=task,
+                result_kind="within_task",
+            )
+            within_task_results.append(result)
+
+        for train_task in selected_tasks:
+            source_metadata = task_metadata[train_task]
+            source_split = task_splits[train_task]
+            source_train_labels = source_metadata.labels[source_split.train_indices]
+            classifier = split_classifiers[train_task]
+            for test_task in selected_tasks:
+                if test_task == train_task:
+                    continue
+                target_metadata = task_metadata[test_task]
                 result = _evaluate_fitted_probe(
                     classifier=classifier,
-                    y_train=train_labels,
-                    x_test=pooled_by_task[task][split.test_indices],
-                    y_test=metadata.labels[split.test_indices],
+                    y_train=source_train_labels,
+                    x_test=pooled_by_task[test_task],
+                    y_test=target_metadata.labels,
                     layer=layer,
-                    train_task=task,
-                    test_task=task,
-                    result_kind="within_task",
+                    train_task=train_task,
+                    test_task=test_task,
+                    result_kind="cross_task",
                 )
-                within_task_results.append(result)
+                cross_task_results.append(result)
 
-            for train_task in selected_tasks:
-                source_metadata = task_metadata[train_task]
-                source_split = task_splits[train_task]
-                source_train_labels = source_metadata.labels[source_split.train_indices]
-                classifier = split_classifiers[train_task]
-                for test_task in selected_tasks:
-                    if test_task == train_task:
-                        continue
-                    target_metadata = task_metadata[test_task]
-                    result = _evaluate_fitted_probe(
-                        classifier=classifier,
-                        y_train=source_train_labels,
-                        x_test=pooled_by_task[test_task],
-                        y_test=target_metadata.labels,
+        if train_general_domain_probe:
+            general_train_sample = _make_balanced_probe_sample(
+                pooled_by_task=pooled_by_task,
+                task_metadata=task_metadata,
+                indices_by_task={
+                    task: task_splits[task].train_indices
+                    for task in selected_tasks
+                },
+                tasks=selected_tasks,
+                task_class_cap=general_task_class_cap,
+                random_seed=random_seed + int(layer) * 1009,
+            )
+            general_classifier = _fit_probe_classifier(
+                general_train_sample.features,
+                general_train_sample.labels,
+                random_seed=random_seed,
+                max_iter=max_iter,
+                regularization_c=regularization_c,
+            )
+            for test_task in selected_tasks:
+                target_metadata = task_metadata[test_task]
+                target_split = task_splits[test_task]
+                general_domain_results.append(
+                    _evaluate_fitted_probe(
+                        classifier=general_classifier,
+                        y_train=general_train_sample.labels,
+                        x_test=pooled_by_task[test_task][target_split.test_indices],
+                        y_test=target_metadata.labels[target_split.test_indices],
                         layer=layer,
-                        train_task=train_task,
+                        train_task="general_domain",
                         test_task=test_task,
-                        result_kind="cross_task",
+                        result_kind="general_domain",
+                        train_task_label_counts=general_train_sample.task_label_counts,
                     )
-                    cross_task_results.append(result)
-
-            if train_general_domain_probe:
-                general_train_sample = _make_balanced_probe_sample(
-                    pooled_by_task=pooled_by_task,
-                    task_metadata=task_metadata,
-                    indices_by_task={
-                        task: task_splits[task].train_indices
-                        for task in selected_tasks
-                    },
-                    tasks=selected_tasks,
-                    task_class_cap=general_task_class_cap,
-                    random_seed=random_seed + int(layer) * 1009,
                 )
-                general_classifier = _fit_probe_classifier(
-                    general_train_sample.features,
-                    general_train_sample.labels,
+
+            general_final_sample = _make_balanced_probe_sample(
+                pooled_by_task=pooled_by_task,
+                task_metadata=task_metadata,
+                indices_by_task={
+                    task: np.arange(task_metadata[task].example_count, dtype=np.int64)
+                    for task in selected_tasks
+                },
+                tasks=selected_tasks,
+                task_class_cap=general_task_class_cap,
+                random_seed=random_seed + int(layer) * 1009 + 503,
+            )
+            general_domain_direction_results.append(
+                _fit_final_direction(
+                    x_train=general_final_sample.features,
+                    y_train=general_final_sample.labels,
+                    layer=layer,
+                    task="general_domain",
+                    trained_on="balanced_capped_all_selected_task_examples",
+                    random_seed=random_seed,
+                    max_iter=max_iter,
+                    regularization_c=regularization_c,
+                    train_task_label_counts=general_final_sample.task_label_counts,
+                )
+            )
+
+        for task in selected_tasks:
+            metadata = task_metadata[task]
+            direction_results.append(
+                _fit_final_direction(
+                    x_train=pooled_by_task[task],
+                    y_train=metadata.labels,
+                    layer=layer,
+                    task=task,
                     random_seed=random_seed,
                     max_iter=max_iter,
                     regularization_c=regularization_c,
                 )
-                for test_task in selected_tasks:
-                    target_metadata = task_metadata[test_task]
-                    target_split = task_splits[test_task]
-                    general_domain_results.append(
-                        _evaluate_fitted_probe(
-                            classifier=general_classifier,
-                            y_train=general_train_sample.labels,
-                            x_test=pooled_by_task[test_task][target_split.test_indices],
-                            y_test=target_metadata.labels[target_split.test_indices],
-                            layer=layer,
-                            train_task="general_domain",
-                            test_task=test_task,
-                            result_kind="general_domain",
-                            train_task_label_counts=general_train_sample.task_label_counts,
-                        )
-                    )
-
-                general_final_sample = _make_balanced_probe_sample(
-                    pooled_by_task=pooled_by_task,
-                    task_metadata=task_metadata,
-                    indices_by_task={
-                        task: np.arange(task_metadata[task].example_count, dtype=np.int64)
-                        for task in selected_tasks
-                    },
-                    tasks=selected_tasks,
-                    task_class_cap=general_task_class_cap,
-                    random_seed=random_seed + int(layer) * 1009 + 503,
-                )
-                general_domain_direction_results.append(
-                    _fit_final_direction(
-                        x_train=general_final_sample.features,
-                        y_train=general_final_sample.labels,
-                        layer=layer,
-                        task="general_domain",
-                        trained_on="balanced_capped_all_selected_task_examples",
-                        random_seed=random_seed,
-                        max_iter=max_iter,
-                        regularization_c=regularization_c,
-                        train_task_label_counts=general_final_sample.task_label_counts,
-                    )
-                )
-
-            for task in selected_tasks:
-                metadata = task_metadata[task]
-                direction_results.append(
-                    _fit_final_direction(
-                        x_train=pooled_by_task[task],
-                        y_train=metadata.labels,
-                        layer=layer,
-                        task=task,
-                        random_seed=random_seed,
-                        max_iter=max_iter,
-                        regularization_c=regularization_c,
-                    )
-                )
+            )
 
     output = {
         "format": PROBE_RESULT_FORMAT,
         "created_at": datetime.now(UTC).isoformat(),
         "input_path": str(input_path),
+        "input_kind": input_kind,
         "pooling": "mean_answer_tokens_per_example",
         "split_unit": "example",
         "label_convention": "HONEST=0, DECEPTIVE=1",
@@ -490,9 +672,7 @@ def train_probe_directions(
                 "sampling": "deterministic without replacement within each task/label bucket",
             },
         }
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    output_path.write_text(json.dumps(output, indent=2, sort_keys=True) + "\n")
-    return ProbeTrainingSummary(
+    summary = ProbeTrainingSummary(
         output_path=output_path,
         input_path=input_path,
         tasks=selected_tasks,
@@ -503,6 +683,148 @@ def train_probe_directions(
         general_domain_results=len(general_domain_results),
         general_domain_direction_results=len(general_domain_direction_results),
     )
+    return output, summary
+
+
+class _FeatureSource:
+    def select_tasks(self, tasks: Sequence[str] | None) -> tuple[str, ...]:
+        raise NotImplementedError
+
+    def select_layers(self, tasks: Sequence[str], layer_spec: str) -> tuple[int, ...]:
+        raise NotImplementedError
+
+    def read_task_metadata(self, task: str) -> _TaskMetadata:
+        raise NotImplementedError
+
+    def pooled_features(self, layer: int, task: str) -> np.ndarray:
+        raise NotImplementedError
+
+
+class _RawFeatureSource(_FeatureSource):
+    def __init__(self, handle: Any, *, input_path: Path) -> None:
+        _validate_activation_hdf5(handle, input_path=input_path)
+        self._handle = handle
+
+    def select_tasks(self, tasks: Sequence[str] | None) -> tuple[str, ...]:
+        return _select_tasks(self._handle, tasks)
+
+    def select_layers(self, tasks: Sequence[str], layer_spec: str) -> tuple[int, ...]:
+        return _select_layers(self._handle, tasks, layer_spec)
+
+    def read_task_metadata(self, task: str) -> _TaskMetadata:
+        return _read_task_metadata(self._handle, task)
+
+    def pooled_features(self, layer: int, task: str) -> np.ndarray:
+        metadata = self.read_task_metadata(task)
+        return _mean_pool_layer(
+            self._handle[f"layer_{layer}/{task}"],
+            metadata.example_splits,
+        )
+
+
+class _CachedFeatureSource(_FeatureSource):
+    def __init__(
+        self,
+        handle: Any,
+        *,
+        cache_path: Path,
+        expected_source_path: Path | None = None,
+    ) -> None:
+        _validate_pooled_feature_cache(
+            handle,
+            cache_path=cache_path,
+            expected_source_path=expected_source_path,
+        )
+        self._handle = handle
+
+    def select_tasks(self, tasks: Sequence[str] | None) -> tuple[str, ...]:
+        return _select_tasks(self._handle, tasks)
+
+    def select_layers(self, tasks: Sequence[str], layer_spec: str) -> tuple[int, ...]:
+        return _select_layers(self._handle, tasks, layer_spec)
+
+    def read_task_metadata(self, task: str) -> _TaskMetadata:
+        return _read_task_metadata(self._handle, task)
+
+    def pooled_features(self, layer: int, task: str) -> np.ndarray:
+        return np.asarray(self._handle[f"layer_{layer}/{task}"][:], dtype=np.float32)
+
+
+def _validate_pooled_feature_cache(
+    handle: Any,
+    *,
+    cache_path: Path,
+    expected_source_path: Path | None,
+) -> None:
+    if handle.attrs.get("format") != POOLED_FEATURE_CACHE_FORMAT:
+        raise ValueError(f"Unsupported pooled feature cache format in {cache_path}: {handle.attrs.get('format')!r}")
+    if handle.attrs.get("pooling") != "mean_answer_tokens_per_example":
+        raise ValueError(f"Unsupported pooled feature cache pooling in {cache_path}: {handle.attrs.get('pooling')!r}")
+    if "metadata" not in handle:
+        raise ValueError(f"Pooled feature cache is missing metadata group: {cache_path}")
+    if expected_source_path is not None:
+        cached_source = Path(str(handle.attrs.get("source_path", ""))).expanduser()
+        if cached_source != expected_source_path:
+            raise ValueError(
+                f"Pooled feature cache source mismatch: cache source is {cached_source}, "
+                f"expected {expected_source_path}."
+            )
+        if expected_source_path.exists():
+            stat = expected_source_path.stat()
+            cached_size = int(handle.attrs.get("source_size_bytes", -1))
+            cached_mtime_ns = int(handle.attrs.get("source_mtime_ns", -1))
+            if cached_size != int(stat.st_size) or cached_mtime_ns != int(stat.st_mtime_ns):
+                raise ValueError(
+                    "Pooled feature cache source identity mismatch: "
+                    f"cached size/mtime=({cached_size}, {cached_mtime_ns}), "
+                    f"current size/mtime=({stat.st_size}, {stat.st_mtime_ns})."
+                )
+
+
+def _feature_source_shape_summary(
+    source: _FeatureSource,
+    *,
+    tasks: Sequence[str],
+    layers: Sequence[int],
+) -> dict[str, Any]:
+    hidden_dims: set[int] = set()
+    dtypes: set[str] = set()
+    for layer in layers:
+        for task in tasks:
+            features = source.pooled_features(layer, task)
+            if features.ndim != 2:
+                raise ValueError(f"layer_{layer}/{task} must be a 2D feature dataset.")
+            hidden_dims.add(int(features.shape[1]))
+            dtypes.add(str(np.dtype(features.dtype)))
+    if len(hidden_dims) != 1:
+        raise ValueError(f"Hidden dim is inconsistent across selected layers/tasks: {sorted(hidden_dims)}")
+    if len(dtypes) != 1:
+        raise ValueError(f"Feature dtype is inconsistent across selected layers/tasks: {sorted(dtypes)}")
+    return {
+        "hidden_dim": next(iter(hidden_dims)),
+        "dtype": next(iter(dtypes)),
+    }
+
+
+def _validate_pooled_feature_shapes(
+    *,
+    pooled_by_task: dict[str, np.ndarray],
+    task_metadata: dict[str, _TaskMetadata],
+    layer: int,
+) -> None:
+    hidden_dims: set[int] = set()
+    for task, features in pooled_by_task.items():
+        if features.ndim != 2:
+            raise ValueError(f"layer_{layer}/{task} pooled features must be 2D.")
+        expected_rows = task_metadata[task].example_count
+        if int(features.shape[0]) != expected_rows:
+            raise ValueError(
+                f"layer_{layer}/{task} pooled feature row count {features.shape[0]} "
+                f"does not match metadata example count {expected_rows}."
+            )
+        hidden_dims.add(int(features.shape[1]))
+    if len(hidden_dims) != 1:
+        raise ValueError(f"Hidden dim mismatch for layer {layer}: {sorted(hidden_dims)}")
 
 
 def _validate_activation_hdf5(handle: Any, *, input_path: Path) -> None:

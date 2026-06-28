@@ -9,10 +9,13 @@ import pytest
 import intelligent_liars.probes as probes
 from intelligent_liars.probes import (
     DIRECTION_SIGN_CONVENTION,
+    POOLED_FEATURE_CACHE_FORMAT,
     PROBE_PREFLIGHT_FORMAT,
     PROBE_RESULT_FORMAT,
+    build_pooled_feature_cache,
     preflight_probe_training,
     train_probe_directions,
+    train_probe_directions_from_cache,
 )
 
 
@@ -218,6 +221,145 @@ def test_train_probe_directions_can_train_general_domain_probe(tmp_path):
         "roleplaying__plain": {"honest": 2, "deceptive": 2},
         "sandbagging_v2__wmdp_mmlu": {"honest": 2, "deceptive": 2},
     }
+
+
+def test_build_pooled_feature_cache_writes_schema_and_expected_features(tmp_path):
+    h5py = pytest.importorskip("h5py")
+    input_path = tmp_path / "activations.h5"
+    cache_path = tmp_path / "pooled-cache.h5"
+    _write_probe_fixture(input_path)
+
+    summary = build_pooled_feature_cache(
+        input_path=input_path,
+        output_path=cache_path,
+        tasks=["roleplaying__plain"],
+        layers="0,1",
+    )
+
+    assert summary.output_path == cache_path.resolve()
+    assert summary.input_path == input_path.resolve()
+    assert summary.tasks == ("roleplaying__plain",)
+    assert summary.layers == (0, 1)
+    assert summary.hidden_dim == 3
+    assert summary.feature_datasets == 2
+
+    with h5py.File(input_path, "r") as raw, h5py.File(cache_path, "r") as cache:
+        assert cache.attrs["format"] == POOLED_FEATURE_CACHE_FORMAT
+        assert cache.attrs["pooling"] == "mean_answer_tokens_per_example"
+        assert cache.attrs["source_path"] == str(input_path.resolve())
+        assert cache.attrs["source_format"] == "qwen_answer_token_activations_v2"
+        assert cache.attrs["hidden_dim"] == 3
+        assert list(cache.attrs["selected_layers"]) == [0, 1]
+        assert json.loads(cache.attrs["selected_tasks_json"]) == ["roleplaying__plain"]
+        assert cache["metadata/roleplaying__plain/example_labels"].shape == (8,)
+        assert cache["metadata/roleplaying__plain/example_splits"].shape == (9,)
+        expected = probes._mean_pool_layer(
+            raw["layer_0/roleplaying__plain"],
+            raw["metadata/roleplaying__plain/example_splits"][:],
+        )
+        np.testing.assert_allclose(cache["layer_0/roleplaying__plain"][:], expected)
+        assert cache["layer_0/roleplaying__plain"].dtype == np.float32
+
+
+def test_train_probe_directions_from_cache_matches_raw_fixture(tmp_path):
+    input_path = tmp_path / "activations.h5"
+    raw_output = tmp_path / "raw-results.json"
+    cache_path = tmp_path / "pooled-cache.h5"
+    cache_output = tmp_path / "cache-results.json"
+    _write_probe_fixture(input_path)
+
+    build_pooled_feature_cache(
+        input_path=input_path,
+        output_path=cache_path,
+        layers="0-1",
+    )
+    raw_summary = train_probe_directions(
+        input_path=input_path,
+        output_path=raw_output,
+        layers="0-1",
+        test_size=0.5,
+        random_seed=3,
+        train_general_domain_probe=True,
+        general_task_class_cap=2,
+    )
+    cache_summary = train_probe_directions_from_cache(
+        cache_path=cache_path,
+        output_path=cache_output,
+        source_path=input_path,
+        layers="0-1",
+        test_size=0.5,
+        random_seed=3,
+        train_general_domain_probe=True,
+        general_task_class_cap=2,
+    )
+
+    assert cache_summary.tasks == raw_summary.tasks
+    assert cache_summary.layers == raw_summary.layers
+    assert cache_summary.within_task_results == raw_summary.within_task_results
+    assert cache_summary.cross_task_results == raw_summary.cross_task_results
+    assert cache_summary.direction_results == raw_summary.direction_results
+    assert cache_summary.general_domain_results == raw_summary.general_domain_results
+
+    raw_payload = json.loads(raw_output.read_text())
+    cache_payload = json.loads(cache_output.read_text())
+    assert raw_payload["input_kind"] == "activation_hdf5"
+    assert cache_payload["input_kind"] == "pooled_feature_cache"
+    for payload in (raw_payload, cache_payload):
+        payload.pop("created_at")
+        payload.pop("input_path")
+        payload.pop("input_kind")
+    assert cache_payload == raw_payload
+
+
+def test_train_probe_directions_from_cache_fails_on_source_mismatch(tmp_path):
+    input_path = tmp_path / "activations.h5"
+    other_source = tmp_path / "other-activations.h5"
+    cache_path = tmp_path / "pooled-cache.h5"
+    output_path = tmp_path / "probe-results.json"
+    _write_probe_fixture(input_path)
+    _write_probe_fixture(other_source)
+
+    build_pooled_feature_cache(
+        input_path=input_path,
+        output_path=cache_path,
+        layers="0",
+    )
+
+    with pytest.raises(ValueError, match="source mismatch"):
+        train_probe_directions_from_cache(
+            cache_path=cache_path,
+            output_path=output_path,
+            source_path=other_source,
+            layers="0",
+        )
+
+
+def test_train_probe_directions_from_cache_fails_on_missing_layer_or_task(tmp_path):
+    input_path = tmp_path / "activations.h5"
+    cache_path = tmp_path / "pooled-cache.h5"
+    output_path = tmp_path / "probe-results.json"
+    _write_probe_fixture(input_path)
+    build_pooled_feature_cache(
+        input_path=input_path,
+        output_path=cache_path,
+        tasks=["roleplaying__plain"],
+        layers="0",
+    )
+
+    with pytest.raises(ValueError, match="missing requested task"):
+        train_probe_directions_from_cache(
+            cache_path=cache_path,
+            output_path=output_path,
+            tasks=["sandbagging_v2__wmdp_mmlu"],
+            layers="0",
+        )
+    with pytest.raises(ValueError, match="Requested layer"):
+        train_probe_directions_from_cache(
+            cache_path=cache_path,
+            output_path=output_path,
+            tasks=["roleplaying__plain"],
+            layers="1",
+        )
 
 
 def test_train_probe_directions_rejects_nonzero_example_splits(tmp_path):
