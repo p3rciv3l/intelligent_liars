@@ -91,7 +91,24 @@ uv run --no-sync intelligent-liars train-probes \
   --input artifacts/activations/activation_all_text_20260624/extracted_feats_all_text_qwen3-vl-8b-thinking.h5 \
   --output artifacts/probes/sparse_probe_results.json \
   --layers 3,7,11,15,19,23,27,31,35 \
-  --general-domain-probe
+  --general-domain-probe \
+  --task claims__definitional_gemini_600_full \
+  --task claims__evidential_gemini_600_full \
+  --task claims__fictional_gemini_600_full \
+  --task claims__logical_gemini_600_full \
+  --task ethics__commonsense \
+  --task geometry_of_truth__best \
+  --task geometry_of_truth__mixed \
+  --task internal_state__animals \
+  --task internal_state__cities \
+  --task internal_state__companies \
+  --task internal_state__elements \
+  --task internal_state__facts \
+  --task internal_state__inventions \
+  --task repe_honesty__IF_dishonest \
+  --task roleplaying__plain \
+  --task sandbagging_v2__wmdp_mmlu \
+  --task sycophancy__mmlu_stem_same_conf_all
 ```
 
 Do not train on `insider_trading__upscale` until the label/data issue is fixed.

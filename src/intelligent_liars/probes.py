@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import json
 import math
+import os
 import shlex
+import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -396,6 +398,7 @@ def build_pooled_feature_cache(
     layers: str = "all",
     dtype: str = "float32",
     compression: str | None = "lzf",
+    overwrite: bool = False,
 ) -> PooledFeatureCacheSummary:
     """Build an HDF5 cache of mean-pooled per-example feature matrices."""
 
@@ -407,49 +410,57 @@ def build_pooled_feature_cache(
     input_path = input_path.resolve()
     output_path = output_path.resolve()
     output_path.parent.mkdir(parents=True, exist_ok=True)
+    if output_path.exists() and not overwrite:
+        raise FileExistsError(f"Pooled feature cache already exists: {output_path}. Pass overwrite=True to replace it.")
+    temp_output_path = output_path.with_name(f".{output_path.name}.tmp-{uuid.uuid4().hex}")
 
-    with h5py.File(input_path, "r") as source_handle:
-        source = _RawFeatureSource(source_handle, input_path=input_path)
-        selected_tasks = source.select_tasks(tasks)
-        selected_layers = source.select_layers(selected_tasks, layers)
-        task_metadata = {
-            task: source.read_task_metadata(task)
-            for task in selected_tasks
-        }
-        hidden_dim = _activation_shape_summary(
-            source_handle,
-            tasks=selected_tasks,
-            layers=selected_layers,
-        )["hidden_dim"]
-        source_stat = input_path.stat()
-        with h5py.File(output_path, "w") as cache_handle:
-            cache_handle.attrs["format"] = POOLED_FEATURE_CACHE_FORMAT
-            cache_handle.attrs["created_at"] = datetime.now(UTC).isoformat()
-            cache_handle.attrs["pooling"] = "mean_answer_tokens_per_example"
-            cache_handle.attrs["dtype"] = str(np.dtype(dtype))
-            cache_handle.attrs["hidden_dim"] = int(hidden_dim)
-            cache_handle.attrs["selected_layers"] = np.asarray(selected_layers, dtype=np.int64)
-            cache_handle.attrs["selected_tasks_json"] = json.dumps(list(selected_tasks), sort_keys=True)
-            cache_handle.attrs["label_convention"] = "HONEST=0, DECEPTIVE=1"
-            cache_handle.attrs["source_path"] = str(input_path)
-            cache_handle.attrs["source_size_bytes"] = int(source_stat.st_size)
-            cache_handle.attrs["source_mtime_ns"] = int(source_stat.st_mtime_ns)
-            cache_handle.attrs["source_format"] = str(source_handle.attrs.get("format", ""))
+    try:
+        with h5py.File(input_path, "r") as source_handle:
+            source = _RawFeatureSource(source_handle, input_path=input_path)
+            selected_tasks = source.select_tasks(tasks)
+            selected_layers = source.select_layers(selected_tasks, layers)
+            task_metadata = {
+                task: source.read_task_metadata(task)
+                for task in selected_tasks
+            }
+            hidden_dim = _activation_shape_summary(
+                source_handle,
+                tasks=selected_tasks,
+                layers=selected_layers,
+            )["hidden_dim"]
+            source_stat = input_path.stat()
+            with h5py.File(temp_output_path, "w") as cache_handle:
+                cache_handle.attrs["format"] = POOLED_FEATURE_CACHE_FORMAT
+                cache_handle.attrs["created_at"] = datetime.now(UTC).isoformat()
+                cache_handle.attrs["pooling"] = "mean_answer_tokens_per_example"
+                cache_handle.attrs["dtype"] = str(np.dtype(dtype))
+                cache_handle.attrs["hidden_dim"] = int(hidden_dim)
+                cache_handle.attrs["selected_layers"] = np.asarray(selected_layers, dtype=np.int64)
+                cache_handle.attrs["selected_tasks_json"] = json.dumps(list(selected_tasks), sort_keys=True)
+                cache_handle.attrs["label_convention"] = "HONEST=0, DECEPTIVE=1"
+                cache_handle.attrs["source_path"] = str(input_path)
+                cache_handle.attrs["source_size_bytes"] = int(source_stat.st_size)
+                cache_handle.attrs["source_mtime_ns"] = int(source_stat.st_mtime_ns)
+                cache_handle.attrs["source_format"] = str(source_handle.attrs.get("format", ""))
 
-            metadata_group = cache_handle.require_group("metadata")
-            for task, metadata in task_metadata.items():
-                target = metadata_group.create_group(task)
-                target.create_dataset("example_labels", data=metadata.labels.astype(np.int8))
-                target.create_dataset("example_splits", data=metadata.example_splits.astype(np.int64))
-                target.create_dataset("example_token_counts", data=np.diff(metadata.example_splits).astype(np.int64))
-                target.create_dataset("example_source_indices", data=metadata.example_source_indices.astype(np.int64))
-                target.create_dataset("example_output_indices", data=metadata.example_output_indices.astype(np.int64))
+                metadata_group = cache_handle.require_group("metadata")
+                for task, metadata in task_metadata.items():
+                    target = metadata_group.create_group(task)
+                    target.create_dataset("example_labels", data=metadata.labels.astype(np.int8))
+                    target.create_dataset("example_splits", data=metadata.example_splits.astype(np.int64))
+                    target.create_dataset("example_token_counts", data=np.diff(metadata.example_splits).astype(np.int64))
+                    target.create_dataset("example_source_indices", data=metadata.example_source_indices.astype(np.int64))
+                    target.create_dataset("example_output_indices", data=metadata.example_output_indices.astype(np.int64))
 
-            for layer in selected_layers:
-                layer_group = cache_handle.require_group(f"layer_{layer}")
-                for task in selected_tasks:
-                    pooled = source.pooled_features(layer, task).astype(dtype, copy=False)
-                    layer_group.create_dataset(task, data=pooled, compression=compression)
+                for layer in selected_layers:
+                    layer_group = cache_handle.require_group(f"layer_{layer}")
+                    for task in selected_tasks:
+                        pooled = source.pooled_features(layer, task).astype(dtype, copy=False)
+                        layer_group.create_dataset(task, data=pooled, compression=compression)
+        os.replace(temp_output_path, output_path)
+    finally:
+        if temp_output_path.exists():
+            temp_output_path.unlink()
 
     return PooledFeatureCacheSummary(
         output_path=output_path,

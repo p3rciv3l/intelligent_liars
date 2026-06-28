@@ -211,6 +211,11 @@ def cache_pooled_features(
         "lzf",
         help="HDF5 compression for cached feature datasets. Use empty string to disable.",
     ),
+    overwrite: bool = typer.Option(
+        False,
+        "--overwrite",
+        help="Replace an existing pooled feature cache atomically.",
+    ),
 ) -> None:
     """Build an HDF5 cache of mean-pooled per-example features."""
 
@@ -221,6 +226,7 @@ def cache_pooled_features(
         tasks=tasks,
         layers=layers,
         compression=compression or None,
+        overwrite=overwrite,
     )
     console.print(
         "[green]Built pooled feature cache[/green] "

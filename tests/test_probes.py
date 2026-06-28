@@ -261,6 +261,45 @@ def test_build_pooled_feature_cache_writes_schema_and_expected_features(tmp_path
         assert cache["layer_0/roleplaying__plain"].dtype == np.float32
 
 
+def test_build_pooled_feature_cache_refuses_to_clobber_existing_output(tmp_path):
+    input_path = tmp_path / "activations.h5"
+    cache_path = tmp_path / "pooled-cache.h5"
+    _write_probe_fixture(input_path)
+    cache_path.write_text("existing cache placeholder")
+
+    with pytest.raises(FileExistsError, match="already exists"):
+        build_pooled_feature_cache(
+            input_path=input_path,
+            output_path=cache_path,
+            layers="0",
+        )
+
+    assert cache_path.read_text() == "existing cache placeholder"
+    assert not list(tmp_path.glob(".pooled-cache.h5.tmp-*"))
+
+
+def test_build_pooled_feature_cache_overwrites_existing_output_atomically(tmp_path):
+    h5py = pytest.importorskip("h5py")
+    input_path = tmp_path / "activations.h5"
+    cache_path = tmp_path / "pooled-cache.h5"
+    _write_probe_fixture(input_path)
+    cache_path.write_text("existing cache placeholder")
+
+    summary = build_pooled_feature_cache(
+        input_path=input_path,
+        output_path=cache_path,
+        tasks=["roleplaying__plain"],
+        layers="0",
+        overwrite=True,
+    )
+
+    assert summary.output_path == cache_path.resolve()
+    assert not list(tmp_path.glob(".pooled-cache.h5.tmp-*"))
+    with h5py.File(cache_path, "r") as cache:
+        assert cache.attrs["format"] == POOLED_FEATURE_CACHE_FORMAT
+        assert "layer_0/roleplaying__plain" in cache
+
+
 def test_train_probe_directions_from_cache_matches_raw_fixture(tmp_path):
     input_path = tmp_path / "activations.h5"
     raw_output = tmp_path / "raw-results.json"

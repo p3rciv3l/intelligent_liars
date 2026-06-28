@@ -317,6 +317,7 @@ def test_cache_pooled_features_cli_resolves_paths(tmp_path, monkeypatch):
             "roleplaying__plain",
             "--task",
             "sandbagging_v2__wmdp_mmlu",
+            "--overwrite",
         ],
     )
 
@@ -326,6 +327,7 @@ def test_cache_pooled_features_cli_resolves_paths(tmp_path, monkeypatch):
     assert seen["layers"] == "0,1"
     assert seen["tasks"] == ["roleplaying__plain", "sandbagging_v2__wmdp_mmlu"]
     assert seen["compression"] == "lzf"
+    assert seen["overwrite"] is True
     assert "Built pooled feature cache" in result.output
 
 
