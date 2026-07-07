@@ -1,0 +1,921 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Remote CPU Big Sweep Postmortem Lesson</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --paper: #fbfaf6;
+      --ink: #20252b;
+      --muted: #5d6673;
+      --line: #d6d1c4;
+      --panel: #ffffff;
+      --teal: #167a7f;
+      --teal-soft: #d9eeee;
+      --amber: #b86b00;
+      --amber-soft: #f7e3bf;
+      --coral: #be4b3f;
+      --coral-soft: #f6d8d4;
+      --green: #2f7d4f;
+      --green-soft: #dcebd8;
+      --violet: #6850a4;
+      --violet-soft: #e6e0f5;
+      --blue: #315f9e;
+      --blue-soft: #dce8f6;
+      --shadow: rgba(20, 25, 32, 0.08);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      background: var(--paper);
+      color: var(--ink);
+      font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      line-height: 1.55;
+      overflow-x: hidden;
+    }
+
+    header {
+      border-bottom: 1px solid var(--line);
+      background: #fffdf8;
+    }
+
+    .wrap {
+      width: min(1120px, calc(100% - 32px));
+      margin: 0 auto;
+    }
+
+    .hero {
+      padding: 42px 0 28px;
+    }
+
+    .eyebrow {
+      margin: 0 0 10px;
+      color: var(--teal);
+      font-size: 14px;
+      font-weight: 700;
+      text-transform: uppercase;
+    }
+
+    h1 {
+      margin: 0;
+      max-width: 920px;
+      font-size: 44px;
+      line-height: 1.08;
+      font-weight: 800;
+    }
+
+    .dek {
+      max-width: 860px;
+      margin: 18px 0 0;
+      color: var(--muted);
+      font-size: 18px;
+    }
+
+    main {
+      padding: 28px 0 56px;
+    }
+
+    section {
+      padding: 30px 0;
+      border-bottom: 1px solid var(--line);
+    }
+
+    h2 {
+      margin: 0 0 12px;
+      font-size: 28px;
+      line-height: 1.2;
+    }
+
+    h3 {
+      margin: 22px 0 8px;
+      font-size: 19px;
+      line-height: 1.25;
+    }
+
+    p {
+      margin: 0 0 14px;
+      overflow-wrap: anywhere;
+    }
+
+    code {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+      font-size: 0.92em;
+      background: #f1eee5;
+      padding: 0.1em 0.3em;
+      border-radius: 4px;
+      overflow-wrap: anywhere;
+      word-break: break-word;
+    }
+
+    pre {
+      margin: 16px 0;
+      padding: 16px;
+      overflow-x: auto;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #252a30;
+      color: #f7f2e9;
+      font-size: 13px;
+      line-height: 1.45;
+    }
+
+    pre code {
+      background: transparent;
+      color: inherit;
+      padding: 0;
+      border-radius: 0;
+      overflow-wrap: normal;
+      word-break: normal;
+      white-space: pre;
+    }
+
+    .lead-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 12px;
+      margin: 22px 0 0;
+    }
+
+    .metric {
+      min-height: 112px;
+      padding: 15px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel);
+      box-shadow: 0 10px 28px var(--shadow);
+    }
+
+    .metric b {
+      display: block;
+      margin-bottom: 6px;
+      font-size: 24px;
+      line-height: 1.1;
+    }
+
+    .metric span {
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .callout {
+      margin: 18px 0;
+      padding: 16px 18px;
+      border-left: 5px solid var(--teal);
+      background: var(--teal-soft);
+      border-radius: 0 8px 8px 0;
+    }
+
+    .grid-2 {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+      gap: 22px;
+      align-items: start;
+    }
+
+    .panel {
+      padding: 18px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel);
+    }
+
+    .panel h3:first-child {
+      margin-top: 0;
+    }
+
+    .steps {
+      counter-reset: steps;
+      display: grid;
+      gap: 10px;
+      margin: 18px 0 0;
+    }
+
+    .step {
+      position: relative;
+      min-height: 56px;
+      padding: 12px 14px 12px 54px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fff;
+    }
+
+    .step::before {
+      counter-increment: steps;
+      content: counter(steps);
+      position: absolute;
+      left: 14px;
+      top: 13px;
+      width: 28px;
+      height: 28px;
+      border-radius: 50%;
+      display: grid;
+      place-items: center;
+      background: var(--amber-soft);
+      color: #6a3a00;
+      font-weight: 800;
+    }
+
+    .diagram {
+      margin: 18px 0 8px;
+      padding: 14px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fff;
+      overflow-x: auto;
+    }
+
+    .diagram svg {
+      display: block;
+      width: 100%;
+      min-width: 820px;
+      height: auto;
+    }
+
+    .caption {
+      margin: 8px 2px 0;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .table-scroll {
+      overflow-x: auto;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fff;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      min-width: 720px;
+      font-size: 14px;
+    }
+
+    th,
+    td {
+      padding: 10px 12px;
+      border-bottom: 1px solid var(--line);
+      text-align: left;
+      vertical-align: top;
+    }
+
+    th {
+      background: #f5f1e7;
+      font-weight: 800;
+    }
+
+    tr:last-child td {
+      border-bottom: 0;
+    }
+
+    .tag {
+      display: inline-block;
+      padding: 2px 7px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: #fff;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+
+    .split-list {
+      columns: 2;
+      column-gap: 34px;
+      padding-left: 20px;
+    }
+
+    .split-list li {
+      break-inside: avoid;
+      margin: 0 0 8px;
+      overflow-wrap: anywhere;
+    }
+
+    footer {
+      padding: 24px 0 40px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .small {
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    @media (max-width: 760px) {
+      .wrap {
+        width: min(1120px, calc(100% - 22px));
+      }
+
+      .hero {
+        padding-top: 28px;
+      }
+
+      h1 {
+        font-size: 32px;
+      }
+
+      .dek {
+        font-size: 16px;
+      }
+
+      .lead-grid,
+      .grid-2 {
+        grid-template-columns: 1fr;
+      }
+
+      .split-list {
+        columns: 1;
+      }
+
+      .diagram {
+        padding: 10px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="wrap hero">
+      <p class="eyebrow">Intelligent Liars sweep postmortem lesson</p>
+      <h1>How the remote CPU big sweep actually worked</h1>
+      <p class="dek">A first-principles walkthrough of the 182-job probe sweep: why the dense cache mattered, how process-level parallelism filled a 48-logical-CPU host, where the run nearly went wrong, and what should change before the next sweep.</p>
+      <div class="lead-grid" aria-label="Run headline metrics">
+        <div class="metric"><b>182/182</b><span>Expected result JSON files completed and summarized.</span></div>
+        <div class="metric"><b>17h 41m</b><span>Canonical runner start to final result.</span></div>
+        <div class="metric"><b>48 CPUs</b><span>Remote AMD EPYC 7443P logical CPUs at peak.</span></div>
+        <div class="metric"><b>11.19 GB</b><span>Dense cache upload instead of a 62.39 GB raw HDF5 path.</span></div>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    <section>
+      <div class="wrap">
+        <h2>The short version</h2>
+        <p>The run was a grid search over probe-training jobs. Each job chose one transformer layer, one logistic-regression regularization value, and one task set. The grid was <code>13 layers x 7 C values x 2 task sets</code>, which produced <code>182</code> expected jobs.</p>
+        <p>The important engineering move was to avoid treating the remote machine as a feature-extraction box. The original raw HDF5 upload was <code>62,394,047,728</code> bytes. The successful path built a dense pooled-feature cache locally, verified it, uploaded <code>11,186,928,745</code> bytes, and then made every remote job read from that cache.</p>
+        <div class="callout">
+          <p><strong>Final answer:</strong> the ranked winner was <code>no_repe_layer21_c001</code>, a no-REPE task-set probe at layer 21 with <code>C=0.01</code>. It reached general balanced accuracy <code>0.9302</code>, general AUC <code>0.9752</code>, cross-task balanced accuracy <code>0.6903</code>, and within-task AUC <code>0.9814</code>.</p>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <div class="wrap">
+        <h2>First principles: what is a sweep?</h2>
+        <div class="grid-2">
+          <div>
+            <p>A sweep is not one big model fit. It is a pile of small, independent experiments. In this run, a single experiment meant: open the pooled feature cache, pick one layer, choose a task set, choose one value of <code>C</code>, train a logistic regression probe, evaluate it, and write one JSON file.</p>
+            <p>Because the jobs are independent, the natural speedup is not inside one job. The speedup comes from running many jobs at the same time. That only works if each job is constrained enough that the host does not run out of RAM or oversubscribe CPU threads.</p>
+          </div>
+          <div class="panel">
+            <h3>Toy scheduler</h3>
+            <p>Imagine 6 jobs and 4 cores. If each job uses 1 core, run 4 immediately. When one finishes, start the next. The total time is controlled by the longest lane plus the final tail, not by the sum of all job times.</p>
+            <pre><code>core 1: job A -> job E
+core 2: job B -> done
+core 3: job C -> job F
+core 4: job D -> done</code></pre>
+          </div>
+        </div>
+
+        <div class="diagram" aria-label="Toy queue diagram">
+          <svg viewBox="0 0 1180 430" role="img">
+            <defs>
+              <marker id="arrow-toy" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto">
+                <path d="M0,0 L10,5 L0,10 Z" fill="#5d6673"></path>
+              </marker>
+            </defs>
+            <rect x="20" y="20" width="1140" height="390" rx="14" fill="#fbfaf6" stroke="#d6d1c4"></rect>
+            <text x="46" y="60" font-size="24" font-weight="800" fill="#20252b">Toy model: independent jobs are packed onto limited cores</text>
+            <text x="46" y="90" font-size="15" fill="#5d6673">The scheduler only needs to keep workers fed without starting duplicates or exceeding memory.</text>
+
+            <g transform="translate(46 128)">
+              <text x="0" y="25" font-size="16" font-weight="800" fill="#20252b">Queue</text>
+              <rect x="0" y="45" width="66" height="48" rx="8" fill="#dce8f6" stroke="#315f9e"></rect>
+              <text x="22" y="75" font-size="18" font-weight="800" fill="#20252b">A</text>
+              <rect x="78" y="45" width="66" height="48" rx="8" fill="#dce8f6" stroke="#315f9e"></rect>
+              <text x="100" y="75" font-size="18" font-weight="800" fill="#20252b">B</text>
+              <rect x="156" y="45" width="66" height="48" rx="8" fill="#dce8f6" stroke="#315f9e"></rect>
+              <text x="178" y="75" font-size="18" font-weight="800" fill="#20252b">C</text>
+              <rect x="234" y="45" width="66" height="48" rx="8" fill="#dce8f6" stroke="#315f9e"></rect>
+              <text x="256" y="75" font-size="18" font-weight="800" fill="#20252b">D</text>
+              <rect x="312" y="45" width="66" height="48" rx="8" fill="#f7e3bf" stroke="#b86b00"></rect>
+              <text x="334" y="75" font-size="18" font-weight="800" fill="#20252b">E</text>
+              <rect x="390" y="45" width="66" height="48" rx="8" fill="#f7e3bf" stroke="#b86b00"></rect>
+              <text x="412" y="75" font-size="18" font-weight="800" fill="#20252b">F</text>
+              <line x1="480" y1="69" x2="585" y2="69" stroke="#5d6673" stroke-width="3" marker-end="url(#arrow-toy)"></line>
+            </g>
+
+            <g transform="translate(642 112)">
+              <text x="0" y="24" font-size="16" font-weight="800" fill="#20252b">Four workers</text>
+              <g transform="translate(0 44)">
+                <text x="0" y="24" font-size="14" font-weight="700" fill="#20252b">core 1</text>
+                <rect x="74" y="4" width="170" height="34" rx="7" fill="#dce8f6" stroke="#315f9e"></rect>
+                <text x="140" y="27" font-size="14" font-weight="800" fill="#20252b">A</text>
+                <rect x="252" y="4" width="120" height="34" rx="7" fill="#f7e3bf" stroke="#b86b00"></rect>
+                <text x="303" y="27" font-size="14" font-weight="800" fill="#20252b">E</text>
+              </g>
+              <g transform="translate(0 92)">
+                <text x="0" y="24" font-size="14" font-weight="700" fill="#20252b">core 2</text>
+                <rect x="74" y="4" width="130" height="34" rx="7" fill="#dce8f6" stroke="#315f9e"></rect>
+                <text x="130" y="27" font-size="14" font-weight="800" fill="#20252b">B</text>
+                <rect x="212" y="4" width="160" height="34" rx="7" fill="#eef0ed" stroke="#d6d1c4"></rect>
+                <text x="268" y="27" font-size="13" fill="#5d6673">idle tail</text>
+              </g>
+              <g transform="translate(0 140)">
+                <text x="0" y="24" font-size="14" font-weight="700" fill="#20252b">core 3</text>
+                <rect x="74" y="4" width="190" height="34" rx="7" fill="#dce8f6" stroke="#315f9e"></rect>
+                <text x="160" y="27" font-size="14" font-weight="800" fill="#20252b">C</text>
+                <rect x="272" y="4" width="100" height="34" rx="7" fill="#f7e3bf" stroke="#b86b00"></rect>
+                <text x="313" y="27" font-size="14" font-weight="800" fill="#20252b">F</text>
+              </g>
+              <g transform="translate(0 188)">
+                <text x="0" y="24" font-size="14" font-weight="700" fill="#20252b">core 4</text>
+                <rect x="74" y="4" width="210" height="34" rx="7" fill="#dce8f6" stroke="#315f9e"></rect>
+                <text x="170" y="27" font-size="14" font-weight="800" fill="#20252b">D</text>
+                <rect x="292" y="4" width="80" height="34" rx="7" fill="#eef0ed" stroke="#d6d1c4"></rect>
+              </g>
+            </g>
+          </svg>
+          <p class="caption">The real sweep used the same idea at larger scale: independent JSON-producing jobs, bounded parallelism, and a tail when only a few long jobs remained.</p>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <div class="wrap">
+        <h2>The actual run as a factory</h2>
+        <p>The successful route had four separable stages: build the right input locally, move the smallest sufficient artifact, run the remote queue, and summarize only after the final result contract was satisfied.</p>
+        <div class="diagram" aria-label="End-to-end run architecture">
+          <svg viewBox="0 0 1240 760" role="img">
+            <defs>
+              <marker id="arrow-main" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto">
+                <path d="M0,0 L12,6 L0,12 Z" fill="#5d6673"></path>
+              </marker>
+              <filter id="soft-shadow" x="-10%" y="-10%" width="120%" height="120%">
+                <feDropShadow dx="0" dy="5" stdDeviation="5" flood-color="#141920" flood-opacity="0.13"></feDropShadow>
+              </filter>
+            </defs>
+            <rect x="16" y="16" width="1208" height="728" rx="18" fill="#fbfaf6" stroke="#d6d1c4"></rect>
+            <text x="42" y="58" font-size="26" font-weight="800" fill="#20252b">Remote CPU sweep factory</text>
+            <text x="42" y="88" font-size="15" fill="#5d6673">The key was to make the remote host a cache-backed job executor, not a raw-data processing bottleneck.</text>
+
+            <g filter="url(#soft-shadow)">
+              <rect x="42" y="126" width="220" height="164" rx="12" fill="#dce8f6" stroke="#315f9e"></rect>
+              <text x="66" y="162" font-size="18" font-weight="800" fill="#20252b">Local Mac</text>
+              <text x="66" y="192" font-size="14" fill="#20252b">Build pooled dense cache</text>
+              <text x="66" y="218" font-size="14" fill="#20252b">Validate schema</text>
+              <text x="66" y="244" font-size="14" fill="#20252b">Compute sha256</text>
+              <text x="66" y="270" font-size="13" fill="#5d6673">M5 Max, 18 cores, 64 GB</text>
+
+              <rect x="42" y="330" width="220" height="144" rx="12" fill="#f6d8d4" stroke="#be4b3f"></rect>
+              <text x="66" y="366" font-size="18" font-weight="800" fill="#20252b">Rejected route</text>
+              <text x="66" y="396" font-size="14" fill="#20252b">Raw HDF5 upload</text>
+              <text x="66" y="422" font-size="14" fill="#20252b">62,394,047,728 bytes</text>
+              <text x="66" y="448" font-size="13" fill="#5d6673">Too much transfer and setup cost</text>
+            </g>
+
+            <line x1="262" y1="208" x2="358" y2="208" stroke="#5d6673" stroke-width="4" marker-end="url(#arrow-main)"></line>
+
+            <g filter="url(#soft-shadow)">
+              <rect x="360" y="126" width="248" height="164" rx="12" fill="#d9eeee" stroke="#167a7f"></rect>
+              <text x="386" y="162" font-size="18" font-weight="800" fill="#20252b">Dense cache artifact</text>
+              <text x="386" y="192" font-size="14" fill="#20252b">11,186,928,745 bytes</text>
+              <text x="386" y="218" font-size="14" fill="#20252b">167 upload chunks</text>
+              <text x="386" y="244" font-size="14" fill="#20252b">sha256 verified remote</text>
+              <text x="386" y="270" font-size="13" fill="#5d6673">8bfc57d8...fb5245ad77</text>
+            </g>
+
+            <line x1="608" y1="208" x2="700" y2="208" stroke="#5d6673" stroke-width="4" marker-end="url(#arrow-main)"></line>
+
+            <g filter="url(#soft-shadow)">
+              <rect x="704" y="92" width="474" height="234" rx="12" fill="#ffffff" stroke="#d6d1c4"></rect>
+              <text x="730" y="128" font-size="18" font-weight="800" fill="#20252b">Latitude remote CPU host</text>
+              <text x="730" y="156" font-size="14" fill="#20252b">ubuntu@45.250.254.57 during run</text>
+              <text x="730" y="182" font-size="14" fill="#20252b">AMD EPYC 7443P, 48 logical CPUs</text>
+              <text x="730" y="208" font-size="14" fill="#20252b">251 GiB RAM, no swap, NVMe storage</text>
+              <text x="730" y="234" font-size="14" fill="#20252b">Price observed in dashboard: $1.36/hr</text>
+              <rect x="730" y="258" width="386" height="42" rx="8" fill="#f7e3bf" stroke="#b86b00"></rect>
+              <text x="748" y="284" font-size="14" font-weight="800" fill="#20252b">Do not trust current IP as same host: later SSH key changed.</text>
+            </g>
+
+            <line x1="941" y1="326" x2="941" y2="398" stroke="#5d6673" stroke-width="4" marker-end="url(#arrow-main)"></line>
+
+            <g filter="url(#soft-shadow)">
+              <rect x="336" y="402" width="844" height="222" rx="12" fill="#ffffff" stroke="#d6d1c4"></rect>
+              <text x="362" y="438" font-size="18" font-weight="800" fill="#20252b">182 job grid</text>
+              <text x="362" y="466" font-size="14" fill="#5d6673">13 layers x 7 regularization values x 2 task sets</text>
+
+              <g transform="translate(362 492)">
+                <rect x="0" y="0" width="54" height="34" rx="6" fill="#dce8f6" stroke="#315f9e"></rect>
+                <text x="15" y="23" font-size="13" font-weight="800" fill="#20252b">L15</text>
+                <rect x="64" y="0" width="54" height="34" rx="6" fill="#dce8f6" stroke="#315f9e"></rect>
+                <text x="79" y="23" font-size="13" font-weight="800" fill="#20252b">L16</text>
+                <rect x="128" y="0" width="54" height="34" rx="6" fill="#dce8f6" stroke="#315f9e"></rect>
+                <text x="143" y="23" font-size="13" font-weight="800" fill="#20252b">L17</text>
+                <rect x="192" y="0" width="54" height="34" rx="6" fill="#dce8f6" stroke="#315f9e"></rect>
+                <text x="207" y="23" font-size="13" font-weight="800" fill="#20252b">L18</text>
+                <rect x="256" y="0" width="54" height="34" rx="6" fill="#dce8f6" stroke="#315f9e"></rect>
+                <text x="271" y="23" font-size="13" font-weight="800" fill="#20252b">L19</text>
+                <rect x="320" y="0" width="54" height="34" rx="6" fill="#dce8f6" stroke="#315f9e"></rect>
+                <text x="335" y="23" font-size="13" font-weight="800" fill="#20252b">L20</text>
+                <rect x="384" y="0" width="54" height="34" rx="6" fill="#d9eeee" stroke="#167a7f"></rect>
+                <text x="399" y="23" font-size="13" font-weight="800" fill="#20252b">L21</text>
+                <rect x="448" y="0" width="54" height="34" rx="6" fill="#dce8f6" stroke="#315f9e"></rect>
+                <text x="463" y="23" font-size="13" font-weight="800" fill="#20252b">L22</text>
+                <rect x="512" y="0" width="54" height="34" rx="6" fill="#dce8f6" stroke="#315f9e"></rect>
+                <text x="527" y="23" font-size="13" font-weight="800" fill="#20252b">L23</text>
+                <rect x="576" y="0" width="54" height="34" rx="6" fill="#dce8f6" stroke="#315f9e"></rect>
+                <text x="591" y="23" font-size="13" font-weight="800" fill="#20252b">L24</text>
+                <rect x="640" y="0" width="54" height="34" rx="6" fill="#dce8f6" stroke="#315f9e"></rect>
+                <text x="655" y="23" font-size="13" font-weight="800" fill="#20252b">L25</text>
+                <rect x="704" y="0" width="54" height="34" rx="6" fill="#dce8f6" stroke="#315f9e"></rect>
+                <text x="719" y="23" font-size="13" font-weight="800" fill="#20252b">L26</text>
+                <rect x="768" y="0" width="54" height="34" rx="6" fill="#dce8f6" stroke="#315f9e"></rect>
+                <text x="783" y="23" font-size="13" font-weight="800" fill="#20252b">L27</text>
+              </g>
+
+              <g transform="translate(362 548)">
+                <rect x="0" y="0" width="150" height="48" rx="8" fill="#e6e0f5" stroke="#6850a4"></rect>
+                <text x="18" y="29" font-size="14" font-weight="800" fill="#20252b">C: 0.01...10</text>
+                <rect x="172" y="0" width="164" height="48" rx="8" fill="#dcebd8" stroke="#2f7d4f"></rect>
+                <text x="194" y="29" font-size="14" font-weight="800" fill="#20252b">all_no_insider</text>
+                <rect x="356" y="0" width="120" height="48" rx="8" fill="#dcebd8" stroke="#2f7d4f"></rect>
+                <text x="386" y="29" font-size="14" font-weight="800" fill="#20252b">no_repe</text>
+                <rect x="498" y="0" width="278" height="48" rx="8" fill="#f5f1e7" stroke="#d6d1c4"></rect>
+                <text x="516" y="22" font-size="13" fill="#20252b">Each cell writes one JSON file and</text>
+                <text x="516" y="40" font-size="13" fill="#20252b">uses a lock dir to avoid duplicate output.</text>
+              </g>
+            </g>
+
+            <line x1="758" y1="624" x2="758" y2="674" stroke="#5d6673" stroke-width="4" marker-end="url(#arrow-main)"></line>
+
+            <g filter="url(#soft-shadow)">
+              <rect x="500" y="674" width="516" height="48" rx="10" fill="#d9eeee" stroke="#167a7f"></rect>
+              <text x="526" y="704" font-size="16" font-weight="800" fill="#20252b">Final summary ranks no_repe_layer21_c001 first</text>
+            </g>
+          </svg>
+          <p class="caption">The red path was the dead end. The green/blue path is what made the remote run practical.</p>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <div class="wrap">
+        <h2>What one job did</h2>
+        <p>A single result file like <code>no_repe_layer21_c001.json</code> was a complete probe training/evaluation artifact. It read the pooled cache, selected layer 21, trained a balanced logistic regression with <code>liblinear</code>, used <code>C=0.01</code>, evaluated within-task, cross-task, and general-domain behavior, then wrote metrics and directions.</p>
+
+        <div class="diagram" aria-label="One job internals">
+          <svg viewBox="0 0 1180 620" role="img">
+            <defs>
+              <marker id="arrow-job" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto">
+                <path d="M0,0 L12,6 L0,12 Z" fill="#5d6673"></path>
+              </marker>
+            </defs>
+            <rect x="16" y="16" width="1148" height="588" rx="18" fill="#fbfaf6" stroke="#d6d1c4"></rect>
+            <text x="44" y="58" font-size="25" font-weight="800" fill="#20252b">Microscope view: one JSON result</text>
+            <text x="44" y="88" font-size="15" fill="#5d6673">The run is large because this small pipeline is repeated 182 times with different layer/C/task-set choices.</text>
+
+            <g transform="translate(48 134)">
+              <rect x="0" y="0" width="230" height="142" rx="12" fill="#dce8f6" stroke="#315f9e"></rect>
+              <text x="22" y="36" font-size="17" font-weight="800" fill="#20252b">Pooled feature cache</text>
+              <text x="22" y="68" font-size="14" fill="#20252b">Input kind:</text>
+              <text x="22" y="92" font-size="14" font-weight="800" fill="#20252b">pooled_feature_cache</text>
+              <text x="22" y="120" font-size="13" fill="#5d6673">One verified HDF5 cache</text>
+            </g>
+
+            <line x1="278" y1="205" x2="358" y2="205" stroke="#5d6673" stroke-width="4" marker-end="url(#arrow-job)"></line>
+
+            <g transform="translate(360 116)">
+              <rect x="0" y="0" width="210" height="178" rx="12" fill="#ffffff" stroke="#d6d1c4"></rect>
+              <text x="22" y="34" font-size="17" font-weight="800" fill="#20252b">Select knobs</text>
+              <rect x="22" y="56" width="160" height="30" rx="6" fill="#d9eeee" stroke="#167a7f"></rect>
+              <text x="38" y="77" font-size="13" font-weight="800" fill="#20252b">layer = 21</text>
+              <rect x="22" y="96" width="160" height="30" rx="6" fill="#e6e0f5" stroke="#6850a4"></rect>
+              <text x="38" y="117" font-size="13" font-weight="800" fill="#20252b">C = 0.01</text>
+              <rect x="22" y="136" width="160" height="30" rx="6" fill="#dcebd8" stroke="#2f7d4f"></rect>
+              <text x="38" y="157" font-size="13" font-weight="800" fill="#20252b">task_set = no_repe</text>
+            </g>
+
+            <line x1="570" y1="205" x2="650" y2="205" stroke="#5d6673" stroke-width="4" marker-end="url(#arrow-job)"></line>
+
+            <g transform="translate(652 116)">
+              <rect x="0" y="0" width="226" height="178" rx="12" fill="#f7e3bf" stroke="#b86b00"></rect>
+              <text x="22" y="34" font-size="17" font-weight="800" fill="#20252b">Train probe</text>
+              <text x="22" y="66" font-size="14" fill="#20252b">sklearn LogisticRegression</text>
+              <text x="22" y="92" font-size="14" fill="#20252b">solver = liblinear</text>
+              <text x="22" y="118" font-size="14" fill="#20252b">class_weight = balanced</text>
+              <text x="22" y="144" font-size="14" fill="#20252b">thread caps = 1</text>
+            </g>
+
+            <line x1="878" y1="205" x2="958" y2="205" stroke="#5d6673" stroke-width="4" marker-end="url(#arrow-job)"></line>
+
+            <g transform="translate(960 116)">
+              <rect x="0" y="0" width="168" height="178" rx="12" fill="#d9eeee" stroke="#167a7f"></rect>
+              <text x="20" y="34" font-size="17" font-weight="800" fill="#20252b">Write JSON</text>
+              <text x="20" y="66" font-size="13" fill="#20252b">within-task metrics</text>
+              <text x="20" y="92" font-size="13" fill="#20252b">cross-task metrics</text>
+              <text x="20" y="118" font-size="13" fill="#20252b">general-domain metrics</text>
+              <text x="20" y="144" font-size="13" fill="#20252b">directions</text>
+            </g>
+
+            <g transform="translate(82 360)">
+              <rect x="0" y="0" width="1014" height="170" rx="12" fill="#ffffff" stroke="#d6d1c4"></rect>
+              <text x="24" y="36" font-size="18" font-weight="800" fill="#20252b">Why one job should not use all cores</text>
+              <text x="24" y="68" font-size="14" fill="#20252b">If liblinear was allowed to spawn broad thread pools inside each process, 48 simultaneous jobs could become hundreds of runnable threads.</text>
+              <text x="24" y="96" font-size="14" fill="#20252b">The runner exported OMP, MKL, OPENBLAS, and NUMEXPR thread counts as 1, then parallelized across processes.</text>
+              <text x="24" y="124" font-size="14" fill="#20252b">That made active-process count a meaningful proxy for CPU occupancy: 47-48 processes on 48 logical CPUs.</text>
+              <text x="24" y="148" font-size="13" fill="#5d6673">Caveat: no mpstat/iostat/perf trace was captured, so disk and memory-bandwidth saturation remain inferred rather than measured directly.</text>
+            </g>
+          </svg>
+          <p class="caption">This is the core repeated unit. The scheduler's job is to keep these units flowing without collisions.</p>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <div class="wrap">
+        <h2>Timeline and saturation</h2>
+        <p>The canonical by-layer runner started at <code>2026-07-05T05:42:15Z</code>. The first result timestamp was <code>06:07:04.486182Z</code>, and the last result arrived at <code>23:23:19.197793Z</code>. That is <code>17h 41m 04s</code> from runner start to final result, or about <code>10.29</code> jobs per hour over the full window.</p>
+        <p>Peak saturation was real: the recovered transcript showed <code>active=47</code> at <code>count=73</code>, then later <code>active=48</code> with load climbing toward the 48-logical-CPU ceiling. Memory got tight enough to pause launchers, but not low enough to kill the run.</p>
+
+        <div class="diagram" aria-label="Saturation and tail timeline">
+          <svg viewBox="0 0 1220 650" role="img">
+            <rect x="16" y="16" width="1188" height="618" rx="18" fill="#fbfaf6" stroke="#d6d1c4"></rect>
+            <text x="44" y="58" font-size="25" font-weight="800" fill="#20252b">Parallelism profile</text>
+            <text x="44" y="88" font-size="15" fill="#5d6673">The middle of the run saturated CPUs; the end became a tail of long remaining jobs.</text>
+
+            <g transform="translate(86 140)">
+              <line x1="0" y1="300" x2="1010" y2="300" stroke="#20252b" stroke-width="2"></line>
+              <line x1="0" y1="0" x2="0" y2="300" stroke="#20252b" stroke-width="2"></line>
+              <text x="-52" y="7" font-size="13" fill="#5d6673">48 active</text>
+              <text x="-48" y="154" font-size="13" fill="#5d6673">24 active</text>
+              <text x="-26" y="306" font-size="13" fill="#5d6673">0</text>
+
+              <rect x="28" y="169" width="72" height="131" fill="#dce8f6" stroke="#315f9e"></rect>
+              <text x="20" y="324" font-size="12" fill="#20252b">06:07</text>
+              <text x="28" y="154" font-size="12" font-weight="800" fill="#315f9e">early</text>
+
+              <rect x="230" y="6" width="88" height="294" fill="#d9eeee" stroke="#167a7f"></rect>
+              <text x="224" y="324" font-size="12" fill="#20252b">11:21</text>
+              <text x="232" y="-10" font-size="12" font-weight="800" fill="#167a7f">47</text>
+
+              <rect x="462" y="0" width="92" height="300" fill="#d9eeee" stroke="#167a7f"></rect>
+              <text x="454" y="324" font-size="12" fill="#20252b">16:13</text>
+              <text x="466" y="-10" font-size="12" font-weight="800" fill="#167a7f">48</text>
+
+              <rect x="720" y="162" width="92" height="138" fill="#f7e3bf" stroke="#b86b00"></rect>
+              <text x="712" y="324" font-size="12" fill="#20252b">22:06</text>
+              <text x="728" y="146" font-size="12" font-weight="800" fill="#b86b00">22</text>
+
+              <rect x="870" y="288" width="56" height="12" fill="#f6d8d4" stroke="#be4b3f"></rect>
+              <text x="852" y="324" font-size="12" fill="#20252b">23:13</text>
+              <text x="878" y="276" font-size="12" font-weight="800" fill="#be4b3f">1</text>
+
+              <rect x="978" y="300" width="32" height="0" fill="#f6d8d4" stroke="#be4b3f"></rect>
+              <text x="960" y="324" font-size="12" fill="#20252b">23:23</text>
+              <text x="978" y="286" font-size="12" font-weight="800" fill="#be4b3f">0</text>
+            </g>
+
+            <g transform="translate(86 504)">
+              <rect x="0" y="0" width="314" height="70" rx="10" fill="#d9eeee" stroke="#167a7f"></rect>
+              <text x="18" y="28" font-size="14" font-weight="800" fill="#20252b">Peak evidence</text>
+              <text x="18" y="52" font-size="13" fill="#20252b">47-48 active, load1 near 47, no dupes</text>
+
+              <rect x="348" y="0" width="314" height="70" rx="10" fill="#f7e3bf" stroke="#b86b00"></rect>
+              <text x="366" y="28" font-size="14" font-weight="800" fill="#20252b">Memory constraint</text>
+              <text x="366" y="52" font-size="13" fill="#20252b">Available RAM dipped to about 64-67 GiB</text>
+
+              <rect x="696" y="0" width="314" height="70" rx="10" fill="#f6d8d4" stroke="#be4b3f"></rect>
+              <text x="714" y="28" font-size="14" font-weight="800" fill="#20252b">Tail constraint</text>
+              <text x="714" y="52" font-size="13" fill="#20252b">Final 1-2 jobs could not fill 48 CPUs</text>
+            </g>
+          </svg>
+          <p class="caption">The run did not merely launch a few jobs on a large host. It reached the actual 48-worker ceiling during the high-water phase.</p>
+        </div>
+
+        <div class="table-scroll">
+          <table>
+            <thead>
+              <tr>
+                <th>Window</th>
+                <th>Duration</th>
+                <th>Throughput</th>
+                <th>Meaning</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Runner start to final result</td>
+                <td>17h 41m 04s</td>
+                <td>10.29 jobs/hour</td>
+                <td>Includes startup and full tail.</td>
+              </tr>
+              <tr>
+                <td>First result to final result</td>
+                <td>17h 16m 14s</td>
+                <td>10.54 jobs/hour</td>
+                <td>Cleaner measurement of result-production span.</td>
+              </tr>
+              <tr>
+                <td>Late tail, jobs 159 to 182</td>
+                <td>1h 25m 27s</td>
+                <td>16.15 jobs/hour</td>
+                <td>Still productive until the final few long jobs drained.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <div class="wrap">
+        <h2>Results and interpretation</h2>
+        <p>The ranking was not just an infrastructure artifact. It changed the model-selection picture: low-regularization no-REPE probes around layers 19-23 were strongest in the shown top ranks, and layer 21 won.</p>
+
+        <div class="table-scroll">
+          <table>
+            <thead>
+              <tr>
+                <th>Rank</th>
+                <th>Result</th>
+                <th>Task set</th>
+                <th>C</th>
+                <th>General bal acc</th>
+                <th>General AUC</th>
+                <th>Cross bal acc</th>
+                <th>Within AUC</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>1</td>
+                <td><code>no_repe_layer21_c001</code></td>
+                <td><span class="tag">no_repe</span></td>
+                <td>0.01</td>
+                <td>0.9302</td>
+                <td>0.9752</td>
+                <td>0.6903</td>
+                <td>0.9814</td>
+              </tr>
+              <tr>
+                <td>2</td>
+                <td><code>no_repe_layer21_c003</code></td>
+                <td><span class="tag">no_repe</span></td>
+                <td>0.03</td>
+                <td>0.9290</td>
+                <td>0.9739</td>
+                <td>0.6906</td>
+                <td>0.9811</td>
+              </tr>
+              <tr>
+                <td>3</td>
+                <td><code>no_repe_layer20_c003</code></td>
+                <td><span class="tag">no_repe</span></td>
+                <td>0.03</td>
+                <td>0.9259</td>
+                <td>0.9714</td>
+                <td>0.6927</td>
+                <td>0.9796</td>
+              </tr>
+              <tr>
+                <td>4</td>
+                <td><code>no_repe_layer20_c001</code></td>
+                <td><span class="tag">no_repe</span></td>
+                <td>0.01</td>
+                <td>0.9254</td>
+                <td>0.9722</td>
+                <td>0.6923</td>
+                <td>0.9795</td>
+              </tr>
+              <tr>
+                <td>5</td>
+                <td><code>no_repe_layer19_c001</code></td>
+                <td><span class="tag">no_repe</span></td>
+                <td>0.01</td>
+                <td>0.9219</td>
+                <td>0.9720</td>
+                <td>0.6961</td>
+                <td>0.9779</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3>Why no_repe matters</h3>
+        <p>The <code>all_no_insider</code> task set had 17 tasks and included <code>repe_honesty__IF_dishonest</code>. The <code>no_repe</code> task set had 16 tasks and excluded it. In the top 10, no-REPE candidates occupied all shown ranks, while the first all-no-insider entries appeared after that top cluster in the all-jobs table.</p>
+      </div>
+    </section>
+
+    <section>
+      <div class="wrap">
+        <h2>What went wrong or nearly went wrong</h2>
+        <div class="grid-2">
+          <div class="panel">
+            <h3>Dead-end transfer path</h3>
+            <p>The raw HDF5 path tried to move <code>62.39 GB</code> as <code>930</code> chunks. The dense cache path moved <code>11.19 GB</code> as <code>167</code> chunks. The smaller artifact was the right unit of work.</p>
+          </div>
+          <div class="panel">
+            <h3>Manual duplicate risk</h3>
+            <p>During manual acceleration, lock directories were initially seeded with a <code>.json</code> suffix, while the runner expected lock names without that suffix. That briefly started duplicate layer-22 jobs. The launchers were paused, duplicates were corrected, and the final controller state reported <code>dup=0</code>.</p>
+          </div>
+          <div class="panel">
+            <h3>Setup noise</h3>
+            <p>Earlier setup errors included missing <code>h5py</code>, rsync code 12, and a coordinator quoting EOF after the cache was already verified and the runner started. These did not invalidate the final sweep, but they made auditing harder.</p>
+          </div>
+          <div class="panel">
+            <h3>Weak telemetry</h3>
+            <p>Active process count, load, memory, result counts, and duplicate counts were monitored. That was enough to operate the run. It was not enough to precisely attribute performance to CPU, disk, memory bandwidth, or Python overhead.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <div class="wrap">
+        <h2>What should change next time</h2>
+        <div class="steps">
+          <div class="step"><strong>Make dense-cache feasibility the default preflight.</strong> Do not begin a giant raw upload until a cache-only route has been disproved.</div>
+          <div class="step"><strong>Use a manifest-backed queue.</strong> Generate explicit rows for layer, C, task set, output path, input sha, expected memory, and estimated duration.</div>
+          <div class="step"><strong>Have one scheduler own the locks.</strong> Avoid independent tmux launchers unless they share one queue state file or sqlite table.</div>
+          <div class="step"><strong>Schedule slow jobs early.</strong> Start later layers and high-C jobs earlier once historical timings show they dominate the tail.</div>
+          <div class="step"><strong>Instrument the host.</strong> Capture <code>mpstat</code>, <code>iostat</code>, per-job peak RSS, wall/user/sys time, and output-write time.</div>
+          <div class="step"><strong>Optimize dollars per completed job.</strong> Benchmark a small fixed manifest across candidate CPU SKUs, then choose based on cost per validated result instead of hourly price alone.</div>
+        </div>
+
+        <h3>Concrete final contract</h3>
+        <ul class="split-list">
+          <li><code>expected_count == actual_count == 182</code></li>
+          <li>Every result JSON parses.</li>
+          <li>All expected layer/C/task-set outputs exist.</li>
+          <li>No active jobs remain.</li>
+          <li>No duplicate active output writers remain.</li>
+          <li>No missing plain jobs or stale lock dirs remain.</li>
+          <li>No critical log signatures remain.</li>
+          <li>The summary ranking is regenerated from the final result directory.</li>
+          <li>The top result file is inspected for settings and input provenance.</li>
+        </ul>
+      </div>
+    </section>
+
+    <section>
+      <div class="wrap">
+        <h2>Evidence map</h2>
+        <p>The companion JSON file is the agent-readable version of this lesson: <code>docs/validation/big_sweep_remote_cpu_postmortem_20260706.json</code>.</p>
+        <div class="table-scroll">
+          <table>
+            <thead>
+              <tr>
+                <th>Evidence</th>
+                <th>What it proves</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><code>scripts/run_dense_probe_sweep_15_27_by_layer_from_cache.sh</code></td>
+                <td>Grid construction, thread caps, lock naming, per-job command, and summary call.</td>
+              </tr>
+              <tr>
+                <td><code>scripts/control_latitude_probe_sweep.sh</code></td>
+                <td>Final monitor contract: counts, duplicate detection, memory, critical signatures, and completion gate.</td>
+              </tr>
+              <tr>
+                <td><code>logs/probe_sweep_remote/cache_fast_path_coordinator_20260705T033100Z.log</code></td>
+                <td>Dense cache size, sha256, chunked upload, remote assembly, and runner launch.</td>
+              </tr>
+              <tr>
+                <td><code>logs/probe_sweep_remote/probe_sweep_control_20260705T220621Z.log</code></td>
+                <td>Final 160-to-182 drain and exact success state at 23:23:19Z.</td>
+              </tr>
+              <tr>
+                <td><code>docs/validation/no_insider_dense_15_27_primary_sweep_20260705_by_layer.md</code></td>
+                <td>Final ranking and best candidate metrics.</td>
+              </tr>
+              <tr>
+                <td><code>rollout-2026-06-25T12-52-47-019f0057...</code></td>
+                <td>Recovered thread identity, remote CPU facts, and high-water active/load observations.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="small">Note: the remote IP should not be reused as an identity proof. A later live SSH check saw a changed host key, so the evidence here describes the host observed during the run, not necessarily whatever answers at that IP later.</p>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <div class="wrap">
+      Built from the recovered big-sweep thread, local scripts, run logs, final result JSON, and summary ranking. Generated 2026-07-06.
+    </div>
+  </footer>
+</body>
+</html>
