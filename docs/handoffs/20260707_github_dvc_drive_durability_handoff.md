@@ -256,3 +256,50 @@ Best setting: layer 21, C=0.01, no_repe task set
 - Do not push raw logs unless Avinash explicitly asks; prefer compact validation docs and DVC pointers.
 - Keep generated HDF5/result JSONs out of Git history; use DVC.
 - If opening a PR for Avinash, default to a ready/open PR unless he asks for draft.
+
+## Execution note from 2026-07-07 follow-up
+
+Small docs/scripts were committed and pushed to `origin/main` in commit
+`887b339` (`preserve dense probe sweep docs`).
+
+The six new large targets were DVC-added locally, and these pointer files now
+exist in the working tree but are intentionally not committed yet because their
+objects were not successfully pushed to Google Drive:
+
+```text
+artifacts/probe_features/no_insider_sparse_pooled.h5.dvc
+artifacts/probe_features/no_insider_dense_15_27_pooled.h5.dvc
+artifacts/probe_features/no_insider_layer3_two_task_smoke_pooled.h5.dvc
+artifacts/probes/no_insider_sparse_probe_results.json.dvc
+artifacts/probes/qwen3-vl-8b-thinking_rollout_probes.json.dvc
+artifacts/probes/sweeps/dense_15_27_by_layer.dvc
+```
+
+DVC dependency/auth details:
+
+- Plain `uvx --from "dvc[gdrive]" ...` still fails on Drive access with
+  `module 'lib' has no attribute 'GEN_EMAIL'`.
+- `uvx --from "dvc[gdrive]" --with "pyOpenSSL==23.3.0" ...` is the working
+  dependency pin for DVC/PyDrive2 in this environment.
+- The repo-local user OAuth credential file was expired/revoked:
+  `Access token refresh failed: invalid_grant`.
+- The service account can read/list the Drive remote with the pinned command,
+  but cannot upload to this My Drive remote. Google returns:
+  `Service Accounts do not have storage quota`.
+- A clean user OAuth flow was started by pointing `.dvc/config.local` at
+  `.secrets/dvc-gdrive-user-credentials-20260707.json`; the browser consent
+  callback did not complete during this follow-up.
+
+Next concrete step:
+
+1. Complete user OAuth for DVC using the pinned command:
+
+   ```bash
+   uvx --from "dvc[gdrive]" --with "pyOpenSSL==23.3.0" dvc status -c
+   ```
+
+2. After the callback writes
+   `.secrets/dvc-gdrive-user-credentials-20260707.json`, run the targeted DVC
+   push from the earlier section with the same `pyOpenSSL==23.3.0` pin.
+3. Only after the targeted push succeeds, commit the six `.dvc` pointer files
+   and run the fresh-checkout `dvc pull` restore proof.
