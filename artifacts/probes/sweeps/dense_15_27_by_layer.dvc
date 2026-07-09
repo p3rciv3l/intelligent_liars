@@ -1,0 +1,6 @@
+outs:
+- md5: 0ceee8e2bc3536a98f6733a980de64dc.dir
+  size: 439171688
+  nfiles: 182
+  hash: md5
+  path: dense_15_27_by_layer
