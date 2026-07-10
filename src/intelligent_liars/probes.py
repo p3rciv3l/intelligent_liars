@@ -282,6 +282,7 @@ def train_probe_directions(
     input_path: Path,
     output_path: Path,
     tasks: Sequence[str] | None = None,
+    evaluation_tasks: Sequence[str] | None = None,
     layers: str = "all",
     test_size: float = 0.25,
     random_seed: int = 0,
@@ -289,6 +290,7 @@ def train_probe_directions(
     regularization_c: float = 1.0,
     train_general_domain_probe: bool = False,
     general_task_class_cap: int | None = 1000,
+    overwrite: bool = False,
 ) -> ProbeTrainingSummary:
     """Train simple linear probes over mean-pooled answer-token activations.
 
@@ -310,6 +312,7 @@ def train_probe_directions(
 
     input_path = input_path.resolve()
     output_path = output_path.resolve()
+    _require_available_probe_output(output_path, overwrite=overwrite)
 
     with h5py.File(input_path, "r") as handle:
         source = _RawFeatureSource(handle, input_path=input_path)
@@ -318,6 +321,7 @@ def train_probe_directions(
             input_path=input_path,
             output_path=output_path,
             tasks=tasks,
+            evaluation_tasks=evaluation_tasks,
             layers=layers,
             test_size=test_size,
             random_seed=random_seed,
@@ -328,8 +332,7 @@ def train_probe_directions(
             input_kind="activation_hdf5",
         )
 
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    output_path.write_text(json.dumps(output, indent=2, sort_keys=True) + "\n")
+    _write_probe_result(output_path, output, overwrite=overwrite)
     return summary
 
 
@@ -338,6 +341,7 @@ def train_probe_directions_from_cache(
     cache_path: Path,
     output_path: Path,
     tasks: Sequence[str] | None = None,
+    evaluation_tasks: Sequence[str] | None = None,
     layers: str = "all",
     source_path: Path | None = None,
     test_size: float = 0.25,
@@ -346,6 +350,7 @@ def train_probe_directions_from_cache(
     regularization_c: float = 1.0,
     train_general_domain_probe: bool = False,
     general_task_class_cap: int | None = 1000,
+    overwrite: bool = False,
 ) -> ProbeTrainingSummary:
     """Train simple linear probes from a pooled-feature cache."""
 
@@ -362,6 +367,7 @@ def train_probe_directions_from_cache(
 
     cache_path = cache_path.resolve()
     output_path = output_path.resolve()
+    _require_available_probe_output(output_path, overwrite=overwrite)
     resolved_source_path = source_path.resolve() if source_path is not None else None
 
     with h5py.File(cache_path, "r") as handle:
@@ -375,6 +381,7 @@ def train_probe_directions_from_cache(
             input_path=cache_path,
             output_path=output_path,
             tasks=tasks,
+            evaluation_tasks=evaluation_tasks,
             layers=layers,
             test_size=test_size,
             random_seed=random_seed,
@@ -385,8 +392,7 @@ def train_probe_directions_from_cache(
             input_kind="pooled_feature_cache",
         )
 
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    output_path.write_text(json.dumps(output, indent=2, sort_keys=True) + "\n")
+    _write_probe_result(output_path, output, overwrite=overwrite)
     return summary
 
 
@@ -478,6 +484,7 @@ def _train_probe_directions_from_source(
     input_path: Path,
     output_path: Path,
     tasks: Sequence[str] | None,
+    evaluation_tasks: Sequence[str] | None,
     layers: str,
     test_size: float,
     random_seed: int,
@@ -488,10 +495,16 @@ def _train_probe_directions_from_source(
     input_kind: str,
 ) -> tuple[dict[str, Any], ProbeTrainingSummary]:
     selected_tasks = source.select_tasks(tasks)
-    selected_layers = source.select_layers(selected_tasks, layers)
+    selected_evaluation_tasks = (
+        selected_tasks
+        if evaluation_tasks is None
+        else source.select_tasks(evaluation_tasks)
+    )
+    all_selected_tasks = tuple(dict.fromkeys((*selected_tasks, *selected_evaluation_tasks)))
+    selected_layers = source.select_layers(all_selected_tasks, layers)
     task_metadata = {
         task: source.read_task_metadata(task)
-        for task in selected_tasks
+        for task in all_selected_tasks
     }
     task_splits = {
         task: _make_example_split(
@@ -515,7 +528,7 @@ def _train_probe_directions_from_source(
     for layer in selected_layers:
         pooled_by_task = {
             task: source.pooled_features(layer, task)
-            for task in selected_tasks
+            for task in all_selected_tasks
         }
         _validate_pooled_feature_shapes(
             pooled_by_task=pooled_by_task,
@@ -553,7 +566,7 @@ def _train_probe_directions_from_source(
             source_split = task_splits[train_task]
             source_train_labels = source_metadata.labels[source_split.train_indices]
             classifier = split_classifiers[train_task]
-            for test_task in selected_tasks:
+            for test_task in selected_evaluation_tasks:
                 if test_task == train_task:
                     continue
                 target_metadata = task_metadata[test_task]
@@ -588,7 +601,7 @@ def _train_probe_directions_from_source(
                 max_iter=max_iter,
                 regularization_c=regularization_c,
             )
-            for test_task in selected_tasks:
+            for test_task in selected_evaluation_tasks:
                 target_metadata = task_metadata[test_task]
                 target_split = task_splits[test_task]
                 general_domain_results.append(
@@ -656,6 +669,7 @@ def _train_probe_directions_from_source(
         "settings": {
             "layers": list(selected_layers),
             "tasks": list(selected_tasks),
+            "evaluation_tasks": list(selected_evaluation_tasks),
             "test_size": test_size,
             "random_seed": random_seed,
             "max_iter": max_iter,
@@ -695,6 +709,39 @@ def _train_probe_directions_from_source(
         general_domain_direction_results=len(general_domain_direction_results),
     )
     return output, summary
+
+
+def _require_available_probe_output(output_path: Path, *, overwrite: bool) -> None:
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    if output_path.exists() and not overwrite:
+        raise FileExistsError(
+            f"Probe result already exists: {output_path}. Pass overwrite=True to replace it."
+        )
+
+
+def _write_probe_result(
+    output_path: Path,
+    payload: dict[str, Any],
+    *,
+    overwrite: bool,
+) -> None:
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    temp_output_path = output_path.with_name(f".{output_path.name}.tmp-{uuid.uuid4().hex}")
+    try:
+        temp_output_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
+        if overwrite:
+            os.replace(temp_output_path, output_path)
+        else:
+            try:
+                os.link(temp_output_path, output_path)
+            except FileExistsError as error:
+                raise FileExistsError(
+                    f"Probe result already exists: {output_path}. Pass overwrite=True to replace it."
+                ) from error
+            temp_output_path.unlink()
+    finally:
+        if temp_output_path.exists():
+            temp_output_path.unlink()
 
 
 class _FeatureSource:
@@ -1059,13 +1106,13 @@ def _probe_preflight_status(
         )
 
     split = _make_example_split(labels, test_size=test_size, random_seed=random_seed, task=task)
+    test_label_counts = _label_counts(labels[split.test_indices])
     split_report = {
         "train_examples": int(split.train_indices.shape[0]),
         "test_examples": int(split.test_indices.shape[0]),
         "train_label_counts": _label_counts(labels[split.train_indices]),
-        "test_label_counts": _label_counts(labels[split.test_indices]),
+        "test_label_counts": test_label_counts,
     }
-    test_label_counts = split_report["test_label_counts"]
     min_test_examples = min(test_label_counts["honest"], test_label_counts["deceptive"])
     if min_class_examples < min_train_examples_per_class:
         return (

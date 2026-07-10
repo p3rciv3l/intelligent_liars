@@ -107,7 +107,12 @@ def train_probes(
         None,
         "--task",
         "-t",
-        help="Activation task to train/evaluate. Repeatable. Defaults to every task in the HDF5.",
+        help="Activation task to train on. Repeatable. Defaults to every task in the HDF5.",
+    ),
+    evaluation_tasks: list[str] | None = typer.Option(
+        None,
+        "--evaluation-task",
+        help="Task to evaluate on. Repeatable. Defaults to the training tasks.",
     ),
     project_root: Path | None = typer.Option(
         None,
@@ -148,6 +153,11 @@ def train_probes(
         min=1,
         help="Maximum examples per task/label bucket for the general-domain probe.",
     ),
+    overwrite: bool = typer.Option(
+        False,
+        "--overwrite",
+        help="Replace an existing result JSON instead of refusing to clobber it.",
+    ),
 ) -> None:
     """Train simple linear probes on mean-pooled answer-token activations."""
 
@@ -156,6 +166,7 @@ def train_probes(
         input_path=_project_path(project_root, input_path),
         output_path=_project_path(project_root, output_path),
         tasks=tasks,
+        evaluation_tasks=evaluation_tasks,
         layers=layers,
         test_size=test_size,
         random_seed=random_seed,
@@ -163,6 +174,7 @@ def train_probes(
         regularization_c=regularization_c,
         train_general_domain_probe=train_general_domain_probe,
         general_task_class_cap=general_task_class_cap,
+        overwrite=overwrite,
     )
     console.print(
         "[green]Trained probes[/green] "
@@ -256,7 +268,12 @@ def train_probes_from_cache(
         None,
         "--task",
         "-t",
-        help="Cached task to train/evaluate. Repeatable. Defaults to every task in the cache.",
+        help="Cached task to train on. Repeatable. Defaults to every task in the cache.",
+    ),
+    evaluation_tasks: list[str] | None = typer.Option(
+        None,
+        "--evaluation-task",
+        help="Cached task to evaluate on. Repeatable. Defaults to the training tasks.",
     ),
     project_root: Path | None = typer.Option(
         None,
@@ -302,6 +319,11 @@ def train_probes_from_cache(
         min=1,
         help="Maximum examples per task/label bucket for the general-domain probe.",
     ),
+    overwrite: bool = typer.Option(
+        False,
+        "--overwrite",
+        help="Replace an existing result JSON instead of refusing to clobber it.",
+    ),
 ) -> None:
     """Train simple linear probes from a pooled-feature cache."""
 
@@ -310,6 +332,7 @@ def train_probes_from_cache(
         cache_path=_project_path(project_root, cache_path),
         output_path=_project_path(project_root, output_path),
         tasks=tasks,
+        evaluation_tasks=evaluation_tasks,
         layers=layers,
         source_path=_project_path(project_root, source_path) if source_path is not None else None,
         test_size=test_size,
@@ -318,6 +341,7 @@ def train_probes_from_cache(
         regularization_c=regularization_c,
         train_general_domain_probe=train_general_domain_probe,
         general_task_class_cap=general_task_class_cap,
+        overwrite=overwrite,
     )
     console.print(
         "[green]Trained probes from cache[/green] "

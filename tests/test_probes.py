@@ -223,6 +223,61 @@ def test_train_probe_directions_can_train_general_domain_probe(tmp_path):
     }
 
 
+def test_train_probe_directions_can_evaluate_held_out_tasks(tmp_path):
+    input_path = tmp_path / "activations.h5"
+    output_path = tmp_path / "probe-results.json"
+    _write_probe_fixture(input_path)
+
+    summary = train_probe_directions(
+        input_path=input_path,
+        output_path=output_path,
+        tasks=["roleplaying__plain"],
+        evaluation_tasks=["sandbagging_v2__wmdp_mmlu"],
+        layers="0",
+        test_size=0.5,
+        random_seed=3,
+        train_general_domain_probe=True,
+        general_task_class_cap=2,
+    )
+
+    assert summary.tasks == ("roleplaying__plain",)
+    assert summary.within_task_results == 1
+    assert summary.cross_task_results == 1
+    assert summary.direction_results == 1
+    assert summary.general_domain_results == 1
+    assert summary.general_domain_direction_results == 1
+
+    payload = json.loads(output_path.read_text())
+    assert payload["settings"]["tasks"] == ["roleplaying__plain"]
+    assert payload["settings"]["evaluation_tasks"] == ["sandbagging_v2__wmdp_mmlu"]
+    assert set(payload["tasks"]) == {"roleplaying__plain", "sandbagging_v2__wmdp_mmlu"}
+    assert payload["within_task"][0]["task"] == "roleplaying__plain"
+    assert payload["cross_task"][0]["train_task"] == "roleplaying__plain"
+    assert payload["cross_task"][0]["test_task"] == "sandbagging_v2__wmdp_mmlu"
+
+    general_eval = payload["general_domain"]["evaluations"][0]
+    assert general_eval["test_task"] == "sandbagging_v2__wmdp_mmlu"
+    assert general_eval["train_task_label_counts"] == {
+        "roleplaying__plain": {"honest": 2, "deceptive": 2}
+    }
+
+
+def test_train_probe_directions_refuses_to_clobber_existing_output(tmp_path):
+    input_path = tmp_path / "activations.h5"
+    output_path = tmp_path / "probe-results.json"
+    _write_probe_fixture(input_path)
+    output_path.write_text("existing result\n")
+
+    with pytest.raises(FileExistsError, match="Probe result already exists"):
+        train_probe_directions(
+            input_path=input_path,
+            output_path=output_path,
+            layers="0",
+        )
+
+    assert output_path.read_text() == "existing result\n"
+
+
 def test_build_pooled_feature_cache_writes_schema_and_expected_features(tmp_path):
     h5py = pytest.importorskip("h5py")
     input_path = tmp_path / "activations.h5"

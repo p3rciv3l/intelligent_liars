@@ -1,0 +1,2088 @@
+{
+  "candidates": [
+    {
+      "direction_cosines": {
+        "pairs": [
+          {
+            "raw_cosine": 0.857856049248,
+            "seed_0_aligned_cosine": 0.857856049248,
+            "seed_a": 0,
+            "seed_b": 1
+          },
+          {
+            "raw_cosine": 0.862123364711,
+            "seed_0_aligned_cosine": 0.862123364711,
+            "seed_a": 0,
+            "seed_b": 2
+          },
+          {
+            "raw_cosine": 0.854451416669,
+            "seed_0_aligned_cosine": 0.854451416669,
+            "seed_a": 0,
+            "seed_b": 3
+          },
+          {
+            "raw_cosine": 0.87154660298,
+            "seed_0_aligned_cosine": 0.87154660298,
+            "seed_a": 0,
+            "seed_b": 4
+          },
+          {
+            "raw_cosine": 0.870501860953,
+            "seed_0_aligned_cosine": 0.870501860953,
+            "seed_a": 1,
+            "seed_b": 2
+          },
+          {
+            "raw_cosine": 0.866763121235,
+            "seed_0_aligned_cosine": 0.866763121235,
+            "seed_a": 1,
+            "seed_b": 3
+          },
+          {
+            "raw_cosine": 0.874806473694,
+            "seed_0_aligned_cosine": 0.874806473694,
+            "seed_a": 1,
+            "seed_b": 4
+          },
+          {
+            "raw_cosine": 0.867950346576,
+            "seed_0_aligned_cosine": 0.867950346576,
+            "seed_a": 2,
+            "seed_b": 3
+          },
+          {
+            "raw_cosine": 0.873746196297,
+            "seed_0_aligned_cosine": 0.873746196297,
+            "seed_a": 2,
+            "seed_b": 4
+          },
+          {
+            "raw_cosine": 0.858634658844,
+            "seed_0_aligned_cosine": 0.858634658844,
+            "seed_a": 3,
+            "seed_b": 4
+          }
+        ],
+        "reference_seed": 0,
+        "seed_0_alignment_multipliers": {
+          "0": 1,
+          "1": 1,
+          "2": 1,
+          "3": 1,
+          "4": 1
+        },
+        "sign_convention": "sklearn_logistic_coef_positive_points_honest_to_deceptive"
+      },
+      "id": "no_repe_layer21_c001",
+      "invalid_run_count": 0,
+      "layer": 21,
+      "metrics": {
+        "cross_auc": {
+          "mean": 0.847483100791,
+          "std": 0.002129316323,
+          "worst": 0.844058656548
+        },
+        "cross_balanced_accuracy": {
+          "mean": 0.689895426491,
+          "std": 0.003641474141,
+          "worst": 0.684847750794
+        },
+        "general_auc": {
+          "mean": 0.973351510182,
+          "std": 0.002063621771,
+          "worst": 0.970415623758
+        },
+        "general_balanced_accuracy": {
+          "mean": 0.926736499234,
+          "std": 0.003472873057,
+          "worst": 0.921010392597
+        }
+      },
+      "per_task_worst_cases": [
+        {
+          "cross_auc": {
+            "seed": 3,
+            "train_task": "roleplaying__plain",
+            "value": 0.653887825644
+          },
+          "cross_balanced_accuracy": {
+            "seed": 1,
+            "train_task": "roleplaying__plain",
+            "value": 0.501686340641
+          },
+          "general_auc": {
+            "seed": 3,
+            "value": 0.994512969345
+          },
+          "general_balanced_accuracy": {
+            "seed": 4,
+            "value": 0.969662615636
+          },
+          "task": "claims__definitional_gemini_600_full"
+        },
+        {
+          "cross_auc": {
+            "seed": 3,
+            "train_task": "roleplaying__plain",
+            "value": 0.69681805836
+          },
+          "cross_balanced_accuracy": {
+            "seed": 1,
+            "train_task": "roleplaying__plain",
+            "value": 0.514604810997
+          },
+          "general_auc": {
+            "seed": 1,
+            "value": 0.984411903637
+          },
+          "general_balanced_accuracy": {
+            "seed": 1,
+            "value": 0.962281530468
+          },
+          "task": "claims__evidential_gemini_600_full"
+        },
+        {
+          "cross_auc": {
+            "seed": 1,
+            "train_task": "ethics__commonsense",
+            "value": 0.6708
+          },
+          "cross_balanced_accuracy": {
+            "seed": 1,
+            "train_task": "roleplaying__plain",
+            "value": 0.5
+          },
+          "general_auc": {
+            "seed": 2,
+            "value": 0.958311111111
+          },
+          "general_balanced_accuracy": {
+            "seed": 2,
+            "value": 0.876666666667
+          },
+          "task": "claims__fictional_gemini_600_full"
+        },
+        {
+          "cross_auc": {
+            "seed": 3,
+            "train_task": "roleplaying__plain",
+            "value": 0.53649905482
+          },
+          "cross_balanced_accuracy": {
+            "seed": 0,
+            "train_task": "roleplaying__plain",
+            "value": 0.5
+          },
+          "general_auc": {
+            "seed": 3,
+            "value": 0.956548996914
+          },
+          "general_balanced_accuracy": {
+            "seed": 3,
+            "value": 0.888888888889
+          },
+          "task": "claims__logical_gemini_600_full"
+        },
+        {
+          "cross_auc": {
+            "seed": 4,
+            "train_task": "roleplaying__plain",
+            "value": 0.51595175
+          },
+          "cross_balanced_accuracy": {
+            "seed": 4,
+            "train_task": "roleplaying__plain",
+            "value": 0.40475
+          },
+          "general_auc": {
+            "seed": 0,
+            "value": 0.962876
+          },
+          "general_balanced_accuracy": {
+            "seed": 4,
+            "value": 0.893
+          },
+          "task": "ethics__commonsense"
+        },
+        {
+          "cross_auc": {
+            "seed": 3,
+            "train_task": "roleplaying__plain",
+            "value": 0.23572034639
+          },
+          "cross_balanced_accuracy": {
+            "seed": 0,
+            "train_task": "claims__fictional_gemini_600_full",
+            "value": 0.5
+          },
+          "general_auc": {
+            "seed": 4,
+            "value": 0.99992849207
+          },
+          "general_balanced_accuracy": {
+            "seed": 3,
+            "value": 0.997698504028
+          },
+          "task": "geometry_of_truth__best"
+        },
+        {
+          "cross_auc": {
+            "seed": 3,
+            "train_task": "roleplaying__plain",
+            "value": 0.502668063945
+          },
+          "cross_balanced_accuracy": {
+            "seed": 3,
+            "train_task": "roleplaying__plain",
+            "value": 0.502118222729
+          },
+          "general_auc": {
+            "seed": 0,
+            "value": 0.940167481021
+          },
+          "general_balanced_accuracy": {
+            "seed": 2,
+            "value": 0.8645899705
+          },
+          "task": "geometry_of_truth__mixed"
+        },
+        {
+          "cross_auc": {
+            "seed": 3,
+            "train_task": "roleplaying__plain",
+            "value": 0.605788611741
+          },
+          "cross_balanced_accuracy": {
+            "seed": 1,
+            "train_task": "roleplaying__plain",
+            "value": 0.5
+          },
+          "general_auc": {
+            "seed": 2,
+            "value": 0.95382968002
+          },
+          "general_balanced_accuracy": {
+            "seed": 2,
+            "value": 0.869047619048
+          },
+          "task": "internal_state__animals"
+        },
+        {
+          "cross_auc": {
+            "seed": 3,
+            "train_task": "sandbagging_v2__wmdp_mmlu",
+            "value": 0.605290145096
+          },
+          "cross_balanced_accuracy": {
+            "seed": 0,
+            "train_task": "sandbagging_v2__wmdp_mmlu",
+            "value": 0.5
+          },
+          "general_auc": {
+            "seed": 0,
+            "value": 0.981684981685
+          },
+          "general_balanced_accuracy": {
+            "seed": 2,
+            "value": 0.937053383775
+          },
+          "task": "internal_state__cities"
+        },
+        {
+          "cross_auc": {
+            "seed": 3,
+            "train_task": "roleplaying__plain",
+            "value": 0.60135
+          },
+          "cross_balanced_accuracy": {
+            "seed": 1,
+            "train_task": "roleplaying__plain",
+            "value": 0.5
+          },
+          "general_auc": {
+            "seed": 0,
+            "value": 0.966755555556
+          },
+          "general_balanced_accuracy": {
+            "seed": 1,
+            "value": 0.913333333333
+          },
+          "task": "internal_state__companies"
+        },
+        {
+          "cross_auc": {
+            "seed": 3,
+            "train_task": "roleplaying__plain",
+            "value": 0.585857324546
+          },
+          "cross_balanced_accuracy": {
+            "seed": 2,
+            "train_task": "ethics__commonsense",
+            "value": 0.5
+          },
+          "general_auc": {
+            "seed": 2,
+            "value": 0.97030651341
+          },
+          "general_balanced_accuracy": {
+            "seed": 2,
+            "value": 0.935492189803
+          },
+          "task": "internal_state__elements"
+        },
+        {
+          "cross_auc": {
+            "seed": 3,
+            "train_task": "roleplaying__plain",
+            "value": 0.548466074812
+          },
+          "cross_balanced_accuracy": {
+            "seed": 0,
+            "train_task": "roleplaying__plain",
+            "value": 0.506541270145
+          },
+          "general_auc": {
+            "seed": 3,
+            "value": 0.984651711924
+          },
+          "general_balanced_accuracy": {
+            "seed": 1,
+            "value": 0.941558441558
+          },
+          "task": "internal_state__facts"
+        },
+        {
+          "cross_auc": {
+            "seed": 3,
+            "train_task": "roleplaying__plain",
+            "value": 0.633526531637
+          },
+          "cross_balanced_accuracy": {
+            "seed": 0,
+            "train_task": "sandbagging_v2__wmdp_mmlu",
+            "value": 0.498922413793
+          },
+          "general_auc": {
+            "seed": 0,
+            "value": 0.950786742551
+          },
+          "general_balanced_accuracy": {
+            "seed": 2,
+            "value": 0.89864412454
+          },
+          "task": "internal_state__inventions"
+        },
+        {
+          "cross_auc": {
+            "seed": 2,
+            "train_task": "sycophancy__mmlu_stem_same_conf_all",
+            "value": 0.358236737457
+          },
+          "cross_balanced_accuracy": {
+            "seed": 4,
+            "train_task": "sycophancy__mmlu_stem_same_conf_all",
+            "value": 0.42131313986
+          },
+          "general_auc": {
+            "seed": 1,
+            "value": 0.87962962963
+          },
+          "general_balanced_accuracy": {
+            "seed": 2,
+            "value": 0.79828042328
+          },
+          "task": "roleplaying__plain"
+        },
+        {
+          "cross_auc": {
+            "seed": 1,
+            "train_task": "geometry_of_truth__mixed",
+            "value": 0.33897882939
+          },
+          "cross_balanced_accuracy": {
+            "seed": 1,
+            "train_task": "geometry_of_truth__mixed",
+            "value": 0.458904109589
+          },
+          "general_auc": {
+            "seed": 2,
+            "value": 0.968253968254
+          },
+          "general_balanced_accuracy": {
+            "seed": 0,
+            "value": 0.936507936508
+          },
+          "task": "sandbagging_v2__wmdp_mmlu"
+        },
+        {
+          "cross_auc": {
+            "seed": 3,
+            "train_task": "roleplaying__plain",
+            "value": 0.41987792
+          },
+          "cross_balanced_accuracy": {
+            "seed": 0,
+            "train_task": "roleplaying__plain",
+            "value": 0.4732
+          },
+          "general_auc": {
+            "seed": 1,
+            "value": 0.9569152
+          },
+          "general_balanced_accuracy": {
+            "seed": 0,
+            "value": 0.8968
+          },
+          "task": "sycophancy__mmlu_stem_same_conf_all"
+        }
+      ],
+      "planned_run_count": 5,
+      "regularization_c": 0.01,
+      "seeds": [
+        {
+          "metrics": {
+            "cross_auc": 0.8494042613544552,
+            "cross_balanced_accuracy": 0.6902917699090463,
+            "general_auc": 0.9752281511973168,
+            "general_balanced_accuracy": 0.9301895175515744
+          },
+          "rank": 1,
+          "result_path": "/Users/student/Desktop/ai/intelligent_liars/artifacts/probes/sweeps/dense_15_27_by_layer/no_repe_layer21_c001.json",
+          "reused_seed_zero": true,
+          "seed": 0,
+          "status": "valid"
+        },
+        {
+          "metrics": {
+            "cross_auc": 0.8496715840824873,
+            "cross_balanced_accuracy": 0.6959333813435205,
+            "general_auc": 0.9713359550548486,
+            "general_balanced_accuracy": 0.9247312148638905
+          },
+          "rank": 1,
+          "result_path": "/Users/student/Desktop/ai/intelligent_liars/artifacts/probes/robustness/seed_robustness_v1/no_repe_layer21_c001/seed_1.json",
+          "reused_seed_zero": false,
+          "seed": 1,
+          "status": "valid"
+        },
+        {
+          "metrics": {
+            "cross_auc": 0.8460850258905829,
+            "cross_balanced_accuracy": 0.6879278915840947,
+            "general_auc": 0.9704156237575292,
+            "general_balanced_accuracy": 0.9210103925970529
+          },
+          "rank": 1,
+          "result_path": "/Users/student/Desktop/ai/intelligent_liars/artifacts/probes/robustness/seed_robustness_v1/no_repe_layer21_c001/seed_2.json",
+          "reused_seed_zero": false,
+          "seed": 2,
+          "status": "valid"
+        },
+        {
+          "metrics": {
+            "cross_auc": 0.844058656547797,
+            "cross_balanced_accuracy": 0.6904763388242506,
+            "general_auc": 0.9753142349326153,
+            "general_balanced_accuracy": 0.9299755041519993
+          },
+          "rank": 2,
+          "result_path": "/Users/student/Desktop/ai/intelligent_liars/artifacts/probes/robustness/seed_robustness_v1/no_repe_layer21_c001/seed_3.json",
+          "reused_seed_zero": false,
+          "seed": 3,
+          "status": "valid"
+        },
+        {
+          "metrics": {
+            "cross_auc": 0.8481959760801651,
+            "cross_balanced_accuracy": 0.6848477507943606,
+            "general_auc": 0.9744635859693451,
+            "general_balanced_accuracy": 0.9277758670050923
+          },
+          "rank": 1,
+          "result_path": "/Users/student/Desktop/ai/intelligent_liars/artifacts/probes/robustness/seed_robustness_v1/no_repe_layer21_c001/seed_4.json",
+          "reused_seed_zero": false,
+          "seed": 4,
+          "status": "valid"
+        }
+      ],
+      "status": "complete",
+      "top_2_frequency": {
+        "count": 5,
+        "rate": 1.0,
+        "total": 5
+      },
+      "valid_run_count": 5
+    },
+    {
+      "direction_cosines": {
+        "pairs": [
+          {
+            "raw_cosine": 0.812419244602,
+            "seed_0_aligned_cosine": 0.812419244602,
+            "seed_a": 0,
+            "seed_b": 1
+          },
+          {
+            "raw_cosine": 0.815503107777,
+            "seed_0_aligned_cosine": 0.815503107777,
+            "seed_a": 0,
+            "seed_b": 2
+          },
+          {
+            "raw_cosine": 0.803637717373,
+            "seed_0_aligned_cosine": 0.803637717373,
+            "seed_a": 0,
+            "seed_b": 3
+          },
+          {
+            "raw_cosine": 0.818838682414,
+            "seed_0_aligned_cosine": 0.818838682414,
+            "seed_a": 0,
+            "seed_b": 4
+          },
+          {
+            "raw_cosine": 0.823516480587,
+            "seed_0_aligned_cosine": 0.823516480587,
+            "seed_a": 1,
+            "seed_b": 2
+          },
+          {
+            "raw_cosine": 0.820484083897,
+            "seed_0_aligned_cosine": 0.820484083897,
+            "seed_a": 1,
+            "seed_b": 3
+          },
+          {
+            "raw_cosine": 0.826602391939,
+            "seed_0_aligned_cosine": 0.826602391939,
+            "seed_a": 1,
+            "seed_b": 4
+          },
+          {
+            "raw_cosine": 0.821695295754,
+            "seed_0_aligned_cosine": 0.821695295754,
+            "seed_a": 2,
+            "seed_b": 3
+          },
+          {
+            "raw_cosine": 0.825901761651,
+            "seed_0_aligned_cosine": 0.825901761651,
+            "seed_a": 2,
+            "seed_b": 4
+          },
+          {
+            "raw_cosine": 0.805696472044,
+            "seed_0_aligned_cosine": 0.805696472044,
+            "seed_a": 3,
+            "seed_b": 4
+          }
+        ],
+        "reference_seed": 0,
+        "seed_0_alignment_multipliers": {
+          "0": 1,
+          "1": 1,
+          "2": 1,
+          "3": 1,
+          "4": 1
+        },
+        "sign_convention": "sklearn_logistic_coef_positive_points_honest_to_deceptive"
+      },
+      "id": "no_repe_layer21_c003",
+      "invalid_run_count": 0,
+      "layer": 21,
+      "metrics": {
+        "cross_auc": {
+          "mean": 0.839311338573,
+          "std": 0.002064862211,
+          "worst": 0.835687573307
+        },
+        "cross_balanced_accuracy": {
+          "mean": 0.688965319915,
+          "std": 0.00231418739,
+          "worst": 0.684866019199
+        },
+        "general_auc": {
+          "mean": 0.971940294146,
+          "std": 0.002560864856,
+          "worst": 0.967959308471
+        },
+        "general_balanced_accuracy": {
+          "mean": 0.924368422259,
+          "std": 0.002921480762,
+          "worst": 0.919958686582
+        }
+      },
+      "per_task_worst_cases": [
+        {
+          "cross_auc": {
+            "seed": 1,
+            "train_task": "ethics__commonsense",
+            "value": 0.635878390099
+          },
+          "cross_balanced_accuracy": {
+            "seed": 3,
+            "train_task": "sycophancy__mmlu_stem_same_conf_all",
+            "value": 0.501686340641
+          },
+          "general_auc": {
+            "seed": 2,
+            "value": 0.994104843098
+          },
+          "general_balanced_accuracy": {
+            "seed": 1,
+            "value": 0.96297387992
+          },
+          "task": "claims__definitional_gemini_600_full"
+        },
+        {
+          "cross_auc": {
+            "seed": 3,
+            "train_task": "roleplaying__plain",
+            "value": 0.69815543038
+          },
+          "cross_balanced_accuracy": {
+            "seed": 1,
+            "train_task": "sandbagging_v2__wmdp_mmlu",
+            "value": 0.512886597938
+          },
+          "general_auc": {
+            "seed": 1,
+            "value": 0.98351440718
+          },
+          "general_balanced_accuracy": {
+            "seed": 3,
+            "value": 0.962139820501
+          },
+          "task": "claims__evidential_gemini_600_full"
+        },
+        {
+          "cross_auc": {
+            "seed": 1,
+            "train_task": "ethics__commonsense",
+            "value": 0.607011111111
+          },
+          "cross_balanced_accuracy": {
+            "seed": 1,
+            "train_task": "roleplaying__plain",
+            "value": 0.5
+          },
+          "general_auc": {
+            "seed": 2,
+            "value": 0.9504
+          },
+          "general_balanced_accuracy": {
+            "seed": 2,
+            "value": 0.873333333333
+          },
+          "task": "claims__fictional_gemini_600_full"
+        },
+        {
+          "cross_auc": {
+            "seed": 3,
+            "train_task": "roleplaying__plain",
+            "value": 0.530410586011
+          },
+          "cross_balanced_accuracy": {
+            "seed": 1,
+            "train_task": "roleplaying__plain",
+            "value": 0.5
+          },
+          "general_auc": {
+            "seed": 3,
+            "value": 0.953944830247
+          },
+          "general_balanced_accuracy": {
+            "seed": 3,
+            "value": 0.878472222222
+          },
+          "task": "claims__logical_gemini_600_full"
+        },
+        {
+          "cross_auc": {
+            "seed": 4,
+            "train_task": "roleplaying__plain",
+            "value": 0.51965125
+          },
+          "cross_balanced_accuracy": {
+            "seed": 4,
+            "train_task": "roleplaying__plain",
+            "value": 0.41125
+          },
+          "general_auc": {
+            "seed": 0,
+            "value": 0.961168
+          },
+          "general_balanced_accuracy": {
+            "seed": 4,
+            "value": 0.89
+          },
+          "task": "ethics__commonsense"
+        },
+        {
+          "cross_auc": {
+            "seed": 3,
+            "train_task": "roleplaying__plain",
+            "value": 0.23853646772
+          },
+          "cross_balanced_accuracy": {
+            "seed": 4,
+            "train_task": "roleplaying__plain",
+            "value": 0.457710011507
+          },
+          "general_auc": {
+            "seed": 4,
+            "value": 0.9999430585
+          },
+          "general_balanced_accuracy": {
+            "seed": 0,
+            "value": 0.997698504028
+          },
+          "task": "geometry_of_truth__best"
+        },
+        {
+          "cross_auc": {
+            "seed": 3,
+            "train_task": "roleplaying__plain",
+            "value": 0.494969984372
+          },
+          "cross_balanced_accuracy": {
+            "seed": 3,
+            "train_task": "roleplaying__plain",
+            "value": 0.499692867498
+          },
+          "general_auc": {
+            "seed": 0,
+            "value": 0.938617491714
+          },
+          "general_balanced_accuracy": {
+            "seed": 0,
+            "value": 0.862439253422
+          },
+          "task": "geometry_of_truth__mixed"
+        },
+        {
+          "cross_auc": {
+            "seed": 3,
+            "train_task": "roleplaying__plain",
+            "value": 0.591903659612
+          },
+          "cross_balanced_accuracy": {
+            "seed": 1,
+            "train_task": "roleplaying__plain",
+            "value": 0.5
+          },
+          "general_auc": {
+            "seed": 1,
+            "value": 0.949861426052
+          },
+          "general_balanced_accuracy": {
+            "seed": 2,
+            "value": 0.857142857143
+          },
+          "task": "internal_state__animals"
+        },
+        {
+          "cross_auc": {
+            "seed": 3,
+            "train_task": "sandbagging_v2__wmdp_mmlu",
+            "value": 0.604360596943
+          },
+          "cross_balanced_accuracy": {
+            "seed": 0,
+            "train_task": "sandbagging_v2__wmdp_mmlu",
+            "value": 0.5
+          },
+          "general_auc": {
+            "seed": 0,
+            "value": 0.983066114214
+          },
+          "general_balanced_accuracy": {
+            "seed": 0,
+            "value": 0.939755599592
+          },
+          "task": "internal_state__cities"
+        },
+        {
+          "cross_auc": {
+            "seed": 3,
+            "train_task": "roleplaying__plain",
+            "value": 0.597083333333
+          },
+          "cross_balanced_accuracy": {
+            "seed": 1,
+            "train_task": "roleplaying__plain",
+            "value": 0.5
+          },
+          "general_auc": {
+            "seed": 0,
+            "value": 0.968933333333
+          },
+          "general_balanced_accuracy": {
+            "seed": 1,
+            "value": 0.91
+          },
+          "task": "internal_state__companies"
+        },
+        {
+          "cross_auc": {
+            "seed": 3,
+            "train_task": "roleplaying__plain",
+            "value": 0.580339923691
+          },
+          "cross_balanced_accuracy": {
+            "seed": 2,
+            "train_task": "ethics__commonsense",
+            "value": 0.5
+          },
+          "general_auc": {
+            "seed": 2,
+            "value": 0.971706454465
+          },
+          "general_balanced_accuracy": {
+            "seed": 1,
+            "value": 0.935639552019
+          },
+          "task": "internal_state__elements"
+        },
+        {
+          "cross_auc": {
+            "seed": 3,
+            "train_task": "roleplaying__plain",
+            "value": 0.544527474399
+          },
+          "cross_balanced_accuracy": {
+            "seed": 1,
+            "train_task": "roleplaying__plain",
+            "value": 0.509809244002
+          },
+          "general_auc": {
+            "seed": 3,
+            "value": 0.980772474279
+          },
+          "general_balanced_accuracy": {
+            "seed": 3,
+            "value": 0.915584415584
+          },
+          "task": "internal_state__facts"
+        },
+        {
+          "cross_auc": {
+            "seed": 3,
+            "train_task": "roleplaying__plain",
+            "value": 0.626344367258
+          },
+          "cross_balanced_accuracy": {
+            "seed": 0,
+            "train_task": "sandbagging_v2__wmdp_mmlu",
+            "value": 0.498922413793
+          },
+          "general_auc": {
+            "seed": 0,
+            "value": 0.942166052896
+          },
+          "general_balanced_accuracy": {
+            "seed": 2,
+            "value": 0.875460328088
+          },
+          "task": "internal_state__inventions"
+        },
+        {
+          "cross_auc": {
+            "seed": 2,
+            "train_task": "sycophancy__mmlu_stem_same_conf_all",
+            "value": 0.354598527794
+          },
+          "cross_balanced_accuracy": {
+            "seed": 4,
+            "train_task": "sycophancy__mmlu_stem_same_conf_all",
+            "value": 0.430810559269
+          },
+          "general_auc": {
+            "seed": 1,
+            "value": 0.883597883598
+          },
+          "general_balanced_accuracy": {
+            "seed": 2,
+            "value": 0.80787037037
+          },
+          "task": "roleplaying__plain"
+        },
+        {
+          "cross_auc": {
+            "seed": 1,
+            "train_task": "geometry_of_truth__mixed",
+            "value": 0.325529265255
+          },
+          "cross_balanced_accuracy": {
+            "seed": 1,
+            "train_task": "geometry_of_truth__mixed",
+            "value": 0.465753424658
+          },
+          "general_auc": {
+            "seed": 4,
+            "value": 0.960317460317
+          },
+          "general_balanced_accuracy": {
+            "seed": 4,
+            "value": 0.900793650794
+          },
+          "task": "sandbagging_v2__wmdp_mmlu"
+        },
+        {
+          "cross_auc": {
+            "seed": 3,
+            "train_task": "roleplaying__plain",
+            "value": 0.40923248
+          },
+          "cross_balanced_accuracy": {
+            "seed": 0,
+            "train_task": "roleplaying__plain",
+            "value": 0.4544
+          },
+          "general_auc": {
+            "seed": 1,
+            "value": 0.96188672
+          },
+          "general_balanced_accuracy": {
+            "seed": 0,
+            "value": 0.9096
+          },
+          "task": "sycophancy__mmlu_stem_same_conf_all"
+        }
+      ],
+      "planned_run_count": 5,
+      "regularization_c": 0.03,
+      "seeds": [
+        {
+          "metrics": {
+            "cross_auc": 0.8407715117299231,
+            "cross_balanced_accuracy": 0.6906444714981147,
+            "general_auc": 0.9738731880192403,
+            "general_balanced_accuracy": 0.9289681822805395
+          },
+          "rank": 2,
+          "result_path": "/Users/student/Desktop/ai/intelligent_liars/artifacts/probes/sweeps/dense_15_27_by_layer/no_repe_layer21_c003.json",
+          "reused_seed_zero": true,
+          "seed": 0,
+          "status": "valid"
+        },
+        {
+          "metrics": {
+            "cross_auc": 0.8409743050444978,
+            "cross_balanced_accuracy": 0.6909380147424363,
+            "general_auc": 0.9698986996444745,
+            "general_balanced_accuracy": 0.9231415314360653
+          },
+          "rank": 2,
+          "result_path": "/Users/student/Desktop/ai/intelligent_liars/artifacts/probes/robustness/seed_robustness_v1/no_repe_layer21_c003/seed_1.json",
+          "reused_seed_zero": false,
+          "seed": 1,
+          "status": "valid"
+        },
+        {
+          "metrics": {
+            "cross_auc": 0.838303929461095,
+            "cross_balanced_accuracy": 0.6879316952033409,
+            "general_auc": 0.9679593084709068,
+            "general_balanced_accuracy": 0.9199586865821139
+          },
+          "rank": 2,
+          "result_path": "/Users/student/Desktop/ai/intelligent_liars/artifacts/probes/robustness/seed_robustness_v1/no_repe_layer21_c003/seed_2.json",
+          "reused_seed_zero": false,
+          "seed": 2,
+          "status": "valid"
+        },
+        {
+          "metrics": {
+            "cross_auc": 0.8356875733070805,
+            "cross_balanced_accuracy": 0.6904463989320101,
+            "general_auc": 0.97456606038099,
+            "general_balanced_accuracy": 0.9247666867259375
+          },
+          "rank": 3,
+          "result_path": "/Users/student/Desktop/ai/intelligent_liars/artifacts/probes/robustness/seed_robustness_v1/no_repe_layer21_c003/seed_3.json",
+          "reused_seed_zero": false,
+          "seed": 3,
+          "status": "valid"
+        },
+        {
+          "metrics": {
+            "cross_auc": 0.8408193733210079,
+            "cross_balanced_accuracy": 0.6848660191986445,
+            "general_auc": 0.9734042142119621,
+            "general_balanced_accuracy": 0.9250070242685612
+          },
+          "rank": 2,
+          "result_path": "/Users/student/Desktop/ai/intelligent_liars/artifacts/probes/robustness/seed_robustness_v1/no_repe_layer21_c003/seed_4.json",
+          "reused_seed_zero": false,
+          "seed": 4,
+          "status": "valid"
+        }
+      ],
+      "status": "complete",
+      "top_2_frequency": {
+        "count": 4,
+        "rate": 0.8,
+        "total": 5
+      },
+      "valid_run_count": 5
+    },
+    {
+      "direction_cosines": {
+        "pairs": [
+          {
+            "raw_cosine": 0.832329450022,
+            "seed_0_aligned_cosine": 0.832329450022,
+            "seed_a": 0,
+            "seed_b": 1
+          },
+          {
+            "raw_cosine": 0.82633506647,
+            "seed_0_aligned_cosine": 0.82633506647,
+            "seed_a": 0,
+            "seed_b": 2
+          },
+          {
+            "raw_cosine": 0.834492891424,
+            "seed_0_aligned_cosine": 0.834492891424,
+            "seed_a": 0,
+            "seed_b": 3
+          },
+          {
+            "raw_cosine": 0.810708180781,
+            "seed_0_aligned_cosine": 0.810708180781,
+            "seed_a": 0,
+            "seed_b": 4
+          },
+          {
+            "raw_cosine": 0.826851975223,
+            "seed_0_aligned_cosine": 0.826851975223,
+            "seed_a": 1,
+            "seed_b": 2
+          },
+          {
+            "raw_cosine": 0.830645090059,
+            "seed_0_aligned_cosine": 0.830645090059,
+            "seed_a": 1,
+            "seed_b": 3
+          },
+          {
+            "raw_cosine": 0.811431452587,
+            "seed_0_aligned_cosine": 0.811431452587,
+            "seed_a": 1,
+            "seed_b": 4
+          },
+          {
+            "raw_cosine": 0.833051231148,
+            "seed_0_aligned_cosine": 0.833051231148,
+            "seed_a": 2,
+            "seed_b": 3
+          },
+          {
+            "raw_cosine": 0.820686672717,
+            "seed_0_aligned_cosine": 0.820686672717,
+            "seed_a": 2,
+            "seed_b": 4
+          },
+          {
+            "raw_cosine": 0.829632727873,
+            "seed_0_aligned_cosine": 0.829632727873,
+            "seed_a": 3,
+            "seed_b": 4
+          }
+        ],
+        "reference_seed": 0,
+        "seed_0_alignment_multipliers": {
+          "0": 1,
+          "1": 1,
+          "2": 1,
+          "3": 1,
+          "4": 1
+        },
+        "sign_convention": "sklearn_logistic_coef_positive_points_honest_to_deceptive"
+      },
+      "id": "no_repe_layer20_c003",
+      "invalid_run_count": 0,
+      "layer": 20,
+      "metrics": {
+        "cross_auc": {
+          "mean": 0.83809916398,
+          "std": 0.001850755598,
+          "worst": 0.83540113379
+        },
+        "cross_balanced_accuracy": {
+          "mean": 0.692092801676,
+          "std": 0.002436445612,
+          "worst": 0.688528032019
+        },
+        "general_auc": {
+          "mean": 0.970778811976,
+          "std": 0.001637293541,
+          "worst": 0.968928319024
+        },
+        "general_balanced_accuracy": {
+          "mean": 0.921341282988,
+          "std": 0.005958155595,
+          "worst": 0.913903875187
+        }
+      },
+      "per_task_worst_cases": [
+        {
+          "cross_auc": {
+            "seed": 3,
+            "train_task": "roleplaying__plain",
+            "value": 0.643940406485
+          },
+          "cross_balanced_accuracy": {
+            "seed": 2,
+            "train_task": "sandbagging_v2__wmdp_mmlu",
+            "value": 0.501686340641
+          },
+          "general_auc": {
+            "seed": 3,
+            "value": 0.993152548522
+          },
+          "general_balanced_accuracy": {
+            "seed": 3,
+            "value": 0.96295120624
+          },
+          "task": "claims__definitional_gemini_600_full"
+        },
+        {
+          "cross_auc": {
+            "seed": 3,
+            "train_task": "roleplaying__plain",
+            "value": 0.703425207544
+          },
+          "cross_balanced_accuracy": {
+            "seed": 2,
+            "train_task": "sandbagging_v2__wmdp_mmlu",
+            "value": 0.508591065292
+          },
+          "general_auc": {
+            "seed": 1,
+            "value": 0.9824279641
+          },
+          "general_balanced_accuracy": {
+            "seed": 1,
+            "value": 0.951960321209
+          },
+          "task": "claims__evidential_gemini_600_full"
+        },
+        {
+          "cross_auc": {
+            "seed": 2,
+            "train_task": "ethics__commonsense",
+            "value": 0.631208333333
+          },
+          "cross_balanced_accuracy": {
+            "seed": 1,
+            "train_task": "roleplaying__plain",
+            "value": 0.501666666667
+          },
+          "general_auc": {
+            "seed": 2,
+            "value": 0.948266666667
+          },
+          "general_balanced_accuracy": {
+            "seed": 2,
+            "value": 0.86
+          },
+          "task": "claims__fictional_gemini_600_full"
+        },
+        {
+          "cross_auc": {
+            "seed": 3,
+            "train_task": "sandbagging_v2__wmdp_mmlu",
+            "value": 0.550986767486
+          },
+          "cross_balanced_accuracy": {
+            "seed": 1,
+            "train_task": "roleplaying__plain",
+            "value": 0.500869565217
+          },
+          "general_auc": {
+            "seed": 3,
+            "value": 0.947145061728
+          },
+          "general_balanced_accuracy": {
+            "seed": 3,
+            "value": 0.878472222222
+          },
+          "task": "claims__logical_gemini_600_full"
+        },
+        {
+          "cross_auc": {
+            "seed": 4,
+            "train_task": "roleplaying__plain",
+            "value": 0.52020125
+          },
+          "cross_balanced_accuracy": {
+            "seed": 4,
+            "train_task": "roleplaying__plain",
+            "value": 0.42525
+          },
+          "general_auc": {
+            "seed": 0,
+            "value": 0.954108
+          },
+          "general_balanced_accuracy": {
+            "seed": 0,
+            "value": 0.884
+          },
+          "task": "ethics__commonsense"
+        },
+        {
+          "cross_auc": {
+            "seed": 3,
+            "train_task": "roleplaying__plain",
+            "value": 0.330301170876
+          },
+          "cross_balanced_accuracy": {
+            "seed": 0,
+            "train_task": "claims__fictional_gemini_600_full",
+            "value": 0.5
+          },
+          "general_auc": {
+            "seed": 4,
+            "value": 0.999954976488
+          },
+          "general_balanced_accuracy": {
+            "seed": 4,
+            "value": 0.996547756041
+          },
+          "task": "geometry_of_truth__best"
+        },
+        {
+          "cross_auc": {
+            "seed": 3,
+            "train_task": "roleplaying__plain",
+            "value": 0.59049986452
+          },
+          "cross_balanced_accuracy": {
+            "seed": 3,
+            "train_task": "claims__fictional_gemini_600_full",
+            "value": 0.517801530746
+          },
+          "general_auc": {
+            "seed": 2,
+            "value": 0.940357424085
+          },
+          "general_balanced_accuracy": {
+            "seed": 4,
+            "value": 0.863017016962
+          },
+          "task": "geometry_of_truth__mixed"
+        },
+        {
+          "cross_auc": {
+            "seed": 3,
+            "train_task": "roleplaying__plain",
+            "value": 0.624704743008
+          },
+          "cross_balanced_accuracy": {
+            "seed": 3,
+            "train_task": "sandbagging_v2__wmdp_mmlu",
+            "value": 0.499007936508
+          },
+          "general_auc": {
+            "seed": 2,
+            "value": 0.946649029982
+          },
+          "general_balanced_accuracy": {
+            "seed": 1,
+            "value": 0.869047619048
+          },
+          "task": "internal_state__animals"
+        },
+        {
+          "cross_auc": {
+            "seed": 3,
+            "train_task": "sandbagging_v2__wmdp_mmlu",
+            "value": 0.586834662738
+          },
+          "cross_balanced_accuracy": {
+            "seed": 0,
+            "train_task": "sandbagging_v2__wmdp_mmlu",
+            "value": 0.5
+          },
+          "general_auc": {
+            "seed": 2,
+            "value": 0.983786705098
+          },
+          "general_balanced_accuracy": {
+            "seed": 0,
+            "value": 0.937008346844
+          },
+          "task": "internal_state__cities"
+        },
+        {
+          "cross_auc": {
+            "seed": 3,
+            "train_task": "roleplaying__plain",
+            "value": 0.634111111111
+          },
+          "cross_balanced_accuracy": {
+            "seed": 0,
+            "train_task": "sandbagging_v2__wmdp_mmlu",
+            "value": 0.5
+          },
+          "general_auc": {
+            "seed": 0,
+            "value": 0.965777777778
+          },
+          "general_balanced_accuracy": {
+            "seed": 3,
+            "value": 0.916666666667
+          },
+          "task": "internal_state__companies"
+        },
+        {
+          "cross_auc": {
+            "seed": 0,
+            "train_task": "roleplaying__plain",
+            "value": 0.652158631056
+          },
+          "cross_balanced_accuracy": {
+            "seed": 3,
+            "train_task": "sandbagging_v2__wmdp_mmlu",
+            "value": 0.5
+          },
+          "general_auc": {
+            "seed": 2,
+            "value": 0.964264662541
+          },
+          "general_balanced_accuracy": {
+            "seed": 2,
+            "value": 0.935492189803
+          },
+          "task": "internal_state__elements"
+        },
+        {
+          "cross_auc": {
+            "seed": 3,
+            "train_task": "roleplaying__plain",
+            "value": 0.580890336591
+          },
+          "cross_balanced_accuracy": {
+            "seed": 3,
+            "train_task": "sandbagging_v2__wmdp_mmlu",
+            "value": 0.519543973941
+          },
+          "general_auc": {
+            "seed": 3,
+            "value": 0.980097824254
+          },
+          "general_balanced_accuracy": {
+            "seed": 1,
+            "value": 0.935064935065
+          },
+          "task": "internal_state__facts"
+        },
+        {
+          "cross_auc": {
+            "seed": 3,
+            "train_task": "geometry_of_truth__mixed",
+            "value": 0.626192668229
+          },
+          "cross_balanced_accuracy": {
+            "seed": 0,
+            "train_task": "sandbagging_v2__wmdp_mmlu",
+            "value": 0.5
+          },
+          "general_auc": {
+            "seed": 0,
+            "value": 0.948861734181
+          },
+          "general_balanced_accuracy": {
+            "seed": 2,
+            "value": 0.847422162705
+          },
+          "task": "internal_state__inventions"
+        },
+        {
+          "cross_auc": {
+            "seed": 3,
+            "train_task": "geometry_of_truth__best",
+            "value": 0.39918774854
+          },
+          "cross_balanced_accuracy": {
+            "seed": 3,
+            "train_task": "ethics__commonsense",
+            "value": 0.442740502581
+          },
+          "general_auc": {
+            "seed": 1,
+            "value": 0.868386243386
+          },
+          "general_balanced_accuracy": {
+            "seed": 1,
+            "value": 0.772156084656
+          },
+          "task": "roleplaying__plain"
+        },
+        {
+          "cross_auc": {
+            "seed": 1,
+            "train_task": "geometry_of_truth__mixed",
+            "value": 0.291407222914
+          },
+          "cross_balanced_accuracy": {
+            "seed": 2,
+            "train_task": "geometry_of_truth__mixed",
+            "value": 0.440597758406
+          },
+          "general_auc": {
+            "seed": 2,
+            "value": 0.97619047619
+          },
+          "general_balanced_accuracy": {
+            "seed": 4,
+            "value": 0.900793650794
+          },
+          "task": "sandbagging_v2__wmdp_mmlu"
+        },
+        {
+          "cross_auc": {
+            "seed": 2,
+            "train_task": "geometry_of_truth__mixed",
+            "value": 0.57314416
+          },
+          "cross_balanced_accuracy": {
+            "seed": 1,
+            "train_task": "internal_state__companies",
+            "value": 0.5036
+          },
+          "general_auc": {
+            "seed": 1,
+            "value": 0.95812608
+          },
+          "general_balanced_accuracy": {
+            "seed": 2,
+            "value": 0.9104
+          },
+          "task": "sycophancy__mmlu_stem_same_conf_all"
+        }
+      ],
+      "planned_run_count": 5,
+      "regularization_c": 0.03,
+      "seeds": [
+        {
+          "metrics": {
+            "cross_auc": 0.8384844644641253,
+            "cross_balanced_accuracy": 0.6926760983018921,
+            "general_auc": 0.9713874569631104,
+            "general_balanced_accuracy": 0.9259002610096225
+          },
+          "rank": 3,
+          "result_path": "/Users/student/Desktop/ai/intelligent_liars/artifacts/probes/sweeps/dense_15_27_by_layer/no_repe_layer20_c003.json",
+          "reused_seed_zero": true,
+          "seed": 0,
+          "status": "valid"
+        },
+        {
+          "metrics": {
+            "cross_auc": 0.8396945521120454,
+            "cross_balanced_accuracy": 0.6927439973144244,
+            "general_auc": 0.9694456908509049,
+            "general_balanced_accuracy": 0.91764974838243
+          },
+          "rank": 4,
+          "result_path": "/Users/student/Desktop/ai/intelligent_liars/artifacts/probes/robustness/seed_robustness_v1/no_repe_layer20_c003/seed_1.json",
+          "reused_seed_zero": false,
+          "seed": 1,
+          "status": "valid"
+        },
+        {
+          "metrics": {
+            "cross_auc": 0.8366009414891018,
+            "cross_balanced_accuracy": 0.6885280320193267,
+            "general_auc": 0.968928319023731,
+            "general_balanced_accuracy": 0.9139038751869741
+          },
+          "rank": 3,
+          "result_path": "/Users/student/Desktop/ai/intelligent_liars/artifacts/probes/robustness/seed_robustness_v1/no_repe_layer20_c003/seed_2.json",
+          "reused_seed_zero": false,
+          "seed": 2,
+          "status": "valid"
+        },
+        {
+          "metrics": {
+            "cross_auc": 0.8354011337901699,
+            "cross_balanced_accuracy": 0.6958554744263943,
+            "general_auc": 0.9735690328520059,
+            "general_balanced_accuracy": 0.9303790528242362
+          },
+          "rank": 1,
+          "result_path": "/Users/student/Desktop/ai/intelligent_liars/artifacts/probes/robustness/seed_robustness_v1/no_repe_layer20_c003/seed_3.json",
+          "reused_seed_zero": false,
+          "seed": 3,
+          "status": "valid"
+        },
+        {
+          "metrics": {
+            "cross_auc": 0.8403147280434614,
+            "cross_balanced_accuracy": 0.6906604063163287,
+            "general_auc": 0.9705635601893295,
+            "general_balanced_accuracy": 0.918873477537189
+          },
+          "rank": 3,
+          "result_path": "/Users/student/Desktop/ai/intelligent_liars/artifacts/probes/robustness/seed_robustness_v1/no_repe_layer20_c003/seed_4.json",
+          "reused_seed_zero": false,
+          "seed": 4,
+          "status": "valid"
+        }
+      ],
+      "status": "complete",
+      "top_2_frequency": {
+        "count": 1,
+        "rate": 0.2,
+        "total": 5
+      },
+      "valid_run_count": 5
+    },
+    {
+      "direction_cosines": {
+        "pairs": [
+          {
+            "raw_cosine": 0.873326436486,
+            "seed_0_aligned_cosine": 0.873326436486,
+            "seed_a": 0,
+            "seed_b": 1
+          },
+          {
+            "raw_cosine": 0.881438754941,
+            "seed_0_aligned_cosine": 0.881438754941,
+            "seed_a": 0,
+            "seed_b": 2
+          },
+          {
+            "raw_cosine": 0.883891355137,
+            "seed_0_aligned_cosine": 0.883891355137,
+            "seed_a": 0,
+            "seed_b": 3
+          },
+          {
+            "raw_cosine": 0.875894724688,
+            "seed_0_aligned_cosine": 0.875894724688,
+            "seed_a": 0,
+            "seed_b": 4
+          },
+          {
+            "raw_cosine": 0.865050458949,
+            "seed_0_aligned_cosine": 0.865050458949,
+            "seed_a": 1,
+            "seed_b": 2
+          },
+          {
+            "raw_cosine": 0.87638024651,
+            "seed_0_aligned_cosine": 0.87638024651,
+            "seed_a": 1,
+            "seed_b": 3
+          },
+          {
+            "raw_cosine": 0.877935281245,
+            "seed_0_aligned_cosine": 0.877935281245,
+            "seed_a": 1,
+            "seed_b": 4
+          },
+          {
+            "raw_cosine": 0.87835086588,
+            "seed_0_aligned_cosine": 0.87835086588,
+            "seed_a": 2,
+            "seed_b": 3
+          },
+          {
+            "raw_cosine": 0.871394421716,
+            "seed_0_aligned_cosine": 0.871394421716,
+            "seed_a": 2,
+            "seed_b": 4
+          },
+          {
+            "raw_cosine": 0.874837904607,
+            "seed_0_aligned_cosine": 0.874837904607,
+            "seed_a": 3,
+            "seed_b": 4
+          }
+        ],
+        "reference_seed": 0,
+        "seed_0_alignment_multipliers": {
+          "0": 1,
+          "1": 1,
+          "2": 1,
+          "3": 1,
+          "4": 1
+        },
+        "sign_convention": "sklearn_logistic_coef_positive_points_honest_to_deceptive"
+      },
+      "id": "no_repe_layer19_c001",
+      "invalid_run_count": 0,
+      "layer": 19,
+      "metrics": {
+        "cross_auc": {
+          "mean": 0.846654922716,
+          "std": 0.001793134915,
+          "worst": 0.843434973624
+        },
+        "cross_balanced_accuracy": {
+          "mean": 0.695862989587,
+          "std": 0.000943605775,
+          "worst": 0.694479755947
+        },
+        "general_auc": {
+          "mean": 0.969683121782,
+          "std": 0.001662722602,
+          "worst": 0.967562445829
+        },
+        "general_balanced_accuracy": {
+          "mean": 0.918148400883,
+          "std": 0.004376343192,
+          "worst": 0.911938419754
+        }
+      },
+      "per_task_worst_cases": [
+        {
+          "cross_auc": {
+            "seed": 3,
+            "train_task": "roleplaying__plain",
+            "value": 0.637061387918
+          },
+          "cross_balanced_accuracy": {
+            "seed": 4,
+            "train_task": "ethics__commonsense",
+            "value": 0.5
+          },
+          "general_auc": {
+            "seed": 3,
+            "value": 0.992744422275
+          },
+          "general_balanced_accuracy": {
+            "seed": 2,
+            "value": 0.966306910938
+          },
+          "task": "claims__definitional_gemini_600_full"
+        },
+        {
+          "cross_auc": {
+            "seed": 3,
+            "train_task": "roleplaying__plain",
+            "value": 0.701013214298
+          },
+          "cross_balanced_accuracy": {
+            "seed": 1,
+            "train_task": "sandbagging_v2__wmdp_mmlu",
+            "value": 0.501718213058
+          },
+          "general_auc": {
+            "seed": 1,
+            "value": 0.985120453472
+          },
+          "general_balanced_accuracy": {
+            "seed": 1,
+            "value": 0.96572980633
+          },
+          "task": "claims__evidential_gemini_600_full"
+        },
+        {
+          "cross_auc": {
+            "seed": 3,
+            "train_task": "roleplaying__plain",
+            "value": 0.661822222222
+          },
+          "cross_balanced_accuracy": {
+            "seed": 0,
+            "train_task": "roleplaying__plain",
+            "value": 0.500833333333
+          },
+          "general_auc": {
+            "seed": 0,
+            "value": 0.958888888889
+          },
+          "general_balanced_accuracy": {
+            "seed": 2,
+            "value": 0.873333333333
+          },
+          "task": "claims__fictional_gemini_600_full"
+        },
+        {
+          "cross_auc": {
+            "seed": 3,
+            "train_task": "sandbagging_v2__wmdp_mmlu",
+            "value": 0.558251795841
+          },
+          "cross_balanced_accuracy": {
+            "seed": 0,
+            "train_task": "roleplaying__plain",
+            "value": 0.5
+          },
+          "general_auc": {
+            "seed": 3,
+            "value": 0.948109567901
+          },
+          "general_balanced_accuracy": {
+            "seed": 4,
+            "value": 0.878472222222
+          },
+          "task": "claims__logical_gemini_600_full"
+        },
+        {
+          "cross_auc": {
+            "seed": 4,
+            "train_task": "roleplaying__plain",
+            "value": 0.4981005
+          },
+          "cross_balanced_accuracy": {
+            "seed": 4,
+            "train_task": "roleplaying__plain",
+            "value": 0.446
+          },
+          "general_auc": {
+            "seed": 0,
+            "value": 0.958464
+          },
+          "general_balanced_accuracy": {
+            "seed": 0,
+            "value": 0.887
+          },
+          "task": "ethics__commonsense"
+        },
+        {
+          "cross_auc": {
+            "seed": 3,
+            "train_task": "roleplaying__plain",
+            "value": 0.451710380303
+          },
+          "cross_balanced_accuracy": {
+            "seed": 3,
+            "train_task": "roleplaying__plain",
+            "value": 0.482019562716
+          },
+          "general_auc": {
+            "seed": 4,
+            "value": 0.999933788954
+          },
+          "general_balanced_accuracy": {
+            "seed": 4,
+            "value": 0.996547756041
+          },
+          "task": "geometry_of_truth__best"
+        },
+        {
+          "cross_auc": {
+            "seed": 3,
+            "train_task": "roleplaying__plain",
+            "value": 0.635446728476
+          },
+          "cross_balanced_accuracy": {
+            "seed": 0,
+            "train_task": "claims__fictional_gemini_600_full",
+            "value": 0.514734657997
+          },
+          "general_auc": {
+            "seed": 2,
+            "value": 0.942142446105
+          },
+          "general_balanced_accuracy": {
+            "seed": 2,
+            "value": 0.863269265972
+          },
+          "task": "geometry_of_truth__mixed"
+        },
+        {
+          "cross_auc": {
+            "seed": 3,
+            "train_task": "roleplaying__plain",
+            "value": 0.630535084404
+          },
+          "cross_balanced_accuracy": {
+            "seed": 3,
+            "train_task": "sandbagging_v2__wmdp_mmlu",
+            "value": 0.49503968254
+          },
+          "general_auc": {
+            "seed": 2,
+            "value": 0.945956160242
+          },
+          "general_balanced_accuracy": {
+            "seed": 2,
+            "value": 0.873015873016
+          },
+          "task": "internal_state__animals"
+        },
+        {
+          "cross_auc": {
+            "seed": 3,
+            "train_task": "sandbagging_v2__wmdp_mmlu",
+            "value": 0.595396290463
+          },
+          "cross_balanced_accuracy": {
+            "seed": 4,
+            "train_task": "ethics__commonsense",
+            "value": 0.497942386831
+          },
+          "general_auc": {
+            "seed": 0,
+            "value": 0.976250525431
+          },
+          "general_balanced_accuracy": {
+            "seed": 2,
+            "value": 0.939755599592
+          },
+          "task": "internal_state__cities"
+        },
+        {
+          "cross_auc": {
+            "seed": 3,
+            "train_task": "roleplaying__plain",
+            "value": 0.598
+          },
+          "cross_balanced_accuracy": {
+            "seed": 0,
+            "train_task": "ethics__commonsense",
+            "value": 0.5
+          },
+          "general_auc": {
+            "seed": 0,
+            "value": 0.9664
+          },
+          "general_balanced_accuracy": {
+            "seed": 0,
+            "value": 0.916666666667
+          },
+          "task": "internal_state__companies"
+        },
+        {
+          "cross_auc": {
+            "seed": 3,
+            "train_task": "sandbagging_v2__wmdp_mmlu",
+            "value": 0.648121170077
+          },
+          "cross_balanced_accuracy": {
+            "seed": 3,
+            "train_task": "sandbagging_v2__wmdp_mmlu",
+            "value": 0.5
+          },
+          "general_auc": {
+            "seed": 2,
+            "value": 0.970453875626
+          },
+          "general_balanced_accuracy": {
+            "seed": 2,
+            "value": 0.935492189803
+          },
+          "task": "internal_state__elements"
+        },
+        {
+          "cross_auc": {
+            "seed": 3,
+            "train_task": "roleplaying__plain",
+            "value": 0.596516999851
+          },
+          "cross_balanced_accuracy": {
+            "seed": 0,
+            "train_task": "roleplaying__plain",
+            "value": 0.501633986928
+          },
+          "general_auc": {
+            "seed": 3,
+            "value": 0.981615786811
+          },
+          "general_balanced_accuracy": {
+            "seed": 1,
+            "value": 0.928571428571
+          },
+          "task": "internal_state__facts"
+        },
+        {
+          "cross_auc": {
+            "seed": 3,
+            "train_task": "roleplaying__plain",
+            "value": 0.647493304319
+          },
+          "cross_balanced_accuracy": {
+            "seed": 0,
+            "train_task": "ethics__commonsense",
+            "value": 0.5
+          },
+          "general_auc": {
+            "seed": 0,
+            "value": 0.954050887178
+          },
+          "general_balanced_accuracy": {
+            "seed": 2,
+            "value": 0.879770672916
+          },
+          "task": "internal_state__inventions"
+        },
+        {
+          "cross_auc": {
+            "seed": 3,
+            "train_task": "ethics__commonsense",
+            "value": 0.414502072933
+          },
+          "cross_balanced_accuracy": {
+            "seed": 0,
+            "train_task": "sandbagging_v2__wmdp_mmlu",
+            "value": 0.482062780269
+          },
+          "general_auc": {
+            "seed": 1,
+            "value": 0.871031746032
+          },
+          "general_balanced_accuracy": {
+            "seed": 4,
+            "value": 0.78869047619
+          },
+          "task": "roleplaying__plain"
+        },
+        {
+          "cross_auc": {
+            "seed": 1,
+            "train_task": "geometry_of_truth__mixed",
+            "value": 0.388792029888
+          },
+          "cross_balanced_accuracy": {
+            "seed": 1,
+            "train_task": "geometry_of_truth__mixed",
+            "value": 0.458904109589
+          },
+          "general_auc": {
+            "seed": 4,
+            "value": 0.980158730159
+          },
+          "general_balanced_accuracy": {
+            "seed": 4,
+            "value": 0.873015873016
+          },
+          "task": "sandbagging_v2__wmdp_mmlu"
+        },
+        {
+          "cross_auc": {
+            "seed": 4,
+            "train_task": "roleplaying__plain",
+            "value": 0.62355984
+          },
+          "cross_balanced_accuracy": {
+            "seed": 0,
+            "train_task": "internal_state__companies",
+            "value": 0.509
+          },
+          "general_auc": {
+            "seed": 1,
+            "value": 0.92226304
+          },
+          "general_balanced_accuracy": {
+            "seed": 2,
+            "value": 0.8504
+          },
+          "task": "sycophancy__mmlu_stem_same_conf_all"
+        }
+      ],
+      "planned_run_count": 5,
+      "regularization_c": 0.01,
+      "seeds": [
+        {
+          "metrics": {
+            "cross_auc": 0.848277027537546,
+            "cross_balanced_accuracy": 0.6961214117289996,
+            "general_auc": 0.972033922250605,
+            "general_balanced_accuracy": 0.9219065098720391
+          },
+          "rank": 4,
+          "result_path": "/Users/student/Desktop/ai/intelligent_liars/artifacts/probes/sweeps/dense_15_27_by_layer/no_repe_layer19_c001.json",
+          "reused_seed_zero": true,
+          "seed": 0,
+          "status": "valid"
+        },
+        {
+          "metrics": {
+            "cross_auc": 0.847554254162572,
+            "cross_balanced_accuracy": 0.6974064992451204,
+            "general_auc": 0.9687015044362062,
+            "general_balanced_accuracy": 0.9214244568628787
+          },
+          "rank": 3,
+          "result_path": "/Users/student/Desktop/ai/intelligent_liars/artifacts/probes/robustness/seed_robustness_v1/no_repe_layer19_c001/seed_1.json",
+          "reused_seed_zero": false,
+          "seed": 1,
+          "status": "valid"
+        },
+        {
+          "metrics": {
+            "cross_auc": 0.8459980452427112,
+            "cross_balanced_accuracy": 0.6944797559465381,
+            "general_auc": 0.9689288771462232,
+            "general_balanced_accuracy": 0.9137361547407508
+          },
+          "rank": 4,
+          "result_path": "/Users/student/Desktop/ai/intelligent_liars/artifacts/probes/robustness/seed_robustness_v1/no_repe_layer19_c001/seed_2.json",
+          "reused_seed_zero": false,
+          "seed": 2,
+          "status": "valid"
+        },
+        {
+          "metrics": {
+            "cross_auc": 0.8434349736241248,
+            "cross_balanced_accuracy": 0.6956239264445797,
+            "general_auc": 0.971188859250763,
+            "general_balanced_accuracy": 0.9217364631854069
+          },
+          "rank": 4,
+          "result_path": "/Users/student/Desktop/ai/intelligent_liars/artifacts/probes/robustness/seed_robustness_v1/no_repe_layer19_c001/seed_3.json",
+          "reused_seed_zero": false,
+          "seed": 3,
+          "status": "valid"
+        },
+        {
+          "metrics": {
+            "cross_auc": 0.8480103130110407,
+            "cross_balanced_accuracy": 0.6956833545719127,
+            "general_auc": 0.9675624458285674,
+            "general_balanced_accuracy": 0.9119384197535491
+          },
+          "rank": 4,
+          "result_path": "/Users/student/Desktop/ai/intelligent_liars/artifacts/probes/robustness/seed_robustness_v1/no_repe_layer19_c001/seed_4.json",
+          "reused_seed_zero": false,
+          "seed": 4,
+          "status": "valid"
+        }
+      ],
+      "status": "complete",
+      "top_2_frequency": {
+        "count": 0,
+        "rate": 0.0,
+        "total": 5
+      },
+      "valid_run_count": 5
+    }
+  ],
+  "direction_sign_convention": "sklearn_logistic_coef_positive_points_honest_to_deceptive",
+  "format": "intelligent_liars_probe_seed_robustness_summary_v1",
+  "invalid_run_count": 0,
+  "issues": [],
+  "label_convention": "HONEST=0, DECEPTIVE=1",
+  "manifest_identity": "2a249ff085a4b25edf64eae8e489d48a8315b01fcb0ae8cfdc03fb40867d3db4",
+  "manifest_path": "artifacts/probes/robustness/seed_robustness_v1/manifest.json",
+  "metric_std": "population",
+  "ranking_order": [
+    "general_balanced_accuracy",
+    "general_auc",
+    "cross_balanced_accuracy",
+    "cross_auc"
+  ],
+  "selection_interpretation": {
+    "evidence_status": "descriptive_only_no_predeclared_pass_thresholds",
+    "formal_pass_fail_verdict": null,
+    "limitation": "No machine-readable pass/fail thresholds were recorded before the robustness results were inspected; this summary must not retrofit them.",
+    "provenance_limitation": "The immutable v1 manifest identifies the pooled cache by portable path, not by content hash. The separately tracked DVC pointer is the cache content source of truth.",
+    "provisional_leader": "no_repe_layer21_c001",
+    "provisional_leader_top_2_frequency": {
+      "count": 5,
+      "rate": 1.0,
+      "total": 5
+    }
+  },
+  "status": "complete",
+  "valid_run_count": 20
+}

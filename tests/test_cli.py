@@ -365,12 +365,15 @@ def test_train_probes_from_cache_cli_resolves_paths(tmp_path, monkeypatch):
             "0",
             "--task",
             "roleplaying__plain",
+            "--evaluation-task",
+            "sandbagging_v2__wmdp_mmlu",
             "--test-size",
             "0.5",
             "--random-seed",
             "3",
             "--c",
             "0.25",
+            "--overwrite",
         ],
     )
 
@@ -380,9 +383,11 @@ def test_train_probes_from_cache_cli_resolves_paths(tmp_path, monkeypatch):
     assert seen["output_path"] == tmp_path / "tmp/results.json"
     assert seen["layers"] == "0"
     assert seen["tasks"] == ["roleplaying__plain"]
+    assert seen["evaluation_tasks"] == ["sandbagging_v2__wmdp_mmlu"]
     assert seen["test_size"] == 0.5
     assert seen["random_seed"] == 3
     assert seen["regularization_c"] == 0.25
+    assert seen["overwrite"] is True
     assert "Trained probes from cache" in result.output
 
 
@@ -1140,6 +1145,8 @@ def test_train_probes_cli_resolves_paths_and_options(tmp_path, monkeypatch):
             "results/probes.json",
             "--task",
             "roleplaying__plain",
+            "--evaluation-task",
+            "sandbagging_v2__wmdp_mmlu",
             "--layers",
             "0,1",
             "--test-size",
@@ -1153,6 +1160,7 @@ def test_train_probes_cli_resolves_paths_and_options(tmp_path, monkeypatch):
             "--general-domain-probe",
             "--general-task-class-cap",
             "17",
+            "--overwrite",
         ],
     )
 
@@ -1160,6 +1168,7 @@ def test_train_probes_cli_resolves_paths_and_options(tmp_path, monkeypatch):
     assert captured["input_path"] == tmp_path / "acts.h5"
     assert captured["output_path"] == tmp_path / "results" / "probes.json"
     assert captured["tasks"] == ["roleplaying__plain"]
+    assert captured["evaluation_tasks"] == ["sandbagging_v2__wmdp_mmlu"]
     assert captured["layers"] == "0,1"
     assert captured["test_size"] == 0.4
     assert captured["random_seed"] == 7
@@ -1167,6 +1176,7 @@ def test_train_probes_cli_resolves_paths_and_options(tmp_path, monkeypatch):
     assert captured["regularization_c"] == 0.25
     assert captured["train_general_domain_probe"] is True
     assert captured["general_task_class_cap"] == 17
+    assert captured["overwrite"] is True
     assert "within_task=2" in result.output
     assert "directions=2" in result.output
     assert "general_domain=0" in result.output

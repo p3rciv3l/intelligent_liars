@@ -1,0 +1,38 @@
+{
+  "canonical_result": "artifacts/probes/sweeps/dense_15_27_by_layer/no_repe_layer21_c001.json",
+  "comparison": {
+    "auc_delta_mps_minus_canonical": 0.000003378191,
+    "balanced_accuracy_delta_mps_minus_canonical": -0.000213514036,
+    "final_direction_cosine": 0.999982224832,
+    "maximum_absolute_per_task_auc_delta": 0.000133333333,
+    "maximum_absolute_per_task_balanced_accuracy_delta": 0.003333333333
+  },
+  "format": "intelligent_liars_probe_gpu_sensitivity_comparison_v1",
+  "mps_result": "artifacts/probes/robustness/gpu_sensitivity_v1/no_repe_layer21_c001_seed0_mps_v2.json",
+  "metrics": {
+    "canonical_seed_0": {
+      "mean_auc": 0.975228151197,
+      "mean_balanced_accuracy": 0.930189517552
+    },
+    "mps": {
+      "evaluation_fit_seconds": 2.698728375,
+      "evaluation_optimizer_steps": 105,
+      "final_direction_fit_seconds": 3.57259175,
+      "final_direction_optimizer_steps": 133,
+      "mean_auc": 0.975231529388,
+      "mean_balanced_accuracy": 0.929976003515,
+      "evaluation_train_examples_per_second": 6087.311399021,
+      "final_direction_train_examples_per_second": 5386.00583176
+    }
+  },
+  "settings": {
+    "canonical_evidence": false,
+    "device": "mps",
+    "layer": 21,
+    "regularization_c": 0.01,
+    "replacement_for_sklearn_liblinear": false,
+    "seed": 0,
+    "task_count": 16
+  },
+  "status": "valid_non_canonical_sensitivity_comparison"
+}

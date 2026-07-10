@@ -1,0 +1,6 @@
+outs:
+- md5: 6b470e632af4a30b8f7c4be678178e59.dir
+  size: 37938129
+  nfiles: 18
+  hash: md5
+  path: seed_robustness_v1
