@@ -50,7 +50,7 @@ The probe must distinguish a missing KVM device, insufficient privilege, image/s
 Avinash's GPU lifecycle skill is stored separately in the private repository `p3rciv3l/skills` at `skills/personal/vast-gpu-experiments/`. It is intentionally not vendored into `intelligent_liars`. If the Capy VM has GitHub access to that private repository, install it with:
 
 ```bash
-npx skills@latest add git@github.com:p3rciv3l/skills.git --skill vast-gpu-experiments -y
+npx skills@latest add p3rciv3l/skills --skill vast-gpu-experiments -y
 ```
 
 Do not request, print, or commit a GitHub credential. If the private repository is not accessible from Capy, report that access boundary and stop before Vast planning. After installation, load the skill before any Vast action. Its core policy includes:
