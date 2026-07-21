@@ -1,0 +1,4 @@
+interface:
+  display_name: "Vast GPU Experiments"
+  short_description: "Run cheap remote GPU experiments"
+  default_prompt: "Use $vast-gpu-experiments to dry-run a cheap Vast.ai GPU experiment for this repo."
