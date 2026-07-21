@@ -59,7 +59,7 @@ Capy should inspect the current GitHub `main` branch as its code source of truth
 Read rather than duplicate:
 
 - `PROJECT.md` for the research program and capability-preservation framing.
-- `docs/validation/no_insider_seed_robustness_20260709.md` for the selected layer-21 direction evidence.
+- `docs/postmortems/validation/no_insider_seed_robustness_20260709.md` for the selected layer-21 direction evidence.
 - Official OSWorld repository and setup guide: <https://github.com/xlang-ai/OSWorld>.
 - Capy VM/runtime docs: <https://docs.capy.ai/configs/runtime>.
 

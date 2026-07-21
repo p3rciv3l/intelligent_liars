@@ -716,7 +716,7 @@ The final all-text activation artifact is complete, locally validated, and
 synced to the configured DVC remote.
 
 The compact tracked proof is
-`docs/validation/activation_all_text_20260624.md`. Use that file as the
+`docs/postmortems/validation/activation_all_text_20260624.md`. Use that file as the
 canonical handoff for artifact path, DVC pointer, SHA/size/task/layer
 validation, and the exact validation commands.
 

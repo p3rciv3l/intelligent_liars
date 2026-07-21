@@ -24,7 +24,7 @@ The best one-sentence diagnosis is:
 
 From the allowed final tail, the endpoint was good for the pre-probe objective.
 The durable evidence report is
-`docs/validation/activation_all_text_20260624.md`; it records the canonical
+`docs/postmortems/validation/activation_all_text_20260624.md`; it records the canonical
 artifact, DVC pointer, SHA/size/task/layer validation, and the commands that
 produced the proof without committing raw logs or transcript dumps.
 

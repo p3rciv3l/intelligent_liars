@@ -18,8 +18,8 @@ artifacts/activations/activation_all_text_20260624/extracted_feats_all_text_qwen
 
 Tracked evidence:
 
-- `docs/validation/activation_all_text_20260624.md`
-- `docs/validation/probe_preflight_all_text_20260625.json`
+- `docs/postmortems/validation/activation_all_text_20260624.md`
+- `docs/postmortems/validation/probe_preflight_all_text_20260625.json`
 
 Preflight headline:
 
@@ -240,8 +240,8 @@ touch unless the project explicitly decides to do a separate formatting commit.
 
 Start here for historical context:
 
-- `docs/vast_qwen_rollouts_20260621.md`
-- `docs/activation_full_20260622.md`
+- `docs/postmortems/vast_qwen_rollouts_20260621.md`
+- `docs/postmortems/activation_full_20260622.md`
 - `docs/postmortems/moar_activation_extraction_20260625/postmortem.md`
 
 External Apollo/Truth Spec references are not vendored. If needed, clone them

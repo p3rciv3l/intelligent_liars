@@ -73,16 +73,12 @@ training.
 
 Do not restate or replace the analyses already captured here:
 
-- `docs/validation/no_insider_dense_15_27_primary_sweep_20260705_by_layer.md`
+- `docs/postmortems/validation/no_insider_dense_15_27_primary_sweep_20260705_by_layer.md`
   contains the dense sweep ranking and selection rule.
-- `docs/validation/big_sweep_remote_cpu_postmortem_20260706.json` contains the
+- `docs/postmortems/validation/big_sweep_remote_cpu_postmortem_20260706.json` contains the
   executed grid, winner, and infrastructure facts.
-- `docs/validation/no_insider_sparse_probe_20260628.md` explains the earlier
+- `docs/postmortems/validation/no_insider_sparse_probe_20260628.md` explains the earlier
   sparse baseline and REPE's poor transfer.
-- `sweep_plan.md` lists the intended seed, task-ablation, class-cap, and
-  direction-construction follow-ups.
-- `docs/probe_sweep_knob_universe_20260701.md` is the broad sweep reference and
-  defines the robustness and steering-readiness phases.
 - `artifacts/probes/sweeps/dense_15_27_by_layer/` contains the 182 primary result
   JSONs. The directory is DVC-managed; read existing local files only.
 - `artifacts/probe_features/no_insider_dense_15_27_pooled.h5` is the existing

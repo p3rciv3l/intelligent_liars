@@ -20,15 +20,14 @@ Use GitHub `main` at or after `c1a73d3c4cf011bf33492b5694d6926fe8d78a5b` as your
 
 1. `PROJECT.md` — model contract, research thesis, experiment loop, steering notes, Vast.ai guidance, benchmark framing, evaluation infrastructure, and success criteria.
 2. `README.md` — current implementation state, supported commands, code map, data/artifact conventions, development checks, and run-note conventions.
-3. `docs/validation/no_insider_seed_robustness_20260709.md` and `docs/validation/no_insider_gpu_sensitivity_20260709.md` — the completed multi-seed and Apple-MPS robustness evidence for the selected layer-21 candidate.
-4. `docs/validation/no_insider_dense_15_27_primary_sweep_20260705_by_layer.md` — the checked-in evidence that ranks `no_repe_layer21_c001` as the primary layer-21 candidate.
-5. `docs/validation/no_insider_sparse_probe_20260628.md` — the earlier sparse baseline and selection context.
-6. `docs/activation_full_20260622.md` — activation-extraction artifact state, failures, integrity lessons, and pre-probe gates.
-7. `docs/vast_qwen_rollouts_20260621.md` — the prior Vast/Qwen run, dynamic work sharding, worker-per-GPU measurements, failure recovery, artifact fetching, and cleanup lessons.
+3. `docs/postmortems/validation/no_insider_seed_robustness_20260709.md` and `docs/postmortems/validation/no_insider_gpu_sensitivity_20260709.md` — the completed multi-seed and Apple-MPS robustness evidence for the selected layer-21 candidate.
+4. `docs/postmortems/validation/no_insider_dense_15_27_primary_sweep_20260705_by_layer.md` — the checked-in evidence that ranks `no_repe_layer21_c001` as the primary layer-21 candidate.
+5. `docs/postmortems/validation/no_insider_sparse_probe_20260628.md` — the earlier sparse baseline and selection context.
+6. `docs/postmortems/activation_full_20260622.md` — activation-extraction artifact state, failures, integrity lessons, and pre-probe gates.
+7. `docs/postmortems/vast_qwen_rollouts_20260621.md` — the prior Vast/Qwen run, dynamic work sharding, worker-per-GPU measurements, failure recovery, artifact fetching, and cleanup lessons.
 8. `docs/handoffs/20260707_github_dvc_drive_durability_handoff.md` — DVC and remote-artifact durability requirements.
-9. `docs/probe_sweep_knob_universe_20260701.md` and `sweep_plan.md` — broader sweep context; do not let them expand the immediate paper-shaped baseline-versus-edited evaluation.
 
-The local OSWorld scaffolding under `src/intelligent_liars/osworld_eval.py` plus `tests/test_osworld_eval.py` is intentionally not published because it is unfinished. Do not independently recreate or overwrite it during orientation.
+The repository includes bounded OSWorld manifest, Capy capability-probe, and result-validation scaffolding under `src/intelligent_liars/osworld_eval.py` plus `tests/test_osworld_eval.py`. It is not a complete OSWorld model adapter or runner. Inspect and extend it deliberately rather than claiming the full harness already exists.
 
 ## Capy VM concerns that must be proved
 
@@ -48,7 +47,13 @@ The probe must distinguish a missing KVM device, insufficient privilege, image/s
 
 ## Vast GPU skill policy
 
-Avinash's GPU lifecycle skill is published in this repository at `.agents/skills/vast-gpu-experiments/`, the location recommended by Capy's skills documentation. Load that skill before any Vast planning or action. Its policy includes:
+Avinash's GPU lifecycle skill is stored separately in the private repository `p3rciv3l/skills` at `skills/personal/vast-gpu-experiments/`. It is intentionally not vendored into `intelligent_liars`. If the Capy VM has GitHub access to that private repository, install it with:
+
+```bash
+npx skills@latest add git@github.com:p3rciv3l/skills.git --skill vast-gpu-experiments -y
+```
+
+Do not request, print, or commit a GitHub credential. If the private repository is not accessible from Capy, report that access boundary and stop before Vast planning. After installation, load the skill before any Vast action. Its core policy includes:
 
 - Default to one GPU and the cheapest offer that satisfies VRAM, CUDA capability, disk, reliability, ports, and network requirements.
 - Escalate GPU class or GPU count only for a measured VRAM, compatibility, throughput, or total-cost reason.
@@ -65,13 +70,13 @@ Avinash's GPU lifecycle skill is published in this repository at `.agents/skills
 - Prefer a dynamic queue with small resumable units, explicit task identity, coverage validation, no-overwrite semantics, and straggler recovery for tail-heavy generation.
 - API judging is network-bound and should not be conflated with GPU inference.
 
-Use the bundled helpers from the repository skill package:
+Use the helpers from the installed private skill package:
 
-- `.agents/skills/vast-gpu-experiments/scripts/vast_find_offer.py`
-- `.agents/skills/vast-gpu-experiments/scripts/vast_run_workload.py`
-- `.agents/skills/vast-gpu-experiments/scripts/vast_cleanup.py`
+- `scripts/vast_find_offer.py`
+- `scripts/vast_run_workload.py`
+- `scripts/vast_cleanup.py`
 
-Do not recreate or fork those scripts in this orientation phase. Confirm that Capy discovered the project skill and report any loading or runtime incompatibility exactly.
+Resolve those paths relative to the installed skill directory. Do not recreate or fork the scripts in this orientation phase. Confirm that Capy discovered the private skill and report any access, loading, or runtime incompatibility exactly.
 
 ## Billing and authority boundary
 
@@ -86,7 +91,7 @@ Do not recreate or fork those scripts in this orientation phase. Confirm that Ca
 Respond with a concise orientation report containing:
 
 1. Which listed Markdown files you successfully read on GitHub `main` and the most relevant facts from each.
-2. Confirmation that the project-local `vast-gpu-experiments` skill loaded successfully, plus acknowledgement that the unfinished local OSWorld scaffolding is unavailable.
+2. Confirmation that the private `vast-gpu-experiments` skill loaded successfully, plus an accurate description of the bounded OSWorld scaffolding already present in this repository.
 3. The exact Capy VM capability-probe design, including commands/checks, success criteria, hard deadline, expected Capy VM charge, artifact-egress proof, and cleanup proof—but do not execute it.
 4. The exact information you would require before recommending a Vast offer.
 5. Any compatibility adjustment required to use the bundled Vast helpers inside Capy's Ubuntu VM; do not make that adjustment yet.
@@ -100,5 +105,5 @@ Then wait for Avinash's next message.
 - Repository inspection and handoff reading.
 - Official OSWorld harness/provider research.
 - Cloud lifecycle and spend-safety review.
-- `vast-gpu-experiments` only after the actual package is installed or attached.
+- `vast-gpu-experiments` only after the private package is installed successfully.
 - `code-review` for future implementation diffs, not for this orientation response.

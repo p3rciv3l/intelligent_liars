@@ -21,4 +21,4 @@ Inputs:
 
 - Canonical: `artifacts/probes/sweeps/dense_15_27_by_layer/no_repe_layer21_c001.json`
 - MPS sensitivity: `artifacts/probes/robustness/gpu_sensitivity_v1/no_repe_layer21_c001_seed0_mps_v2.json`
-- CPU robustness summary: `docs/validation/no_insider_seed_robustness_20260709.md`
+- CPU robustness summary: `docs/postmortems/validation/no_insider_seed_robustness_20260709.md`
