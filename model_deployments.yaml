@@ -1,4 +1,40 @@
 models:
+  - name: qwen3-vl-8b-thinking-baseline
+    model: Qwen/Qwen3-VL-8B-Thinking
+    revision: 92f3c4b4feadd3a016ef468d103bb5f58b2a2c6b
+    processor_revision: 92f3c4b4feadd3a016ef468d103bb5f58b2a2c6b
+    endpoint:
+      protocol: openai-chat-completions
+      command: qwen-endpoint --host 127.0.0.1 --port 8000
+      dry_run_command: qwen-endpoint --host 127.0.0.1 --port 8000 --dry-run
+      environment_names:
+        - QWEN_ENDPOINT_API_KEY
+        - HF_HOME
+      routes:
+        - /health
+        - /v1/models
+        - /v1/chat/completions
+    inference:
+      dtype: bfloat16
+      attention_implementation: flash_attention_2
+      quantization: null
+      do_sample: false
+      temperature: 0
+      top_p: 0.9
+      max_output_tokens: 32768
+      serialization: single-inference-lock
+      model_workers_per_gpu: 1
+      horizontal_scaling: multiple identical workers behind the AWS controller
+    client_policy:
+      history_n: 4
+      image_max: 4
+    limits:
+      max_request_bytes: 8388608
+      max_image_bytes: 6291456
+      max_image_pixels: 16000000
+      max_images: 4
+      max_text_chars: 200000
+
   # Prefer the official Z.AI endpoint; fall back only to Wafer.
   # OpenRouter currently lists these endpoints as fp8 and fp4 respectively;
   # do not add a full-precision quantization filter until fp16/bf16/fp32 exists.

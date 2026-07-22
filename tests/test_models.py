@@ -5,9 +5,11 @@ import pytest
 
 from intelligent_liars.models import (
     DEFAULT_MODEL_ID,
+    DEFAULT_MODEL_REVISION,
     ModelBundle,
     ModelLoadConfig,
     load_model_and_processor,
+    load_processor,
     model_config_from_env,
     qwen_model_load_description,
     resolve_model_id,
@@ -48,6 +50,7 @@ def test_qwen_model_load_description_mentions_flash_attention() -> None:
     assert "torch.bfloat16" in description
     assert "device_map=\"auto\"" in description
     assert "attn_implementation=\"flash_attention_2\"" in description
+    assert f'revision="{DEFAULT_MODEL_REVISION}"' in description
 
 
 def test_transformers_model_load_uses_flash_attention(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -88,9 +91,43 @@ def test_transformers_model_load_uses_flash_attention(monkeypatch: pytest.Monkey
     assert captured["model_id"] == DEFAULT_MODEL_ID
     assert captured["kwargs"] == {
         "cache_dir": "/tmp/hf-cache",
+        "revision": DEFAULT_MODEL_REVISION,
         "device_map": "auto",
         "dtype": fake_bfloat16,
         "attn_implementation": "flash_attention_2",
     }
     assert bundle.model is not None
     assert bundle.model.eval_called is True
+
+
+def test_processor_load_uses_pinned_revision(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured: dict[str, object] = {}
+    tokenizer = types.SimpleNamespace(
+        pad_token_id=0,
+        padding_side="right",
+    )
+
+    class FakeAutoProcessor:
+        @staticmethod
+        def from_pretrained(model_id: str, **kwargs: object) -> object:
+            captured["model_id"] = model_id
+            captured["kwargs"] = kwargs
+            return types.SimpleNamespace(tokenizer=tokenizer)
+
+    monkeypatch.setitem(
+        sys.modules,
+        "transformers",
+        types.SimpleNamespace(AutoProcessor=FakeAutoProcessor),
+    )
+
+    bundle = load_processor(ModelLoadConfig(cache_dir="/tmp/hf-cache"))
+
+    assert captured == {
+        "model_id": DEFAULT_MODEL_ID,
+        "kwargs": {
+            "cache_dir": "/tmp/hf-cache",
+            "revision": DEFAULT_MODEL_REVISION,
+        },
+    }
+    assert bundle.config.revision == DEFAULT_MODEL_REVISION
+    assert tokenizer.padding_side == "left"

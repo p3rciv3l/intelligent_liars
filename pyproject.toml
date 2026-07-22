@@ -35,6 +35,7 @@ dependencies = [
 
 [project.scripts]
 intelligent-liars = "intelligent_liars:main"
+qwen-endpoint = "intelligent_liars.qwen_endpoint:main"
 
 [build-system]
 requires = ["hatchling"]

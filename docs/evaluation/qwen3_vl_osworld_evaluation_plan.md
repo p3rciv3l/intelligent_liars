@@ -74,6 +74,14 @@ revision, tokenizer and processor revisions, package lock, generation
 parameters, quantization and dtype, intervention configuration, and container
 image digest.
 
+Serving uses one BF16 model worker per GPU. Horizontal scaling means placing
+multiple identical workers behind the AWS controller; it must not silently
+change precision or introduce quantization.
+
+The model server binds to loopback and the AWS controller reaches it through an
+SSH local-forward. A non-loopback bind is an explicit unsafe override that
+requires a separately secured transport.
+
 The baseline and interventions must use the same serving stack. A layer-21
 intervention may require a custom Transformers server rather than an
 unmodified vLLM deployment, so endpoint throughput must be measured rather than

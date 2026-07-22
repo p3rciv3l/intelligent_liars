@@ -6,6 +6,7 @@ from typing import Any, Sequence
 
 
 DEFAULT_MODEL_ID = "Qwen/Qwen3-VL-8B-Thinking"
+DEFAULT_MODEL_REVISION = "92f3c4b4feadd3a016ef468d103bb5f58b2a2c6b"
 QWEN_ATTENTION_IMPLEMENTATION = "flash_attention_2"
 QWEN_DTYPE_NAME = "torch.bfloat16"
 
@@ -13,6 +14,7 @@ QWEN_DTYPE_NAME = "torch.bfloat16"
 @dataclass(frozen=True)
 class ModelLoadConfig:
     model_name: str = DEFAULT_MODEL_ID
+    revision: str = DEFAULT_MODEL_REVISION
     cache_dir: str | None = None
     gpu_ids: tuple[int, ...] | None = None
     cuda_visible_devices: str | None = None
@@ -45,6 +47,7 @@ def model_config_from_env(
     cuda_visible_devices = ",".join(str(gpu_id) for gpu_id in parsed_gpu_ids) if parsed_gpu_ids else os.getenv("CUDA_VISIBLE_DEVICES")
     return ModelLoadConfig(
         model_name=resolve_model_id(model_name),
+        revision=DEFAULT_MODEL_REVISION,
         cache_dir=cache_dir or os.getenv("HF_HOME") or None,
         gpu_ids=tuple(parsed_gpu_ids) if parsed_gpu_ids else None,
         cuda_visible_devices=cuda_visible_devices or None,
@@ -58,7 +61,11 @@ def load_processor(config: ModelLoadConfig | None = None) -> ModelBundle:
 
     from transformers import AutoProcessor
 
-    processor = AutoProcessor.from_pretrained(model_id, cache_dir=config.cache_dir)
+    processor = AutoProcessor.from_pretrained(
+        model_id,
+        cache_dir=config.cache_dir,
+        revision=config.revision,
+    )
     tokenizer = _get_tokenizer(processor)
 
     _configure_tokenizer(tokenizer)
@@ -84,19 +91,27 @@ def load_model_and_processor(config: ModelLoadConfig | None = None) -> ModelBund
 
     model = Qwen3VLForConditionalGeneration.from_pretrained(
         model_id,
-        **qwen_model_load_kwargs(cache_dir=config.cache_dir),
+        **qwen_model_load_kwargs(
+            cache_dir=config.cache_dir,
+            revision=config.revision,
+        ),
     )
     model.eval()
     bundle.model = model
     return bundle
 
 
-def qwen_model_load_kwargs(*, cache_dir: str | None = None) -> dict[str, Any]:
+def qwen_model_load_kwargs(
+    *,
+    cache_dir: str | None = None,
+    revision: str = DEFAULT_MODEL_REVISION,
+) -> dict[str, Any]:
     """Return the shared Qwen3-VL load kwargs for Transformers and NNsight."""
     import torch
 
     return {
         "cache_dir": cache_dir,
+        "revision": revision,
         "device_map": "auto",
         "dtype": torch.bfloat16,
         "attn_implementation": QWEN_ATTENTION_IMPLEMENTATION,
@@ -107,7 +122,8 @@ def qwen_model_load_description() -> str:
     return (
         f'dtype="{QWEN_DTYPE_NAME}", '
         'device_map="auto", '
-        f'attn_implementation="{QWEN_ATTENTION_IMPLEMENTATION}"'
+        f'attn_implementation="{QWEN_ATTENTION_IMPLEMENTATION}", '
+        f'revision="{DEFAULT_MODEL_REVISION}"'
     )
 
 
