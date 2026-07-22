@@ -110,6 +110,7 @@ from intelligent_liars.cli_rollouts import (
     run_qwen_sweep,
 )
 from intelligent_liars.cli_sycophancy import generate_sycophancy
+from intelligent_liars.cli_osworld import osworld_preflight, osworld_proposal
 
 __all__ = [
     "ActivationBackend",
@@ -172,6 +173,8 @@ __all__ = [
     "merge_activation_shards",
     "merge_rollout_files",
     "merge_rollouts",
+    "osworld_proposal",
+    "osworld_preflight",
     "model_config_from_env",
     "pair_sycophancy_dataset",
     "parse_layer_spec",

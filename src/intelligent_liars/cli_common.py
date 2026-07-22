@@ -7,11 +7,11 @@ from pathlib import Path
 import typer
 from rich.console import Console
 
+from intelligent_liars.cli_app import app as app
 from intelligent_liars.judging import JudgeConfig, infer_rollout_task
 from intelligent_liars.rollouts import GenerationSettings, parse_task_name
 
 
-app = typer.Typer(no_args_is_help=True)
 console = Console()
 
 

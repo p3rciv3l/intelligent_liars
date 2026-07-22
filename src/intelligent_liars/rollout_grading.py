@@ -169,7 +169,12 @@ def _grade_roleplaying_rollout_data(
             ) as progress:
                 if skipped:
                     progress.set_postfix_str(f"skipped={skipped}")
-                for future in as_completed(future_to_job):
+                futures = (
+                    future_to_job
+                    if workers == 1
+                    else as_completed(future_to_job)
+                )
+                for future in futures:
                     record_idx, output_idx = future_to_job[future]
                     try:
                         judgement, reasoning = future.result()

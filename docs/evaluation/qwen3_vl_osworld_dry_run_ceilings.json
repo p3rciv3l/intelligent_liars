@@ -1,0 +1,14 @@
+{
+  "currency": "USD",
+  "full": {
+    "15": "21.00",
+    "50": "61.84",
+    "100": "120.18"
+  },
+  "small": {
+    "15": "2.76",
+    "50": "8.11",
+    "100": "15.77"
+  },
+  "source": "qwen3_vl_osworld_evaluation_plan.md runtime and cost model; planning ceilings only"
+}

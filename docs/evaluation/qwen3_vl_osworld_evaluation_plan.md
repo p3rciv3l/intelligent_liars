@@ -246,6 +246,61 @@ Before any paid launch, Captain must present the live Vast offer, AWS instance
 counts and TTLs, storage target, maximum authorized spend, and exact teardown
 commands. A run may not start until that proposal is explicitly approved.
 
+### Authoritative authorization and teardown rules
+
+The table above remains a planning input, not spend authorization. Each model
+run has a hard stop of $70. A 100-step run may be promoted only when its updated
+projected total is strictly below $60. The combined baseline-plus-intervention
+envelope is $140. These gates apply even when a table ceiling is higher.
+
+Cloud launch paths default to dry-run. Vast launches default to one GPU and
+require approval of a concrete offer and hourly rate. The Vast CLI path must be
+resolved explicitly on Linux rather than inherited from a workstation default.
+AWS execution uses the official OSWorld host/client provider; nested KVM on a
+Capy VM is not an execution target.
+
+Health or budget failures stop new task leases before teardown. Active workers
+may export artifacts, and completed, surplus, stopped, or stale labeled
+resources are terminated only after local and remote artifact SHA-256 values
+match in the append-only artifact manifest. Teardown terminates instances
+rather than leaving them stopped, deletes unattached billable volumes, records
+resource termination IDs, and verifies that worker count shrinks to zero.
+
+The Vast lifecycle policy source inspected for these rules is private
+`p3rciv3l/avi-skills` commit
+`f5cf63877a4e8df003224e0494f9bb2aad5d88df`, path
+`skills/personal/vast-gpu-experiments/`, including `vast_find_offer.py`,
+`vast_run_workload.py`, and `vast_cleanup.py`. No AWS, Gmail, or Bitwarden skill
+was present there; those integrations are not assumed. Preflight reports only
+the configured environment-variable names and presence status and never copies
+secret values.
+
+Vast credentials use only these scopes: `misc` for offer search,
+`instance_read` for inventory, status, logs, and volumes, and
+`instance_write` for instance creation, management, and destruction. They
+explicitly exclude `billing_write`, `user_write`, all `machine_*` scopes, and
+payment access.
+
+The AWS controller should use an attached IAM role rather than long-lived
+keys. Access key, secret key, and optional session-token environment names are
+supported only as bootstrap gates. Runtime permission is limited to the run's
+VPC, tagged resources, artifact prefix, and termination role:
+
+- `sts:GetCallerIdentity`;
+- EC2 describe image/instance/tag/volume actions, `ec2:RunInstances`,
+  `ec2:TerminateInstances`, `ec2:CreateTags`, and `ec2:DeleteVolume`, plus only
+  additional image/reset actions demonstrated necessary by the pinned official
+  OSWorld provider;
+- `scheduler:CreateSchedule`, `scheduler:GetSchedule`, and
+  `scheduler:DeleteSchedule`, with `iam:PassRole` limited to the termination
+  role;
+- append-only artifact-prefix access using `s3:ListBucket`, `s3:PutObject`,
+  `s3:GetObject`, `s3:AbortMultipartUpload`, and
+  `s3:ListMultipartUploadParts`; and
+- optional read-only `ce:GetCostAndUsage`.
+
+No Gmail or Bitwarden MCP integration is assumed or claimed.
+
 ## Why model size does not imply a one-hour run
 
 OSWorld's AWS clients execute desktop state transitions; the model is served
@@ -280,6 +335,11 @@ Every run must record at least:
 
 Any change to these fields creates a new run ID. Valid results are never
 silently replaced or combined across manifests.
+
+For the offline controller schema, `task_grid.sha256` is the lowercase SHA-256
+of the canonical compact JSON encoding of the ordered `task_grid.task_ids`
+array (UTF-8, with no insignificant whitespace). Changing membership or order
+therefore invalidates the frozen grid and run ID.
 
 ## Sources
 
