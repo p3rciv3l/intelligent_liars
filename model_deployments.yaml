@@ -5,11 +5,29 @@ models:
     processor_revision: 92f3c4b4feadd3a016ef468d103bb5f58b2a2c6b
     endpoint:
       protocol: openai-chat-completions
+      image: pytorch/pytorch:2.5.1-cuda12.4-cudnn9-devel@sha256:14611869895df612b7b07227d5925f30ec3cd6673bad58ce3d84ed107950e014
+      python: "3.11"
+      install_command: uv sync --frozen --no-dev --group endpoint --no-editable
+      preflight_command: qwen-endpoint --dry-run
       command: qwen-endpoint --host 127.0.0.1 --port 8000
-      dry_run_command: qwen-endpoint --host 127.0.0.1 --port 8000 --dry-run
+      provisioning_script: scripts/provision_qwen_endpoint.sh
       environment_names:
         - QWEN_ENDPOINT_API_KEY
         - HF_HOME
+      secret_injection:
+        source_environment: QWEN_ENDPOINT_API_KEY
+        path: /run/qwen-endpoint/api-key
+        mode: "0600"
+      runtime:
+        accelerate: "1.1.1"
+        flash-attn: "2.7.4.post1"
+        ninja: "1.11.1.3"
+        packaging: "24.2"
+        qwen-vl-utils: "0.0.14"
+        setuptools: "75.8.0"
+        torch: "2.5.1"
+        transformers: "4.57.1"
+        wheel: "0.45.1"
       routes:
         - /health
         - /v1/models

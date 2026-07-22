@@ -32,6 +32,7 @@ from intelligent_liars.osworld_overlay import (
     ExecutionBlockedError,
     StoreBackedProductionCheckpointSink,
     build_official_agent,
+    build_official_aws_environment,
     classify_failure,
     evaluator_terminal_state,
     export_incremental_checkpoint,
@@ -698,6 +699,49 @@ def test_endpoint_and_runner_limits_are_exactly_compatible(monkeypatch, tmp_path
                 "QWEN_ENDPOINT_API_KEY": "fake",
             },
         )
+
+
+def test_official_aws_environment_requires_and_passes_nonempty_client_password(
+    monkeypatch,
+    tmp_path,
+):
+    manifest = _pilot_manifest()
+
+    monkeypatch.delenv("OSWORLD_CLIENT_PASSWORD", raising=False)
+    with pytest.raises(ValueError, match="non-empty OSWORLD_CLIENT_PASSWORD"):
+        build_official_aws_environment(tmp_path, manifest)
+
+    monkeypatch.setenv("OSWORLD_CLIENT_PASSWORD", "")
+    with pytest.raises(ValueError, match="non-empty OSWORLD_CLIENT_PASSWORD"):
+        build_official_aws_environment(tmp_path, manifest)
+
+    captured = {}
+
+    class CapturingDesktopEnv:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+    desktop = manifest.payload["desktop"]
+    size = (desktop["screen_width"], desktop["screen_height"])
+
+    def fake_import(name):
+        if name == "desktop_env.desktop_env":
+            return SimpleNamespace(DesktopEnv=CapturingDesktopEnv)
+        if name == "desktop_env.providers.aws.manager":
+            return SimpleNamespace(
+                IMAGE_ID_MAP={desktop["region"]: {size: "ami-pinned-test"}}
+            )
+        raise AssertionError(name)
+
+    monkeypatch.setattr(
+        "intelligent_liars.osworld_overlay.importlib.import_module",
+        fake_import,
+    )
+    monkeypatch.setenv("OSWORLD_CLIENT_PASSWORD", "opaque-client-password")
+
+    build_official_aws_environment(tmp_path, manifest)
+
+    assert captured["client_password"] == "opaque-client-password"
 
 
 def _approved_proposal_payload(manifest) -> dict:

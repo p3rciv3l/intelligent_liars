@@ -590,8 +590,16 @@ def create_dry_run_plan(spec: CloudRunSpec) -> DryRunPlan:
             "--client-security-group-id ${CLIENT_SECURITY_GROUP_ID} "
             "--use-private-client-addresses"
         ),
-        f"aws s3 cp ${{ARTIFACT_PATH}} {spec.artifact_prefix} --no-clobber",
-        f"aws s3api head-object --bucket {ARTIFACT_BUCKET} --key runs/{spec.run_id}/${{ARTIFACT_KEY}}",
+        (
+            f"aws s3api put-object --bucket {ARTIFACT_BUCKET} "
+            f"--key runs/{spec.run_id}/${{ARTIFACT_KEY}} "
+            "--body ${ARTIFACT_PATH} --if-none-match '*' "
+            "--checksum-algorithm SHA256 --checksum-sha256 ${ARTIFACT_SHA256_BASE64}"
+        ),
+        (
+            f"aws s3api head-object --bucket {ARTIFACT_BUCKET} "
+            f"--key runs/{spec.run_id}/${{ARTIFACT_KEY}} --checksum-mode ENABLED"
+        ),
     )
     return DryRunPlan(
         schema_version=1,

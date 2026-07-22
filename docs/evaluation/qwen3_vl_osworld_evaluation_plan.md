@@ -78,6 +78,17 @@ Serving uses one BF16 model worker per GPU. Horizontal scaling means placing
 multiple identical workers behind the AWS controller; it must not silently
 change precision or introduce quantization.
 
+The proposed endpoint image is
+`pytorch/pytorch:2.5.1-cuda12.4-cudnn9-devel@sha256:14611869895df612b7b07227d5925f30ec3cd6673bad58ce3d84ed107950e014`.
+Provisioning uses only
+`uv sync --frozen --no-dev --group endpoint --no-editable`, then invokes the
+installed binary directly as `qwen-endpoint --dry-run` and
+`qwen-endpoint --host 127.0.0.1 --port 8000`; it does not use `uv run`. The
+endpoint group freezes Python 3.11-compatible Torch 2.5.1, Transformers 4.57.1,
+qwen-vl-utils 0.0.14, Accelerate 1.1.1, and flash-attn 2.7.4.post1. Flash
+Attention is built in the CUDA devel image against the locked runtime Torch,
+never during offline proposal validation.
+
 The model server binds to loopback and the AWS controller reaches it through an
 SSH local-forward. A non-loopback bind is an explicit unsafe override that
 requires a separately secured transport.
@@ -113,6 +124,11 @@ an append-only prefix derived from a run ID and frozen manifest hash. Every task
 bundle is uploaded immediately, checksummed remotely, and only then marked
 complete. A second manifest records missing, duplicate, retried, and superseded
 attempts without overwriting any valid attempt.
+
+The launch template implements this as conditional `s3api put-object` with
+`If-None-Match: *` and a supplied SHA-256 checksum, followed by checksum-enabled
+`head-object`; unsupported high-level `s3 cp --no-clobber` behavior is not part
+of the proposal.
 
 The storage backend and retention price must be selected before execution.
 Credentials are injected at runtime and are never stored in the model image,

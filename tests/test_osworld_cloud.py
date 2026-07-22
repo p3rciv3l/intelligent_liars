@@ -305,6 +305,26 @@ def test_dry_run_is_zero_side_effect_and_contains_no_secret_values(tmp_path):
     del orchestrator
 
 
+def test_dry_run_uses_atomic_append_only_s3_upload_with_remote_checksum():
+    plan = create_dry_run_plan(make_spec())
+    put_index = next(
+        index
+        for index, command in enumerate(plan.commands)
+        if command.startswith("aws s3api put-object")
+    )
+    put_command = plan.commands[put_index]
+    head_command = plan.commands[put_index + 1]
+
+    assert "--if-none-match '*'" in put_command
+    assert "--checksum-algorithm SHA256" in put_command
+    assert "--checksum-sha256 ${ARTIFACT_SHA256_BASE64}" in put_command
+    assert "--body ${ARTIFACT_PATH}" in put_command
+    assert head_command.startswith("aws s3api head-object")
+    assert "--checksum-mode ENABLED" in head_command
+    assert "--no-clobber" not in "\n".join(plan.commands)
+    assert "aws s3 cp" not in "\n".join(plan.commands)
+
+
 def test_security_groups_are_run_separated_and_never_public():
     plan = create_dry_run_plan(make_spec())
 

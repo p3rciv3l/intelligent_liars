@@ -877,6 +877,9 @@ def build_official_agent(
 
 def build_official_aws_environment(checkout: Path, manifest: FrozenRunManifest) -> Environment:
     _require_frozen_execution_contract(manifest)
+    client_password = os.environ.get("OSWORLD_CLIENT_PASSWORD")
+    if not client_password:
+        raise ValueError("execution requires non-empty OSWORLD_CLIENT_PASSWORD")
     checkout_text = str(checkout.resolve())
     if checkout_text not in sys.path:
         sys.path.insert(0, checkout_text)
@@ -897,7 +900,7 @@ def build_official_aws_environment(checkout: Path, manifest: FrozenRunManifest) 
         os_type="Ubuntu",
         require_a11y_tree=False,
         enable_proxy=desktop["enable_proxy"],
-        client_password=os.environ.get("OSWORLD_CLIENT_PASSWORD", ""),
+        client_password=client_password,
         use_public_ip=desktop["use_public_ip"],
     )
 

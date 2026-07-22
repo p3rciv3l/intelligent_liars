@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import io
 import json
+import tomllib
 from pathlib import Path
 from typing import Any
 
@@ -401,11 +402,37 @@ def test_endpoint_manifest_freezes_revision_runtime_and_scaling():
     assert deployment["model"] == DEFAULT_MODEL_ID
     assert deployment["revision"] == DEFAULT_MODEL_REVISION
     assert deployment["processor_revision"] == DEFAULT_MODEL_REVISION
-    assert deployment["endpoint"]["environment_names"] == ["QWEN_ENDPOINT_API_KEY", "HF_HOME"]
-    assert deployment["endpoint"]["command"] == "qwen-endpoint --host 127.0.0.1 --port 8000"
-    assert deployment["endpoint"]["dry_run_command"].startswith(
-        "qwen-endpoint --host 127.0.0.1 "
+    endpoint = deployment["endpoint"]
+    assert endpoint["environment_names"] == ["QWEN_ENDPOINT_API_KEY", "HF_HOME"]
+    assert endpoint["image"] == (
+        "pytorch/pytorch:2.5.1-cuda12.4-cudnn9-devel@sha256:"
+        "14611869895df612b7b07227d5925f30ec3cd6673bad58ce3d84ed107950e014"
     )
+    assert endpoint["python"] == "3.11"
+    assert endpoint["install_command"] == (
+        "uv sync --frozen --no-dev --group endpoint --no-editable"
+    )
+    assert endpoint["preflight_command"] == "qwen-endpoint --dry-run"
+    assert endpoint["command"] == "qwen-endpoint --host 127.0.0.1 --port 8000"
+    assert "uv run" not in endpoint["preflight_command"]
+    assert "uv run" not in endpoint["command"]
+    assert endpoint["provisioning_script"] == "scripts/provision_qwen_endpoint.sh"
+    assert endpoint["secret_injection"] == {
+        "source_environment": "QWEN_ENDPOINT_API_KEY",
+        "path": "/run/qwen-endpoint/api-key",
+        "mode": "0600",
+    }
+    assert endpoint["runtime"] == {
+        "accelerate": "1.1.1",
+        "flash-attn": "2.7.4.post1",
+        "ninja": "1.11.1.3",
+        "packaging": "24.2",
+        "qwen-vl-utils": "0.0.14",
+        "setuptools": "75.8.0",
+        "torch": "2.5.1",
+        "transformers": "4.57.1",
+        "wheel": "0.45.1",
+    }
     assert deployment["inference"] == {
         "dtype": "bfloat16",
         "attention_implementation": "flash_attention_2",
@@ -423,3 +450,70 @@ def test_endpoint_manifest_freezes_revision_runtime_and_scaling():
         "image_max": CLIENT_IMAGE_MAX,
     }
     assert "QWEN_ENDPOINT_API_KEY=" not in deployment["endpoint"]["command"]
+
+
+def test_endpoint_dependency_group_and_lock_are_exact_without_cuda13_drift():
+    root = Path(__file__).parents[1]
+    project = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))
+    lock_text = (root / "uv.lock").read_text(encoding="utf-8")
+    lock = tomllib.loads(lock_text)
+    expected = {
+        "accelerate": "1.1.1",
+        "flash-attn": "2.7.4.post1",
+        "ninja": "1.11.1.3",
+        "packaging": "24.2",
+        "qwen-vl-utils": "0.0.14",
+        "setuptools": "75.8.0",
+        "torch": "2.5.1",
+        "transformers": "4.57.1",
+        "wheel": "0.45.1",
+    }
+    requirements = {
+        requirement.rsplit("==", 1)[0]: requirement.rsplit("==", 1)[1]
+        for requirement in project["dependency-groups"]["endpoint"]
+    }
+    packages = {package["name"]: package["version"] for package in lock["package"]}
+
+    assert requirements == expected
+    assert {name: packages[name] for name in expected} == expected
+    assert packages["nvidia-cuda-runtime-cu12"] == "12.4.127"
+    assert packages["nvidia-cuda-nvrtc-cu12"] == "12.4.127"
+    assert "torch==2.12" not in lock_text
+    assert "cuda13" not in lock_text.lower()
+    assert "cu13" not in lock_text.lower()
+    assert project["tool"]["uv"]["extra-build-dependencies"]["flash-attn"] == [
+        {"requirement": "torch", "match-runtime": True},
+        "ninja==1.11.1.3",
+        "packaging==24.2",
+        "setuptools==75.8.0",
+        "wheel==0.45.1",
+    ]
+    assert project["tool"]["uv"]["dependency-metadata"] == [
+        {
+            "name": "flash-attn",
+            "version": "2.7.4.post1",
+            "requires-dist": ["einops", "torch"],
+        }
+    ]
+
+
+def test_endpoint_provisioning_uses_only_frozen_uv_sync_and_loopback_start():
+    root = Path(__file__).parents[1]
+    script_path = root / "scripts/provision_qwen_endpoint.sh"
+    script = script_path.read_text(encoding="utf-8")
+    proposal = (
+        root / "docs/evaluation/qwen3_vl_osworld_evaluation_plan.md"
+    ).read_text(encoding="utf-8")
+
+    assert script_path.stat().st_mode & 0o777 == 0o755
+    assert "uv sync --frozen --no-dev --group endpoint --no-editable" in script
+    assert "qwen-endpoint --dry-run" in script
+    assert "exec qwen-endpoint --host 127.0.0.1 --port 8000" in script
+    assert script.index("uv sync") < script.index("qwen-endpoint --dry-run")
+    assert script.index("qwen-endpoint --dry-run") < script.index("exec qwen-endpoint")
+    assert "chmod 0600" in script
+    assert "pip " not in script
+    assert "uv run" not in script
+    assert "`uv sync --frozen --no-dev --group endpoint --no-editable`" in proposal
+    assert "installed binary directly as `qwen-endpoint --dry-run`" in proposal
+    assert "it does not use `uv run`" in proposal
