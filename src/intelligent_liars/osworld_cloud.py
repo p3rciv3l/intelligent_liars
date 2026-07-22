@@ -795,8 +795,12 @@ class CloudOrchestrator:
         except Exception:
             for client in clients:
                 self.aws.terminate_instance(client.resource_id)
+                for volume_id in client.volume_ids:
+                    self.aws.delete_volume(volume_id)
             if controller is not None:
                 self.aws.terminate_instance(controller.resource_id)
+                for volume_id in controller.volume_ids:
+                    self.aws.delete_volume(volume_id)
             if vast_instance is not None:
                 self.vast.destroy(vast_instance.resource_id)
             if client_sg is not None:

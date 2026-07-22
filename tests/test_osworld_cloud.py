@@ -390,22 +390,36 @@ def test_bootstrap_uses_private_clients_loopback_forward_sts_and_independent_ttl
 
 
 def test_key_pair_and_partial_resources_are_deleted_when_bootstrap_fails(tmp_path):
-    orchestrator, aws, vast, _s3, ssh = make_orchestrator(tmp_path)
+    orchestrator, aws, vast, _s3, _ssh = make_orchestrator(tmp_path)
+    original_schedule_termination = aws.schedule_termination
 
-    def fail_configure(*args, **kwargs):
-        del args, kwargs
-        raise RuntimeError("fake configure failure")
+    def fail_after_clients_launch(resource_id, *, ttl_minutes, run_id):
+        original_schedule_termination(
+            resource_id,
+            ttl_minutes=ttl_minutes,
+            run_id=run_id,
+        )
+        if resource_id == "i-client-1":
+            raise RuntimeError("fake client TTL failure")
 
-    ssh.configure_osworld = fail_configure
+    aws.schedule_termination = fail_after_clients_launch
     plan = create_dry_run_plan(make_spec())
-    with pytest.raises(RuntimeError, match="fake configure"):
+    with pytest.raises(RuntimeError, match="fake client TTL failure"):
         orchestrator.bootstrap(
             plan,
             make_approval(plan),
             now=datetime(2026, 7, 22, 12, 30, tzinfo=UTC),
         )
 
-    assert ("terminate", "i-controller") in aws.calls
+    instance_volumes = {
+        "i-client-0": "vol-0",
+        "i-client-1": "vol-1",
+        "i-controller": "vol-host",
+    }
+    for resource_id, volume_id in instance_volumes.items():
+        termination_index = aws.calls.index(("terminate", resource_id))
+        volume_deletion_index = aws.calls.index(("delete-volume", volume_id))
+        assert termination_index < volume_deletion_index
     assert ("destroy", "vast-1") in vast.calls
     assert any(call[0] == "delete-key" for call in aws.calls)
     assert not list((tmp_path / "keys").glob("*.pem"))
