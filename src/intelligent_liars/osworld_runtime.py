@@ -22,8 +22,8 @@ from intelligent_liars.run_control import (
 
 VAST_SKILL_SOURCE = {
     "repository": "p3rciv3l/avi-skills",
-    "commit": "f5cf63877a4e8df003224e0494f9bb2aad5d88df",
-    "path": "skills/personal/vast-gpu-experiments/",
+    "commit": "f453c250b3c5a684f42f6cf6abb97463dddda14c",
+    "path": ".agents/skills/vast-gpu-experiments/",
     "scripts": (
         "vast_find_offer.py",
         "vast_run_workload.py",
@@ -75,6 +75,7 @@ REQUIRED_ENV_NAMES = (
     "AWS_REGION",
     "QWEN_ENDPOINT_URL",
     "QWEN_ENDPOINT_API_KEY",
+    "OSWORLD_CLIENT_PASSWORD",
     "OSWORLD_ARTIFACT_DESTINATION",
 )
 AWS_BOOTSTRAP_ENV_NAMES = ("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY")

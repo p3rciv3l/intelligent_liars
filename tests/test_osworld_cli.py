@@ -59,6 +59,7 @@ def test_osworld_preflight_reports_only_env_names_and_status(tmp_path, monkeypat
         "AWS_REGION",
         "QWEN_ENDPOINT_URL",
         "QWEN_ENDPOINT_API_KEY",
+        "OSWORLD_CLIENT_PASSWORD",
         "OSWORLD_ARTIFACT_DESTINATION",
     )
     for name in names:

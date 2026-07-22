@@ -18,6 +18,7 @@ from intelligent_liars.osworld_runtime import (
     VastLifecycleWatchdog,
     VAST_EXCLUDED_KEY_SCOPES,
     VAST_REQUIRED_KEY_SCOPES,
+    VAST_SKILL_SOURCE,
     apply_watchdog_plan,
     locate_vastai_path,
     offline_preflight,
@@ -38,6 +39,7 @@ def test_preflight_reports_exact_env_names_and_never_values(tmp_path):
         "AWS_REGION": "<present>",
         "QWEN_ENDPOINT_URL": "<present>",
         "QWEN_ENDPOINT_API_KEY": "<present>",
+        "OSWORLD_CLIENT_PASSWORD": "<present>",
         "OSWORLD_ARTIFACT_DESTINATION": "<present>",
     }
 
@@ -60,6 +62,7 @@ def test_preflight_reports_exact_env_names_and_never_values(tmp_path):
         "AWS_REGION",
         "QWEN_ENDPOINT_URL",
         "QWEN_ENDPOINT_API_KEY",
+        "OSWORLD_CLIENT_PASSWORD",
         "OSWORLD_ARTIFACT_DESTINATION",
     }
     statuses = {item["name"]: item for item in report["environment"]}
@@ -77,6 +80,54 @@ def test_preflight_reports_exact_env_names_and_never_values(tmp_path):
         "machine_*",
         "payment access",
     ]
+    assert report["source"] == {
+        "repository": "p3rciv3l/avi-skills",
+        "commit": "f453c250b3c5a684f42f6cf6abb97463dddda14c",
+        "path": ".agents/skills/vast-gpu-experiments/",
+        "scripts": (
+            "vast_find_offer.py",
+            "vast_run_workload.py",
+            "vast_cleanup.py",
+        ),
+    }
+    assert VAST_SKILL_SOURCE == report["source"]
+
+
+@pytest.mark.parametrize(
+    "missing_name",
+    (
+        "OSWORLD_CLIENT_PASSWORD",
+        "QWEN_ENDPOINT_URL",
+        "QWEN_ENDPOINT_API_KEY",
+    ),
+)
+def test_preflight_fails_when_password_or_qwen_endpoint_gate_is_missing(
+    tmp_path,
+    missing_name,
+):
+    vastai = tmp_path / "vastai"
+    vastai.touch(mode=0o755)
+    environment = {
+        "VASTAI_PATH": str(vastai),
+        "VAST_API_KEY": "<present>",
+        "AWS_REGION": "<present>",
+        "QWEN_ENDPOINT_URL": "<present>",
+        "QWEN_ENDPOINT_API_KEY": "<present>",
+        "OSWORLD_CLIENT_PASSWORD": "<present>",
+        "OSWORLD_ARTIFACT_DESTINATION": "<present>",
+    }
+    del environment[missing_name]
+
+    report = offline_preflight(
+        environment,
+        InfrastructureTarget(),
+        VastLaunchPolicy("offer-123", Decimal("0.60"), True),
+    )
+    statuses = {item.name: item for item in report.environment}
+
+    assert report.ready is False
+    assert statuses[missing_name].required is True
+    assert statuses[missing_name].present is False
 
 
 def test_bootstrap_aws_keys_are_required_only_in_explicit_bootstrap_mode(tmp_path):
@@ -88,6 +139,7 @@ def test_bootstrap_aws_keys_are_required_only_in_explicit_bootstrap_mode(tmp_pat
         "AWS_REGION": "<present>",
         "QWEN_ENDPOINT_URL": "<present>",
         "QWEN_ENDPOINT_API_KEY": "<present>",
+        "OSWORLD_CLIENT_PASSWORD": "<present>",
         "OSWORLD_ARTIFACT_DESTINATION": "<present>",
     }
     report = offline_preflight(
