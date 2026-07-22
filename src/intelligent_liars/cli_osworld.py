@@ -58,18 +58,9 @@ def osworld_proposal(
         proposal = create_launch_proposal(
             manifest=manifest,
             resources=resources,
-            maximum_authorized_spend_usd=Decimal(
-                str(config["maximum_authorized_spend_usd"])
-            ),
+            provider_budgets=config["provider_budgets"],
+            evaluation_envelopes=config["evaluation_envelopes"],
             teardown_checklist=config["teardown_checklist"],
-            projected_total_usd=Decimal(
-                str(
-                    config.get(
-                        "projected_total_usd",
-                        config["maximum_authorized_spend_usd"],
-                    )
-                )
-            ),
         )
     except (KeyError, TypeError, ValueError, InvalidOperation, ManifestValidationError) as exc:
         raise typer.BadParameter(str(exc)) from exc

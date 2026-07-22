@@ -22,7 +22,6 @@ from intelligent_liars.osworld_runtime import (
     apply_watchdog_plan,
     locate_vastai_path,
     offline_preflight,
-    run_qwen_multimodal_smoke_test,
 )
 from intelligent_liars.run_control import BudgetDecision, LedgerValidationError
 
@@ -184,33 +183,6 @@ def test_linux_vastai_path_is_located_and_nested_kvm_is_rejected(tmp_path):
         InfrastructureTarget(nested_kvm=True).validate()
     with pytest.raises(ValueError, match="exactly one GPU"):
         VastLaunchPolicy("offer", Decimal("0.60"), True, gpu_count=2)
-
-
-def test_qwen_smoke_contract_uses_auth_and_openai_multimodal_shape():
-    captured = {}
-
-    class FakeHTTPClient:
-        def create_chat_completion(self, request, *, bearer_token):
-            captured["request"] = request
-            captured["authenticated"] = bool(bearer_token)
-            return {
-                "id": "response-1",
-                "model": request.model,
-                "choices": [{"message": {"content": "desktop"}}],
-            }
-
-    result = run_qwen_multimodal_smoke_test(
-        FakeHTTPClient(),
-        endpoint_url="https://qwen.invalid/v1",
-        bearer_token="<fake>",
-        model="Qwen/Qwen3-VL-8B-Thinking",
-        image_png=b"\x89PNG\r\n",
-    )
-
-    assert captured["authenticated"] is True
-    assert captured["request"].endpoint_url.endswith("/v1/chat/completions")
-    assert captured["request"].messages[0]["content"][1]["type"] == "image_url"
-    assert result.assistant_content_present is True
 
 
 def _verified_manifest(tmp_path, resource_ids):

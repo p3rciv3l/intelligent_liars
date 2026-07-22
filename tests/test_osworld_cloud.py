@@ -4,21 +4,26 @@ import hashlib
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
+from pathlib import Path
 
 import pytest
 
 from intelligent_liars.osworld_cloud import (
     ARTIFACT_BUCKET,
     AWS_REGION,
+    AWS_STEP_CAP_HARD_STOP_USD,
+    DURABLE_CHECKPOINT_STATE_KINDS,
     FULL_BUDGET,
     OSWORLD_REQUIRED_SERVICE_PORTS,
     PILOT_BUDGET,
+    VAST_EVALUATION_HARD_STOP_USD,
     ApprovalError,
     ArtifactExport,
     BootstrapHandle,
     BootstrapValidationError,
     CloudOrchestrator,
     CloudRunSpec,
+    DurableCheckpoint,
     Instance,
     RunTier,
     SecurityGroupRule,
@@ -30,13 +35,38 @@ from intelligent_liars.osworld_cloud import (
     render_plan_json,
     verify_approval,
 )
-from intelligent_liars.run_control import BudgetDecision, CostLedger, CostSample
+from intelligent_liars.run_control import (
+    AWS_STEP_CAP_HARD_STOP_USD as CENTRAL_AWS_STEP_CAP_HARD_STOP_USD,
+    VAST_EVALUATION_HARD_STOP_USD as CENTRAL_VAST_EVALUATION_HARD_STOP_USD,
+    BudgetDecision,
+    CostLedger,
+    CostSample,
+)
 
 
 PINNED_IMAGE = (
     "pytorch/pytorch:2.5.1-cuda12.4-cudnn9-runtime@sha256:" + "a" * 64
 )
 PINNED_OSWORLD = "b7db4d8c85d9e95e0b1db44de5bec954cf37f0cf"
+PARETO_EVIDENCE_SHA256 = "9" * 64
+PARETO_POINT_SHA256 = "8" * 64
+
+
+def make_vast_offer(**overrides) -> VastOffer:
+    values = {
+        "offer_id": "12345",
+        "gpu_model": "L40S",
+        "hourly_rate_usd": Decimal("0.59"),
+        "verified": True,
+        "projected_completed_run_cost_usd": Decimal("9.50"),
+        "projected_wall_clock_minutes": 900,
+        "pareto_evidence_sha256": PARETO_EVIDENCE_SHA256,
+        "selected_pareto_point_sha256": PARETO_POINT_SHA256,
+        "frontier_min_completed_run_cost_usd": Decimal("9.50"),
+        "frontier_best_wall_clock_minutes_at_min_cost": 900,
+    }
+    values.update(overrides)
+    return VastOffer(**values)
 
 
 def make_spec(
@@ -45,7 +75,9 @@ def make_spec(
     client_count: int | None = None,
     projected: str = "4.00",
     maximum: str = "5",
-    step_cap: int = 15,
+    projected_vast: str = "9.50",
+    maximum_vast: str = "20",
+    step_cap: int = 50,
 ) -> CloudRunSpec:
     pilot = tier is RunTier.PILOT
     return CloudRunSpec(
@@ -56,13 +88,18 @@ def make_spec(
         subnet_id="subnet-test",
         client_count=client_count if client_count is not None else (2 if pilot else 8),
         controller_hourly_rate_usd=Decimal("0.052" if pilot else "0.094"),
-        vast_offer=VastOffer("12345", "L40S", Decimal("0.59"), True),
+        vast_offer=make_vast_offer(
+            projected_completed_run_cost_usd=Decimal(projected_vast),
+            frontier_min_completed_run_cost_usd=Decimal(projected_vast),
+        ),
         vast_image=PINNED_IMAGE,
         controller_ttl_minutes=210 if pilot else 1800,
         client_ttl_minutes=180,
         vast_ttl_minutes=180 if pilot else 1800,
-        projected_total_usd=Decimal(projected),
-        maximum_spend_usd=Decimal(maximum),
+        projected_aws_spend_usd=Decimal(projected),
+        maximum_aws_spend_usd=Decimal(maximum),
+        projected_vast_spend_usd=Decimal(projected_vast),
+        maximum_vast_spend_usd=Decimal(maximum_vast),
         osworld_commit=PINNED_OSWORLD,
         step_cap=step_cap,
     )
@@ -74,6 +111,24 @@ def make_approval(plan):
         plan,
         approved_at=approved,
         expires_at=approved + timedelta(hours=1),
+    )
+
+
+def make_full_checkpoint(
+    run_id: str = "run-test-001",
+    sequence: int = 1,
+) -> DurableCheckpoint:
+    return DurableCheckpoint(
+        run_id=run_id,
+        sequence=sequence,
+        artifact_prefix=(
+            f"s3://{ARTIFACT_BUCKET}/runs/{run_id}/tasks/fake/attempt-0001/"
+            f"checkpoints/{sequence:08d}/"
+        ),
+        artifact_checksums={"checkpoint.json": "a" * 64},
+        state_kinds=DURABLE_CHECKPOINT_STATE_KINDS,
+        resumable_manifest_sha256="b" * 64,
+        remote_verified=True,
     )
 
 
@@ -301,8 +356,8 @@ def test_spec_enforces_tiers_vast_pinning_ttls_and_promotion_boundary():
     pilot = make_spec()
     full = make_spec(
         tier=RunTier.FULL,
-        projected="59.99",
-        maximum="70",
+        projected="49.99",
+        maximum="120",
         step_cap=100,
     )
 
@@ -319,12 +374,29 @@ def test_spec_enforces_tiers_vast_pinning_ttls_and_promotion_boundary():
     with pytest.raises(BootstrapValidationError, match=r"strictly below \$60"):
         make_spec(
             tier=RunTier.FULL,
-            projected="60",
-            maximum="70",
+            projected="50.50",
+            maximum="120",
+            step_cap=100,
+        )
+    with pytest.raises(BootstrapValidationError, match="100-step ceiling"):
+        make_spec(
+            tier=RunTier.FULL,
+            projected="49",
+            maximum="120.01",
             step_cap=100,
         )
     with pytest.raises(BootstrapValidationError, match="pinned by digest"):
         replace(pilot, vast_image="pytorch/pytorch:latest-cuda")
+
+
+def test_cloud_spec_has_no_duplicate_vast_maximum_declaration():
+    source = (
+        Path(__file__).parents[1]
+        / "src/intelligent_liars/osworld_cloud.py"
+    ).read_text()
+    assert source.count("    maximum_vast_spend_usd: Decimal\n") == 1
+    assert AWS_STEP_CAP_HARD_STOP_USD is CENTRAL_AWS_STEP_CAP_HARD_STOP_USD
+    assert VAST_EVALUATION_HARD_STOP_USD is CENTRAL_VAST_EVALUATION_HARD_STOP_USD
 
 
 def test_approval_is_content_addressed_and_fails_closed_on_every_mismatch():
@@ -337,9 +409,15 @@ def test_approval_is_content_addressed_and_fails_closed_on_every_mismatch():
         verify_approval(plan, None, now=now)
     with pytest.raises(ApprovalError, match="content hash"):
         verify_approval(plan, replace(approval, approval_id="0" * 64), now=now)
-    changed = create_dry_run_plan(replace(make_spec(), vast_offer=VastOffer(
-        "other-offer", "L40S", Decimal("0.60"), True
-    )))
+    changed = create_dry_run_plan(
+        replace(
+            make_spec(),
+            vast_offer=make_vast_offer(
+                offer_id="other-offer",
+                hourly_rate_usd=Decimal("0.60"),
+            ),
+        )
+    )
     with pytest.raises(ApprovalError, match="exact launch plan"):
         verify_approval(changed, approval, now=now)
     with pytest.raises(ApprovalError, match="expired"):
@@ -347,6 +425,118 @@ def test_approval_is_content_addressed_and_fails_closed_on_every_mismatch():
             plan,
             approval,
             now=datetime(2026, 7, 22, 13, tzinfo=UTC),
+        )
+
+
+def test_vast_offer_requires_measured_pareto_optimum_and_binds_approval():
+    with pytest.raises(BootstrapValidationError, match="necessity justification"):
+        make_vast_offer(
+            offer_id="multi-gpu-offer",
+            hourly_rate_usd=Decimal("1.20"),
+            gpu_count=2,
+            higher_hourly_spend=True,
+        )
+    with pytest.raises(BootstrapValidationError, match="necessity justification"):
+        make_vast_offer(
+            projected_completed_run_cost_usd=Decimal("10"),
+            projected_wall_clock_minutes=850,
+        )
+
+    base_plan = create_dry_run_plan(make_spec())
+    approved = make_approval(base_plan)
+    justified_offer = make_vast_offer(
+        offer_id="multi-gpu-offer",
+        hourly_rate_usd=Decimal("1.20"),
+        gpu_count=2,
+        projected_completed_run_cost_usd=Decimal("8.75"),
+        projected_wall_clock_minutes=420,
+        frontier_min_completed_run_cost_usd=Decimal("8.50"),
+        frontier_best_wall_clock_minutes_at_min_cost=400,
+        higher_hourly_spend=True,
+        necessity_justification="single GPU misses the approved completion deadline",
+    )
+    changed_plan = create_dry_run_plan(
+        replace(
+            make_spec(),
+            vast_offer=justified_offer,
+            projected_vast_spend_usd=Decimal("8.75"),
+        )
+    )
+
+    assert base_plan.approval_payload["vast"]["selection_objective"] == (
+        "projected_completed_run_cost_then_wall_clock"
+    )
+    assert base_plan.approval_payload["vast"]["pareto_evidence_sha256"] == (
+        PARETO_EVIDENCE_SHA256
+    )
+    assert base_plan.approval_payload["vast"]["selected_pareto_point_sha256"] == (
+        PARETO_POINT_SHA256
+    )
+    assert (
+        base_plan.approval_payload["vast"][
+            "frontier_min_completed_run_cost_usd"
+        ]
+        == "9.50"
+    )
+    assert (
+        base_plan.approval_payload["vast"][
+            "frontier_best_wall_clock_minutes_at_min_cost"
+        ]
+        == 900
+    )
+    assert changed_plan.approval_payload["vast"]["gpu_count"] == 2
+    assert (
+        changed_plan.approval_payload["vast"]["necessity_justification"]
+        == "single GPU misses the approved completion deadline"
+    )
+    with pytest.raises(ApprovalError, match="exact launch plan"):
+        verify_approval(
+            changed_plan,
+            approved,
+            now=datetime(2026, 7, 22, 12, 30, tzinfo=UTC),
+        )
+    changed_approval = make_approval(changed_plan)
+    rejustified_plan = create_dry_run_plan(
+        replace(
+            make_spec(),
+            vast_offer=replace(
+                justified_offer,
+                necessity_justification="lower interruption risk",
+            ),
+            projected_vast_spend_usd=Decimal("8.75"),
+        )
+    )
+    with pytest.raises(ApprovalError, match="exact launch plan"):
+        verify_approval(
+            rejustified_plan,
+            changed_approval,
+            now=datetime(2026, 7, 22, 12, 30, tzinfo=UTC),
+        )
+
+
+def test_approval_binds_separate_provider_ceiling_schema():
+    plan = create_dry_run_plan(make_spec())
+    approval = make_approval(plan)
+    assert plan.approval_payload["provider_budgets"] == {
+        "aws": {
+            "projected_spend_usd": "4.00",
+            "maximum_spend_usd": "5",
+            "provider_hard_ceiling_usd": "75",
+        },
+        "vast": {
+            "projected_spend_usd": "9.50",
+            "maximum_spend_usd": "20",
+            "provider_hard_ceiling_usd": "20",
+        },
+    }
+    changed = create_dry_run_plan(
+        replace(make_spec(), maximum_aws_spend_usd=Decimal("6"))
+    )
+    with pytest.raises(ApprovalError, match="exact launch plan"):
+        verify_approval(
+            changed,
+            approval,
+            now=datetime(2026, 7, 22, 12, 30, tzinfo=UTC),
         )
 
 
@@ -446,6 +636,7 @@ def test_artifacts_are_uploaded_and_verified_before_any_termination(tmp_path):
     )
     artifact = tmp_path / "run.tar"
     artifact.write_bytes(b"complete durable export")
+    orchestrator.register_checkpoint(handle, make_full_checkpoint())
 
     with pytest.raises(RuntimeError, match="verified before teardown"):
         orchestrator.teardown(handle)
@@ -473,29 +664,118 @@ def test_spend_sampling_uses_cumulative_ledger_and_exact_boundaries(tmp_path):
     orchestrator, handle, aws, vast, _s3, _ssh = bootstrap(tmp_path)
     ledger = CostLedger(tmp_path / "costs.jsonl")
 
-    aws.cost = Decimal("3.91")
+    aws.cost = Decimal("4.50")
     vast.cost = Decimal("0.59")
     assert (
         orchestrator.sample_spend(handle, ledger)
         is BudgetDecision.STOP_NEW_LEASES
     )
-    aws.cost = Decimal("4.41")
+    aws.cost = Decimal("75")
     assert orchestrator.sample_spend(handle, ledger) is BudgetDecision.HARD_STOP
-    assert ledger.total() == Decimal("5.00")
+    assert ledger.totals_by_resource()[("aws", "run-test-001")] == Decimal("75")
     assert PILOT_BUDGET.decide(Decimal("4.499")) is BudgetDecision.CONTINUE
     assert PILOT_BUDGET.decide(Decimal("4.50")) is BudgetDecision.STOP_NEW_LEASES
-    assert PILOT_BUDGET.decide(Decimal("5")) is BudgetDecision.HARD_STOP
+    assert PILOT_BUDGET.decide(Decimal("75")) is BudgetDecision.HARD_STOP
     assert FULL_BUDGET.decide(Decimal("64.99")) is BudgetDecision.CONTINUE
     assert FULL_BUDGET.decide(Decimal("65")) is BudgetDecision.STOP_NEW_LEASES
-    assert FULL_BUDGET.decide(Decimal("70")) is BudgetDecision.HARD_STOP
+    assert FULL_BUDGET.decide(Decimal("120")) is BudgetDecision.HARD_STOP
     assert (
         orchestrator.sample_spend(
             handle,
             ledger,
-            other_model_run_cost_usd=Decimal("135"),
+            other_model_run_cost_usd=Decimal("65"),
         )
         is BudgetDecision.HARD_STOP
     )
+
+
+def test_vast_evaluation_cap_is_cumulative_across_tranches_and_resources(tmp_path):
+    spec = make_spec(
+        tier=RunTier.FULL,
+        projected="20",
+        maximum="70",
+        client_count=8,
+    )
+    orchestrator, handle, aws, vast, _s3, _ssh = bootstrap(tmp_path, spec)
+    ledger = CostLedger(tmp_path / "cumulative-vast-costs.jsonl")
+    ledger.append(
+        CostSample("vast", "tranche-one", Decimal("14"), "2026-07-22T10:00:00Z")
+    )
+    ledger.append(
+        CostSample(
+            "vast",
+            "tranche-two",
+            Decimal("5.999"),
+            "2026-07-22T11:00:00Z",
+        )
+    )
+    aws.cost = Decimal("0")
+    vast.cost = Decimal("0")
+
+    assert VAST_EVALUATION_HARD_STOP_USD == Decimal("20")
+    assert orchestrator.sample_spend(handle, ledger) is BudgetDecision.CONTINUE
+    assert sum(
+        cost
+        for (provider, _resource), cost in ledger.totals_by_resource().items()
+        if provider == "vast"
+    ) == Decimal("19.999")
+
+    vast.cost = Decimal("0.001")
+    assert orchestrator.sample_spend(handle, ledger) is BudgetDecision.HARD_STOP
+    assert sum(
+        cost
+        for (provider, _resource), cost in ledger.totals_by_resource().items()
+        if provider == "vast"
+    ) == Decimal("20.000")
+
+
+@pytest.mark.parametrize(
+    ("step_cap", "below", "at"),
+    (
+        (50, Decimal("74.999"), Decimal("75")),
+        (100, Decimal("119.999"), Decimal("120")),
+    ),
+)
+def test_aws_provider_caps_are_cumulative_and_step_specific(
+    tmp_path,
+    step_cap,
+    below,
+    at,
+):
+    spec = make_spec(
+        tier=RunTier.FULL,
+        projected="49" if step_cap == 100 else "20",
+        maximum=str(AWS_STEP_CAP_HARD_STOP_USD[step_cap]),
+        projected_vast="0",
+        client_count=8,
+        step_cap=step_cap,
+    )
+    orchestrator, handle, aws, vast, _s3, _ssh = bootstrap(tmp_path, spec)
+    ledger = CostLedger(tmp_path / f"aws-{step_cap}.jsonl")
+    ledger.append(
+        CostSample("aws", "controller", Decimal("10"), "2026-07-22T10:00:00Z")
+    )
+    ledger.append(
+        CostSample(
+            "aws",
+            "clients",
+            below - Decimal("10"),
+            "2026-07-22T10:00:00Z",
+        )
+    )
+    aws.cost = Decimal("0")
+    vast.cost = Decimal("0")
+
+    assert orchestrator.sample_spend(handle, ledger) is BudgetDecision.STOP_NEW_LEASES
+    ledger.append(
+        CostSample(
+            "aws",
+            "clients",
+            at - Decimal("10"),
+            "2026-07-22T11:00:00Z",
+        )
+    )
+    assert orchestrator.sample_spend(handle, ledger) is BudgetDecision.HARD_STOP
 
 
 def test_hard_stop_stops_leases_bounds_drain_then_terminates(tmp_path):
@@ -518,13 +798,19 @@ def test_hard_stop_stops_leases_bounds_drain_then_terminates(tmp_path):
         handle,
         artifact_drain_seconds=300,
         drain=drain,
+        checkpoint=make_full_checkpoint(),
     )
 
     assert observed == [300]
     assert ("stop-leases", "i-controller") in aws.calls
     assert ("destroy", "vast-1") in vast.calls
     with pytest.raises(BootstrapValidationError, match="positive bound"):
-        orchestrator.hard_stop(handle, artifact_drain_seconds=0, drain=drain)
+        orchestrator.hard_stop(
+            handle,
+            artifact_drain_seconds=0,
+            drain=drain,
+            checkpoint=make_full_checkpoint(),
+        )
 
 
 def test_tail_modulus_shrinks_immediately_only_after_checksum_verification(tmp_path):
@@ -539,6 +825,7 @@ def test_tail_modulus_shrinks_immediately_only_after_checksum_verification(tmp_p
     handle.verified_resource_ids.update(
         client.resource_id for client in handle.clients[1:]
     )
+    orchestrator.register_checkpoint(handle, make_full_checkpoint())
     assert orchestrator.shrink_tail(handle, remaining_tasks=1) == 1
     assert len(handle.clients) == 1
     assert len([call for call in aws.calls if call[0] == "terminate"]) == 7
@@ -550,6 +837,7 @@ def test_tail_modulus_shrinks_immediately_only_after_checksum_verification(tmp_p
         vast=handle.vast,
         host_security_group_id="sg-host",
         client_security_group_id="sg-client",
+        latest_checkpoint=make_full_checkpoint(),
     )
     with pytest.raises(RuntimeError, match="checksum-verified"):
         orchestrator.shrink_tail(fresh, remaining_tasks=0)
@@ -567,6 +855,8 @@ def test_reconciliation_cleans_only_tagged_safe_or_expired_orphans(tmp_path):
             False,
             ("orphan-volume",),
             True,
+            True,
+            True,
         ),
         TaggedResource(
             "aws",
@@ -583,12 +873,26 @@ def test_reconciliation_cleans_only_tagged_safe_or_expired_orphans(tmp_path):
             "other",
             "running",
             True,
+            artifact_verified=True,
+            resumable_manifest_verified=True,
+            complete_checkpoint_verified=True,
         ),
     )
     vast.resources = (
         TaggedResource(
             "vast",
             "orphan-expired",
+            "gpu",
+            "run-test-001",
+            "running",
+            True,
+            artifact_verified=True,
+            resumable_manifest_verified=True,
+            complete_checkpoint_verified=True,
+        ),
+        TaggedResource(
+            "vast",
+            "orphan-expired-unsynced",
             "gpu",
             "run-test-001",
             "running",
@@ -605,10 +909,12 @@ def test_reconciliation_cleans_only_tagged_safe_or_expired_orphans(tmp_path):
     assert ("terminate", "orphan-wait") not in aws.calls
     assert ("terminate", "other-run") not in aws.calls
     assert ("destroy", "orphan-expired") in vast.calls
+    assert ("destroy", "orphan-expired-unsynced") not in vast.calls
 
     s3.verified_runs.add("run-test-001")
     assert orchestrator.reconcile_orphans(run_id="run-test-001") == (
         "orphan-safe",
         "orphan-wait",
         "orphan-expired",
+        "orphan-expired-unsynced",
     )

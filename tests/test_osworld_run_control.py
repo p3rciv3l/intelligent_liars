@@ -44,6 +44,40 @@ def manifest_payload(step_cap: int = 50) -> dict:
     }
 
 
+def proposal_budgets(
+    *,
+    aws_projected: str = "50",
+    aws_maximum: str = "75",
+    aws_hard_stop: str = "75",
+    vast_projected: str = "9.5",
+) -> dict:
+    return {
+        "aws": {
+            "projected_spend_usd": aws_projected,
+            "maximum_spend_usd": aws_maximum,
+            "committed_spend_usd": "0",
+            "authorized_active_cost_usd": "0",
+            "stop_new_leases_usd": "65",
+            "hard_stop_usd": aws_hard_stop,
+        },
+        "vast": {
+            "projected_spend_usd": vast_projected,
+            "maximum_spend_usd": "20",
+            "committed_spend_usd": "0",
+            "authorized_active_cost_usd": "0",
+            "stop_new_leases_usd": "19",
+            "hard_stop_usd": "20",
+        },
+    }
+
+
+def evaluation_envelopes() -> dict:
+    return {
+        "baseline_envelope_usd": "69",
+        "intervention_envelope_usd": "70",
+    }
+
+
 def test_manifest_validation_produces_stable_content_addressed_run_id(tmp_path):
     payload = manifest_payload()
     reordered = dict(reversed(payload.items()))
@@ -155,16 +189,20 @@ def test_authoritative_budget_policy_enforces_run_promotion_and_combined_limits(
     assert policy.combined_decision(Decimal("69"), Decimal("70")) is BudgetDecision.CONTINUE
     assert policy.combined_decision(Decimal("70"), Decimal("70")) is BudgetDecision.HARD_STOP
 
-    with pytest.raises(ValueError, match=r"\$70"):
-        EvaluationBudgetPolicy(model_run_hard_stop_usd=Decimal("70.01"))
+    with pytest.raises(ValueError, match=r"\$120"):
+        EvaluationBudgetPolicy(model_run_hard_stop_usd=Decimal("120.01"))
 
     hundred = validate_run_manifest(manifest_payload(100))
     with pytest.raises(ValueError, match=r"below \$60"):
         create_launch_proposal(
             hundred,
             resources=[LaunchResource("aws", "client", 1, 180, Decimal("0.2295"))],
-            projected_total_usd=Decimal("60"),
-            maximum_authorized_spend_usd=Decimal("60"),
+            provider_budgets=proposal_budgets(
+                aws_projected="50.5",
+                aws_maximum="120",
+                aws_hard_stop="120",
+            ),
+            evaluation_envelopes=evaluation_envelopes(),
             teardown_checklist=["terminate client"],
         )
 
@@ -185,7 +223,11 @@ def test_launch_proposal_is_exact_and_dispatch_defaults_to_no_cloud_action():
             LaunchResource("aws", "t3.xlarge client", 8, 180, Decimal("0.2295")),
             LaunchResource("vast", "L40S", 1, 1080, Decimal("0.60")),
         ],
-        maximum_authorized_spend_usd=Decimal("61.84"),
+        provider_budgets=proposal_budgets(
+            aws_projected="50",
+            vast_projected="11.84",
+        ),
+        evaluation_envelopes=evaluation_envelopes(),
         teardown_checklist=[
             "terminate all AWS clients",
             "terminate the AWS host",
@@ -199,7 +241,10 @@ def test_launch_proposal_is_exact_and_dispatch_defaults_to_no_cloud_action():
     assert [item["instance_count"] for item in rendered["resources"]] == [1, 8, 1]
     assert [item["ttl_minutes"] for item in rendered["resources"]] == [1080, 180, 1080]
     assert rendered["estimated_hourly_rate_usd"] == "2.5300"
-    assert rendered["maximum_authorized_spend_usd"] == "61.84"
+    assert rendered["provider_budgets"]["aws"]["maximum_spend_usd"] == "75"
+    assert rendered["provider_budgets"]["vast"]["maximum_spend_usd"] == "20"
+    assert rendered["approved"] is False
+    assert rendered["manifest_sha256"] == manifest.manifest_hash
 
     class FakeCloud:
         calls = []
@@ -213,10 +258,14 @@ def test_launch_proposal_is_exact_and_dispatch_defaults_to_no_cloud_action():
     dispatch_launch(replace(proposal, dry_run=False), fake, dry_run=False)
     assert fake.calls == [replace(proposal, dry_run=False)]
 
-    with pytest.raises(ValueError, match=r"\$70"):
+    with pytest.raises(ValueError, match="aws maximum spend"):
         create_launch_proposal(
             manifest,
             resources=[LaunchResource("aws", "client", 1, 180, Decimal("0.2295"))],
-            maximum_authorized_spend_usd=Decimal("70.01"),
+            provider_budgets=proposal_budgets(
+                aws_maximum="75.01",
+                aws_hard_stop="75.01",
+            ),
+            evaluation_envelopes=evaluation_envelopes(),
             teardown_checklist=["terminate client"],
         )

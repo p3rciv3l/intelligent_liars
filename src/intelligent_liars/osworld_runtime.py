@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import base64
 import json
 import os
 import shutil
@@ -230,71 +229,6 @@ def offline_preflight(
         vast_price_approved=vast_policy.price_approved,
         aws_auth_mode=aws_auth_mode,
     )
-
-
-@dataclass(frozen=True)
-class QwenMultimodalRequest:
-    endpoint_url: str
-    model: str
-    messages: tuple[Mapping[str, Any], ...]
-    max_tokens: int
-
-
-class QwenHTTPClient(Protocol):
-    def create_chat_completion(
-        self,
-        request: QwenMultimodalRequest,
-        *,
-        bearer_token: str,
-    ) -> Mapping[str, Any]: ...
-
-
-@dataclass(frozen=True)
-class QwenSmokeResult:
-    response_id: str
-    model: str
-    assistant_content_present: bool
-
-
-def run_qwen_multimodal_smoke_test(
-    client: QwenHTTPClient,
-    *,
-    endpoint_url: str,
-    bearer_token: str,
-    model: str,
-    image_png: bytes,
-) -> QwenSmokeResult:
-    if not endpoint_url.startswith(("https://", "http://localhost", "http://127.0.0.1")):
-        raise ValueError("Qwen endpoint must use HTTPS except for loopback tests")
-    if not bearer_token:
-        raise ValueError("Qwen endpoint authentication is required")
-    if not image_png:
-        raise ValueError("a PNG image is required")
-    image_url = "data:image/png;base64," + base64.b64encode(image_png).decode("ascii")
-    request = QwenMultimodalRequest(
-        endpoint_url=endpoint_url.rstrip("/") + "/chat/completions",
-        model=model,
-        messages=(
-            {
-                "role": "user",
-                "content": [
-                    {"type": "text", "text": "Describe this screenshot briefly."},
-                    {"type": "image_url", "image_url": {"url": image_url}},
-                ],
-            },
-        ),
-        max_tokens=32,
-    )
-    response = client.create_chat_completion(request, bearer_token=bearer_token)
-    try:
-        response_id = response["id"]
-        response_model = response["model"]
-        content = response["choices"][0]["message"]["content"]
-    except (KeyError, IndexError, TypeError) as exc:
-        raise ValueError("invalid OpenAI-compatible multimodal response") from exc
-    if not isinstance(response_id, str) or not isinstance(response_model, str):
-        raise ValueError("invalid OpenAI-compatible response identity")
-    return QwenSmokeResult(response_id, response_model, bool(content))
 
 
 class ArtifactStore(Protocol):

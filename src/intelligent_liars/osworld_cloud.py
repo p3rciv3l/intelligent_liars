@@ -11,11 +11,13 @@ from pathlib import Path
 from typing import Any, Callable, Mapping, Protocol, Sequence
 
 from intelligent_liars.run_control import (
+    AWS_STEP_CAP_HARD_STOP_USD,
     BudgetDecision,
     BudgetPolicy,
     CostLedger,
     CostSample,
     EvaluationBudgetPolicy,
+    VAST_EVALUATION_HARD_STOP_USD,
     _decimal,
     canonical_json,
     desired_worker_count,
@@ -29,10 +31,26 @@ ARTIFACT_BUCKET = "intelligent-liars-osworld-29a36b2b927f4078b2ac95ca83ec9c21"
 OSWORLD_CLIENT_TYPE = "t3.xlarge"
 OSWORLD_CLIENT_RATE_USD = Decimal("0.2295")
 OSWORLD_REQUIRED_SERVICE_PORTS = (5000, 9222, 8006, 8080, 5910)
-PILOT_BUDGET = BudgetPolicy(Decimal("4.50"), Decimal("5"))
-FULL_BUDGET = BudgetPolicy(Decimal("65"), Decimal("70"))
+PILOT_BUDGET = BudgetPolicy(Decimal("4.50"), AWS_STEP_CAP_HARD_STOP_USD[50])
+FULL_BUDGET = BudgetPolicy(Decimal("65"), AWS_STEP_CAP_HARD_STOP_USD[100])
 VAST_DISK_GB = 120
 PILOT_VAST_TTL_MINUTES = 180
+DURABLE_CHECKPOINT_STATE_KINDS = frozenset(
+    {
+        "manifest",
+        "attempt_ledger",
+        "trajectory",
+        "screenshots",
+        "video",
+        "logs",
+        "result",
+        "metadata",
+        "checksums",
+    }
+)
+OPTIONAL_POST_VERIFICATION_MIRRORS = frozenset(
+    {"dvc", "drive", "huggingface", "git-lfs"}
+)
 
 
 class BootstrapValidationError(ValueError):
@@ -41,6 +59,61 @@ class BootstrapValidationError(ValueError):
 
 class ApprovalError(PermissionError):
     pass
+
+
+@dataclass(frozen=True)
+class DurableCheckpoint:
+    run_id: str
+    sequence: int
+    artifact_prefix: str
+    artifact_checksums: Mapping[str, str]
+    state_kinds: frozenset[str]
+    resumable_manifest_sha256: str
+    remote_verified: bool
+
+
+def require_safe_lifecycle_transition(
+    action: str,
+    checkpoint: DurableCheckpoint | None,
+    *,
+    provider_preserves_required_disk: bool,
+) -> None:
+    if action not in {"pause", "stop", "destroy"}:
+        raise BootstrapValidationError("lifecycle action must be pause, stop, or destroy")
+    if checkpoint is None or checkpoint.remote_verified is not True:
+        raise BootstrapValidationError(
+            "pause, stop, and destroy require a remotely verified checkpoint"
+        )
+    expected_prefix = (
+        f"s3://{ARTIFACT_BUCKET}/runs/{checkpoint.run_id}/"
+    )
+    if (
+        not checkpoint.artifact_prefix.startswith(expected_prefix)
+        or "/checkpoints/" not in checkpoint.artifact_prefix
+    ):
+        raise BootstrapValidationError("S3 must be the authoritative checkpoint store")
+    if not checkpoint.artifact_checksums or any(
+        len(checksum) != 64
+        or checksum != checksum.lower()
+        or any(character not in "0123456789abcdef" for character in checksum)
+        for checksum in checkpoint.artifact_checksums.values()
+    ):
+        raise BootstrapValidationError("checkpoint artifact SHA-256 set is invalid")
+    manifest_hash = checkpoint.resumable_manifest_sha256
+    if (
+        len(manifest_hash) != 64
+        or manifest_hash != manifest_hash.lower()
+        or any(character not in "0123456789abcdef" for character in manifest_hash)
+    ):
+        raise BootstrapValidationError("checkpoint lacks resumable manifest state")
+    missing = DURABLE_CHECKPOINT_STATE_KINDS - checkpoint.state_kinds
+    if action == "pause" and provider_preserves_required_disk:
+        return
+    if missing:
+        raise BootstrapValidationError(
+            f"{action} requires drain/export of unsynced state: "
+            + ", ".join(sorted(missing))
+        )
 
 
 class RunTier(StrEnum):
@@ -96,7 +169,15 @@ class VastOffer:
     gpu_model: str
     hourly_rate_usd: Decimal
     verified: bool
+    projected_completed_run_cost_usd: Decimal
+    projected_wall_clock_minutes: int
+    pareto_evidence_sha256: str
+    selected_pareto_point_sha256: str
+    frontier_min_completed_run_cost_usd: Decimal
+    frontier_best_wall_clock_minutes_at_min_cost: int
     gpu_count: int = 1
+    higher_hourly_spend: bool = False
+    necessity_justification: str | None = None
 
     def __post_init__(self) -> None:
         if not self.offer_id or not self.gpu_model:
@@ -106,10 +187,75 @@ class VastOffer:
             "hourly_rate_usd",
             _decimal(self.hourly_rate_usd, "vast hourly_rate_usd"),
         )
+        object.__setattr__(
+            self,
+            "frontier_min_completed_run_cost_usd",
+            _decimal(
+                self.frontier_min_completed_run_cost_usd,
+                "vast frontier_min_completed_run_cost_usd",
+            ),
+        )
+        object.__setattr__(
+            self,
+            "projected_completed_run_cost_usd",
+            _decimal(
+                self.projected_completed_run_cost_usd,
+                "vast projected_completed_run_cost_usd",
+            ),
+        )
         if not self.verified:
             raise BootstrapValidationError("the selected Vast offer must be verified")
-        if self.gpu_count != 1:
-            raise BootstrapValidationError("exactly one Vast GPU is required")
+        if self.gpu_count < 1:
+            raise BootstrapValidationError("Vast GPU count must be positive")
+        if self.projected_wall_clock_minutes <= 0:
+            raise BootstrapValidationError("projected wall-clock time must be positive")
+        hashes = (
+            self.pareto_evidence_sha256,
+            self.selected_pareto_point_sha256,
+        )
+        if any(
+            len(value) != 64
+            or value != value.lower()
+            or any(character not in "0123456789abcdef" for character in value)
+            for value in hashes
+        ):
+            raise BootstrapValidationError("measured Pareto evidence requires a SHA-256 hash")
+        if self.frontier_best_wall_clock_minutes_at_min_cost <= 0:
+            raise BootstrapValidationError("frontier wall-clock optimum must be positive")
+        justification = (
+            self.necessity_justification.strip()
+            if isinstance(self.necessity_justification, str)
+            else ""
+        )
+        selected_cost = self.projected_completed_run_cost_usd
+        minimum_cost = self.frontier_min_completed_run_cost_usd
+        selected_wall_clock = self.projected_wall_clock_minutes
+        best_wall_clock = self.frontier_best_wall_clock_minutes_at_min_cost
+        if selected_cost < minimum_cost or (
+            selected_cost == minimum_cost
+            and selected_wall_clock < best_wall_clock
+        ):
+            raise BootstrapValidationError(
+                "selected Vast offer contradicts the measured frontier optimum"
+            )
+        is_lexicographic_optimum = (
+            selected_cost == minimum_cost
+            and selected_wall_clock == best_wall_clock
+        )
+        if (
+            not is_lexicographic_optimum
+            or self.gpu_count > 1
+            or self.higher_hourly_spend
+        ) and not justification:
+            raise BootstrapValidationError(
+                "non-optimal, multi-GPU, or higher-hourly-spend Vast offers "
+                "require a necessity justification"
+            )
+        object.__setattr__(
+            self,
+            "necessity_justification",
+            justification or None,
+        )
 
 
 @dataclass(frozen=True)
@@ -126,8 +272,10 @@ class CloudRunSpec:
     controller_ttl_minutes: int
     client_ttl_minutes: int
     vast_ttl_minutes: int
-    projected_total_usd: Decimal
-    maximum_spend_usd: Decimal
+    projected_aws_spend_usd: Decimal
+    maximum_aws_spend_usd: Decimal
+    projected_vast_spend_usd: Decimal
+    maximum_vast_spend_usd: Decimal
     osworld_commit: str
     step_cap: int
     service_ports: tuple[int, ...] = OSWORLD_REQUIRED_SERVICE_PORTS
@@ -146,8 +294,10 @@ class CloudRunSpec:
             raise BootstrapValidationError("tier must be pilot or full") from exc
         for name in (
             "controller_hourly_rate_usd",
-            "projected_total_usd",
-            "maximum_spend_usd",
+            "projected_aws_spend_usd",
+            "maximum_aws_spend_usd",
+            "projected_vast_spend_usd",
+            "maximum_vast_spend_usd",
         ):
             object.__setattr__(self, name, _decimal(getattr(self, name), name))
         self.validate()
@@ -163,6 +313,10 @@ class CloudRunSpec:
     @property
     def tags(self) -> dict[str, str]:
         return {"run_id": self.run_id, "managed_by": "intelligent-liars-osworld"}
+
+    @property
+    def projected_total_usd(self) -> Decimal:
+        return self.projected_aws_spend_usd + self.projected_vast_spend_usd
 
     def validate(self) -> None:
         if not self.run_id or any(character not in "abcdefghijklmnopqrstuvwxyz0123456789-_" for character in self.run_id):
@@ -208,12 +362,28 @@ class CloudRunSpec:
             raise BootstrapValidationError("destroy-after-verified-export must remain enabled")
         if len(self.osworld_commit) != 40 or any(c not in "0123456789abcdef" for c in self.osworld_commit):
             raise BootstrapValidationError("OSWorld must be pinned to a lowercase 40-character commit")
-        if self.maximum_spend_usd > self.policy.budget.hard_stop_usd:
-            raise BootstrapValidationError("maximum spend exceeds the tier hard stop")
-        if self.projected_total_usd > self.maximum_spend_usd:
-            raise BootstrapValidationError("projected spend exceeds maximum spend")
-        if self.step_cap <= 0:
-            raise BootstrapValidationError("step_cap must be positive")
+        aws_hard_stop = AWS_STEP_CAP_HARD_STOP_USD.get(self.step_cap)
+        if aws_hard_stop is None:
+            raise BootstrapValidationError("step_cap must have a frozen AWS provider ceiling")
+        if self.maximum_aws_spend_usd > aws_hard_stop:
+            raise BootstrapValidationError(
+                f"AWS maximum spend exceeds the {self.step_cap}-step ceiling"
+            )
+        if self.maximum_vast_spend_usd > VAST_EVALUATION_HARD_STOP_USD:
+            raise BootstrapValidationError(
+                "Vast maximum spend exceeds the entire-evaluation ceiling"
+            )
+        if self.projected_aws_spend_usd > self.maximum_aws_spend_usd:
+            raise BootstrapValidationError("projected AWS spend exceeds its maximum")
+        if self.projected_vast_spend_usd > self.maximum_vast_spend_usd:
+            raise BootstrapValidationError("projected Vast spend exceeds its maximum")
+        if (
+            self.projected_vast_spend_usd
+            != self.vast_offer.projected_completed_run_cost_usd
+        ):
+            raise BootstrapValidationError(
+                "Vast provider projection must equal the measured completed-run cost"
+            )
         if (
             self.step_cap == 100
             and not EvaluationBudgetPolicy().may_promote_to_100_steps(
@@ -247,6 +417,27 @@ class DryRunPlan:
                 "gpu_model": spec.vast_offer.gpu_model,
                 "gpu_count": spec.vast_offer.gpu_count,
                 "exact_hourly_rate_usd": str(spec.vast_offer.hourly_rate_usd),
+                "projected_completed_run_cost_usd": str(
+                    spec.vast_offer.projected_completed_run_cost_usd
+                ),
+                "projected_wall_clock_minutes": (
+                    spec.vast_offer.projected_wall_clock_minutes
+                ),
+                "pareto_evidence_sha256": spec.vast_offer.pareto_evidence_sha256,
+                "selected_pareto_point_sha256": (
+                    spec.vast_offer.selected_pareto_point_sha256
+                ),
+                "frontier_min_completed_run_cost_usd": str(
+                    spec.vast_offer.frontier_min_completed_run_cost_usd
+                ),
+                "frontier_best_wall_clock_minutes_at_min_cost": (
+                    spec.vast_offer.frontier_best_wall_clock_minutes_at_min_cost
+                ),
+                "selection_objective": (
+                    "projected_completed_run_cost_then_wall_clock"
+                ),
+                "higher_hourly_spend": spec.vast_offer.higher_hourly_spend,
+                "necessity_justification": spec.vast_offer.necessity_justification,
                 "image": spec.vast_image,
                 "disk_gb": spec.vast_disk_gb,
                 "worker_dtype": spec.worker_dtype,
@@ -284,8 +475,23 @@ class DryRunPlan:
                 "abort_incomplete_multipart_days": 7,
                 "append_only_run_prefixes": True,
             },
-            "projected_spend_usd": str(spec.projected_total_usd),
-            "maximum_spend_usd": str(spec.maximum_spend_usd),
+            "provider_budgets": {
+                "aws": {
+                    "projected_spend_usd": str(spec.projected_aws_spend_usd),
+                    "maximum_spend_usd": str(spec.maximum_aws_spend_usd),
+                    "provider_hard_ceiling_usd": str(
+                        AWS_STEP_CAP_HARD_STOP_USD[spec.step_cap]
+                    ),
+                },
+                "vast": {
+                    "projected_spend_usd": str(spec.projected_vast_spend_usd),
+                    "maximum_spend_usd": str(spec.maximum_vast_spend_usd),
+                    "provider_hard_ceiling_usd": str(
+                        VAST_EVALUATION_HARD_STOP_USD
+                    ),
+                },
+            },
+            "projected_total_usd": str(spec.projected_total_usd),
             "teardown_plan": list(self.teardown_plan),
             "osworld_commit": spec.osworld_commit,
             "step_cap": spec.step_cap,
@@ -515,6 +721,8 @@ class TaggedResource:
     ttl_expired: bool
     volume_ids: tuple[str, ...] = ()
     artifact_verified: bool = False
+    resumable_manifest_verified: bool = False
+    complete_checkpoint_verified: bool = False
 
 
 class AWSControl(Protocol):
@@ -623,6 +831,7 @@ class BootstrapHandle:
     client_security_group_id: str
     verified_resource_ids: set[str] = field(default_factory=set)
     terminated_resource_ids: set[str] = field(default_factory=set)
+    latest_checkpoint: DurableCheckpoint | None = None
 
     @property
     def compute_resource_ids(self) -> set[str]:
@@ -833,12 +1042,36 @@ class CloudOrchestrator:
             raise BootstrapValidationError("artifact export covers unknown resources")
         handle.verified_resource_ids.update(covered)
 
+    def register_checkpoint(
+        self,
+        handle: BootstrapHandle,
+        checkpoint: DurableCheckpoint,
+    ) -> None:
+        if checkpoint.run_id != handle.spec.run_id:
+            raise BootstrapValidationError("checkpoint run_id does not match handle")
+        require_safe_lifecycle_transition(
+            "pause",
+            checkpoint,
+            provider_preserves_required_disk=True,
+        )
+        if (
+            handle.latest_checkpoint is not None
+            and checkpoint.sequence <= handle.latest_checkpoint.sequence
+        ):
+            raise BootstrapValidationError("checkpoint sequence must increase")
+        handle.latest_checkpoint = checkpoint
+
     def shrink_tail(
         self,
         handle: BootstrapHandle,
         *,
         remaining_tasks: int,
     ) -> int:
+        require_safe_lifecycle_transition(
+            "destroy",
+            handle.latest_checkpoint,
+            provider_preserves_required_disk=False,
+        )
         target = desired_worker_count(remaining_tasks, handle.spec.client_count)
         surplus = handle.clients[target:]
         for client in surplus:
@@ -853,6 +1086,11 @@ class CloudOrchestrator:
         return target
 
     def teardown(self, handle: BootstrapHandle) -> None:
+        require_safe_lifecycle_transition(
+            "destroy",
+            handle.latest_checkpoint,
+            provider_preserves_required_disk=False,
+        )
         remaining = handle.compute_resource_ids - handle.terminated_resource_ids
         if not remaining <= handle.verified_resource_ids:
             raise RuntimeError("all compute artifacts must be verified before teardown")
@@ -881,12 +1119,44 @@ class CloudOrchestrator:
     ) -> BudgetDecision:
         for sample in (*self.aws.sample_costs(handle.spec.run_id), *self.vast.sample_costs(handle.spec.run_id)):
             ledger.append(sample)
-        decision = handle.spec.policy.budget.decide(
-            ledger.total(),
+        totals = ledger.totals_by_resource()
+        vast_total = sum(
+            (
+                cost
+                for (provider, _resource), cost in totals.items()
+                if provider == "vast"
+            ),
+            Decimal("0"),
+        )
+        aws_total = sum(
+            (
+                cost
+                for (provider, _resource), cost in totals.items()
+                if provider == "aws"
+            ),
+            Decimal("0"),
+        )
+        if vast_total >= min(
+            handle.spec.maximum_vast_spend_usd,
+            VAST_EVALUATION_HARD_STOP_USD,
+        ):
+            return BudgetDecision.HARD_STOP
+        if aws_total >= min(
+            handle.spec.maximum_aws_spend_usd,
+            AWS_STEP_CAP_HARD_STOP_USD[handle.spec.step_cap],
+        ):
+            return BudgetDecision.HARD_STOP
+        aws_authorized = aws_total + _decimal(
             authorized_active_cost_usd,
+            "authorized_active_cost_usd",
+        )
+        decision = (
+            BudgetDecision.STOP_NEW_LEASES
+            if aws_authorized >= handle.spec.policy.budget.stop_new_leases_usd
+            else BudgetDecision.CONTINUE
         )
         combined = EvaluationBudgetPolicy().combined_decision(
-            ledger.total(),
+            aws_total,
             other_model_run_cost_usd,
         )
         if combined is BudgetDecision.HARD_STOP:
@@ -899,12 +1169,14 @@ class CloudOrchestrator:
         *,
         artifact_drain_seconds: int,
         drain: Callable[[int], Sequence[ArtifactExport]],
+        checkpoint: DurableCheckpoint,
     ) -> None:
         if artifact_drain_seconds <= 0:
             raise BootstrapValidationError("artifact drain must have a positive bound")
         self.aws.stop_new_leases(handle.controller.resource_id)
         exports = drain(artifact_drain_seconds)
         self.verify_exports(handle, exports)
+        self.register_checkpoint(handle, checkpoint)
         self.teardown(handle)
 
     def reconcile_orphans(self, *, run_id: str) -> tuple[str, ...]:
@@ -918,8 +1190,12 @@ class CloudOrchestrator:
         for resource in resources:
             if resource.run_id != run_id or resource.state == "terminated":
                 continue
-            safe = resource.artifact_verified or self.s3.run_export_verified(run_id)
-            if not safe and not resource.ttl_expired:
+            safe = self.s3.run_export_verified(run_id) or (
+                resource.artifact_verified
+                and resource.resumable_manifest_verified
+                and resource.complete_checkpoint_verified
+            )
+            if not safe:
                 continue
             if resource.provider == "aws":
                 self.aws.terminate_instance(resource.resource_id)

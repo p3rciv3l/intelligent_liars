@@ -14,6 +14,14 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Any, Callable, Mapping, Protocol, Sequence
 
+from intelligent_liars.osworld_cloud import (
+    ARTIFACT_BUCKET,
+    AWS_STEP_CAP_HARD_STOP_USD,
+    DURABLE_CHECKPOINT_STATE_KINDS,
+    VAST_EVALUATION_HARD_STOP_USD,
+    DurableCheckpoint,
+    require_safe_lifecycle_transition,
+)
 from intelligent_liars.run_control import (
     AttemptLedger,
     BudgetDecision,
@@ -31,6 +39,7 @@ from intelligent_liars.run_control import (
     file_sha256,
     load_run_manifest,
     now_iso,
+    proposal_content_sha256,
     stable_sha256,
     validate_run_manifest,
 )
@@ -48,6 +57,15 @@ OFFICIAL_ACTIONS_SHA256 = "5bf7d6919726b11d74433716a2d59b1ae3b80e64a8250867add60
 ENDPOINT_PROFILE = "qwen3-vl-8b-thinking-bf16-48gb-v1"
 ENDPOINT_MAX_OUTPUT_TOKENS = 16384
 ENDPOINT_MAX_IMAGES = 4
+FIRST_TRANCHE_REQUIRED_ARTIFACTS = frozenset(
+    {
+        "attempt.json",
+        "trajectory.jsonl",
+        "evaluator.json",
+        "recording.mp4",
+        "screenshots/initial.png",
+    }
+)
 
 _THINK_RE = re.compile(r"^\s*<think>\s*(.*?)\s*</think>\s*(.*)$", re.DOTALL)
 
@@ -97,21 +115,32 @@ class AttemptResult:
 
 
 @dataclass(frozen=True)
-class ApprovedProposal:
-    run_id: str
-    manifest_sha256: str
-    resources: tuple[Mapping[str, Any], ...]
-    maximum_authorized_spend_usd: Decimal
-    projected_total_usd: Decimal
+class ProviderBudget:
+    projected_spend_usd: Decimal
+    maximum_spend_usd: Decimal
     committed_spend_usd: Decimal
     authorized_active_cost_usd: Decimal
     stop_new_leases_usd: Decimal
     hard_stop_usd: Decimal
+
+
+@dataclass(frozen=True)
+class ApprovedProposal:
+    run_id: str
+    manifest_sha256: str
+    resources: tuple[Mapping[str, Any], ...]
+    provider_budgets: Mapping[str, ProviderBudget]
     baseline_envelope_usd: Decimal
     intervention_envelope_usd: Decimal
     approval_id: str
     approved_at: str
 
+    @property
+    def projected_total_usd(self) -> Decimal:
+        return sum(
+            (budget.projected_spend_usd for budget in self.provider_budgets.values()),
+            Decimal("0"),
+        )
 
 @dataclass(frozen=True)
 class ExecutionBudgetState:
@@ -119,6 +148,7 @@ class ExecutionBudgetState:
     accept_new_leases: bool
     drain: bool
     accrued_and_committed_usd: Decimal
+    accrued_and_committed_by_provider_usd: Mapping[str, Decimal]
 
 
 class CostSampler(Protocol):
@@ -134,8 +164,198 @@ class ArtifactExporter(Protocol):
     ) -> str: ...
 
 
+class AppendOnlyCheckpointStore(Protocol):
+    def put_file_if_absent(self, local_path: Path, remote_uri: str) -> None: ...
+
+    def remote_sha256(self, remote_uri: str) -> str: ...
+
+
+class ProductionCheckpointSink(Protocol):
+    def checkpoint(
+        self,
+        *,
+        run_id: str,
+        task_id: str,
+        attempt: int,
+        sequence: int,
+        phase: str,
+        run_root: Path,
+        attempt_directory: Path,
+        required_state_kinds: frozenset[str],
+    ) -> DurableCheckpoint: ...
+
+
+@dataclass(frozen=True)
+class CheckpointArtifact:
+    state_kind: str
+    relative_path: str
+    local_path: Path
+
+
 class ExecutionBlockedError(RuntimeError):
     pass
+
+
+class CheckpointFailure(ExecutionBlockedError):
+    pass
+
+
+def export_incremental_checkpoint(
+    *,
+    run_id: str,
+    task_id: str,
+    attempt: int,
+    sequence: int,
+    artifacts: Sequence[CheckpointArtifact],
+    resumable_manifest_path: Path,
+    store: AppendOnlyCheckpointStore,
+) -> DurableCheckpoint:
+    if not run_id or not task_id or attempt < 1 or sequence < 1:
+        raise ExecutionBlockedError(
+            "checkpoint requires run/task identity and positive attempt/sequence"
+        )
+    if not artifacts:
+        raise ExecutionBlockedError("checkpoint requires incremental state artifacts")
+    prefix = (
+        f"s3://{ARTIFACT_BUCKET}/runs/{run_id}/tasks/{_safe_task_name(task_id)}/"
+        f"attempt-{attempt:04d}/checkpoints/{sequence:08d}/"
+    )
+    all_artifacts = (
+        CheckpointArtifact(
+            state_kind="metadata",
+            relative_path="resumable-manifest.json",
+            local_path=resumable_manifest_path,
+        ),
+        *artifacts,
+    )
+    paths: set[str] = set()
+    checksums: dict[str, str] = {}
+    state_kinds: set[str] = set()
+    for artifact in all_artifacts:
+        relative = Path(artifact.relative_path)
+        if (
+            artifact.state_kind not in DURABLE_CHECKPOINT_STATE_KINDS
+            or relative.is_absolute()
+            or ".." in relative.parts
+            or artifact.relative_path in paths
+        ):
+            raise ExecutionBlockedError("checkpoint artifact contract is invalid")
+        paths.add(artifact.relative_path)
+        local_hash = file_sha256(artifact.local_path)
+        remote_uri = prefix + artifact.relative_path
+        store.put_file_if_absent(artifact.local_path, remote_uri)
+        if store.remote_sha256(remote_uri).lower() != local_hash:
+            raise ExecutionBlockedError("checkpoint remote SHA-256 verification failed")
+        checksums[artifact.relative_path] = local_hash
+        state_kinds.add(artifact.state_kind)
+    return DurableCheckpoint(
+        run_id=run_id,
+        sequence=sequence,
+        artifact_prefix=prefix,
+        artifact_checksums=checksums,
+        state_kinds=frozenset(state_kinds),
+        resumable_manifest_sha256=file_sha256(resumable_manifest_path),
+        remote_verified=True,
+    )
+
+
+class StoreBackedProductionCheckpointSink:
+    def __init__(self, store: AppendOnlyCheckpointStore) -> None:
+        self.store = store
+
+    def checkpoint(
+        self,
+        *,
+        run_id: str,
+        task_id: str,
+        attempt: int,
+        sequence: int,
+        phase: str,
+        run_root: Path,
+        attempt_directory: Path,
+        required_state_kinds: frozenset[str],
+    ) -> DurableCheckpoint:
+        candidates: dict[str, tuple[Path, ...]] = {
+            "manifest": (run_root / "manifest.json",),
+            "attempt_ledger": (run_root / "attempts.jsonl",),
+            "trajectory": (attempt_directory / "trajectory.jsonl",),
+            "screenshots": tuple(
+                sorted((attempt_directory / "screenshots").glob("**/*"))
+            ),
+            "video": (attempt_directory / "recording.mp4",),
+            "logs": (attempt_directory / "runtime.log",),
+            "result": (
+                attempt_directory / "attempt.json",
+                attempt_directory / "evaluator.json",
+            ),
+            "checksums": (attempt_directory / "checksums.json",),
+        }
+        artifacts: list[CheckpointArtifact] = []
+        actual_kinds = {"metadata"}
+        for state_kind in sorted(required_state_kinds - {"metadata"}):
+            expected_files = candidates.get(state_kind, ())
+            files = tuple(
+                path
+                for path in expected_files
+                if path.is_file()
+            )
+            if not files or (
+                state_kind == "result"
+                and len(files) != len(expected_files)
+            ):
+                raise CheckpointFailure(
+                    f"required checkpoint state has no files: {state_kind}"
+                )
+            actual_kinds.add(state_kind)
+            for path in files:
+                base = run_root if state_kind in {"manifest", "attempt_ledger"} else attempt_directory
+                artifacts.append(
+                    CheckpointArtifact(
+                        state_kind=state_kind,
+                        relative_path=(
+                            f"run/{path.relative_to(base)}"
+                            if base == run_root
+                            else f"attempt/{path.relative_to(base)}"
+                        ),
+                        local_path=path,
+                    )
+                )
+        metadata_path = (
+            run_root
+            / ".checkpoint-metadata"
+            / f"{_safe_task_name(task_id)}-{attempt:04d}-{sequence:08d}.json"
+        )
+        _write_json_new(
+            metadata_path,
+            {
+                "schema_version": 1,
+                "run_id": run_id,
+                "task_id": task_id,
+                "attempt": attempt,
+                "sequence": sequence,
+                "phase": phase,
+                "required_state_kinds": sorted(required_state_kinds),
+                "artifact_checksums": {
+                    artifact.relative_path: file_sha256(artifact.local_path)
+                    for artifact in sorted(
+                        artifacts,
+                        key=lambda item: item.relative_path,
+                    )
+                },
+            },
+        )
+        checkpoint = export_incremental_checkpoint(
+            run_id=run_id,
+            task_id=task_id,
+            attempt=attempt,
+            sequence=sequence,
+            artifacts=artifacts,
+            resumable_manifest_path=metadata_path,
+            store=self.store,
+        )
+        if required_state_kinds - checkpoint.state_kinds or checkpoint.state_kinds != frozenset(actual_kinds):
+            raise CheckpointFailure("checkpoint state kinds do not match real files")
+        return checkpoint
 
 
 def split_merged_response(response: str) -> ResponseParts:
@@ -225,6 +445,12 @@ def load_approved_proposal(path: Path, manifest: FrozenRunManifest) -> ApprovedP
         raise ExecutionBlockedError(f"cannot load approved proposal: {exc}") from exc
     if payload.get("schema_version") != 1 or payload.get("approved") is not True:
         raise ExecutionBlockedError("proposal must be schema version 1 and explicitly approved")
+    proposal_hash = payload.get("proposal_hash")
+    if (
+        not isinstance(proposal_hash, str)
+        or proposal_hash != proposal_content_sha256(payload)
+    ):
+        raise ExecutionBlockedError("approved proposal content hash mismatch")
     if payload.get("run_id") != manifest.run_id:
         raise ExecutionBlockedError("approved proposal run_id does not match manifest")
     if payload.get("manifest_sha256") != manifest.manifest_hash:
@@ -258,41 +484,56 @@ def load_approved_proposal(path: Path, manifest: FrozenRunManifest) -> ApprovedP
             )
     except (TypeError, ValueError) as exc:
         raise ExecutionBlockedError(f"invalid approved resource: {exc}") from exc
-    budget = payload.get("budget")
-    if not isinstance(budget, dict):
-        raise ExecutionBlockedError("approved proposal must include budget controls")
+    provider_budget_payload = payload.get("provider_budgets")
+    if (
+        not isinstance(provider_budget_payload, dict)
+        or set(provider_budget_payload) != {"aws", "vast"}
+    ):
+        raise ExecutionBlockedError(
+            "approved proposal must include separate aws and vast provider_budgets"
+        )
     try:
+        provider_budgets = {
+            provider: ProviderBudget(
+                projected_spend_usd=_decimal(
+                    values["projected_spend_usd"],
+                    f"{provider}.projected_spend_usd",
+                ),
+                maximum_spend_usd=_decimal(
+                    values["maximum_spend_usd"],
+                    f"{provider}.maximum_spend_usd",
+                ),
+                committed_spend_usd=_decimal(
+                    values["committed_spend_usd"],
+                    f"{provider}.committed_spend_usd",
+                ),
+                authorized_active_cost_usd=_decimal(
+                    values["authorized_active_cost_usd"],
+                    f"{provider}.authorized_active_cost_usd",
+                ),
+                stop_new_leases_usd=_decimal(
+                    values["stop_new_leases_usd"],
+                    f"{provider}.stop_new_leases_usd",
+                ),
+                hard_stop_usd=_decimal(
+                    values["hard_stop_usd"],
+                    f"{provider}.hard_stop_usd",
+                ),
+            )
+            for provider, values in provider_budget_payload.items()
+        }
+        envelopes = payload["evaluation_envelopes"]
         proposal = ApprovedProposal(
             run_id=manifest.run_id,
             manifest_sha256=manifest.manifest_hash,
             resources=tuple(resources),
-            maximum_authorized_spend_usd=_decimal(
-                payload["maximum_authorized_spend_usd"],
-                "maximum_authorized_spend_usd",
-            ),
-            projected_total_usd=_decimal(
-                payload["projected_total_usd"],
-                "projected_total_usd",
-            ),
-            committed_spend_usd=_decimal(
-                budget["committed_spend_usd"],
-                "committed_spend_usd",
-            ),
-            authorized_active_cost_usd=_decimal(
-                budget["authorized_active_cost_usd"],
-                "authorized_active_cost_usd",
-            ),
-            stop_new_leases_usd=_decimal(
-                budget["stop_new_leases_usd"],
-                "stop_new_leases_usd",
-            ),
-            hard_stop_usd=_decimal(budget["hard_stop_usd"], "hard_stop_usd"),
+            provider_budgets=provider_budgets,
             baseline_envelope_usd=_decimal(
-                budget["baseline_envelope_usd"],
+                envelopes["baseline_envelope_usd"],
                 "baseline_envelope_usd",
             ),
             intervention_envelope_usd=_decimal(
-                budget["intervention_envelope_usd"],
+                envelopes["intervention_envelope_usd"],
                 "intervention_envelope_usd",
             ),
             approval_id=str(payload["approval_id"]),
@@ -302,13 +543,27 @@ def load_approved_proposal(path: Path, manifest: FrozenRunManifest) -> ApprovedP
         raise ExecutionBlockedError(f"invalid approved proposal: {exc}") from exc
     if not proposal.approval_id or not proposal.approved_at:
         raise ExecutionBlockedError("approved proposal must identify its approval")
-    if proposal.maximum_authorized_spend_usd > Decimal("70"):
-        raise ExecutionBlockedError("approved proposal exceeds the $70 model-run hard stop")
-    if proposal.projected_total_usd > proposal.maximum_authorized_spend_usd:
-        raise ExecutionBlockedError("projected total exceeds approved maximum spend")
-    if proposal.hard_stop_usd > proposal.maximum_authorized_spend_usd:
-        raise ExecutionBlockedError("hard stop exceeds approved maximum spend")
-    BudgetPolicy(proposal.stop_new_leases_usd, proposal.hard_stop_usd)
+    aws_ceiling = AWS_STEP_CAP_HARD_STOP_USD.get(manifest.step_cap)
+    if aws_ceiling is None:
+        raise ExecutionBlockedError("manifest step cap has no frozen AWS provider ceiling")
+    provider_ceilings = {
+        "aws": aws_ceiling,
+        "vast": VAST_EVALUATION_HARD_STOP_USD,
+    }
+    for provider, budget in proposal.provider_budgets.items():
+        if budget.maximum_spend_usd > provider_ceilings[provider]:
+            raise ExecutionBlockedError(
+                f"{provider} maximum spend exceeds its provider hard ceiling"
+            )
+        if budget.projected_spend_usd > budget.maximum_spend_usd:
+            raise ExecutionBlockedError(
+                f"{provider} projected spend exceeds its approved maximum"
+            )
+        if budget.hard_stop_usd > budget.maximum_spend_usd:
+            raise ExecutionBlockedError(
+                f"{provider} hard stop exceeds its approved maximum"
+            )
+        BudgetPolicy(budget.stop_new_leases_usd, budget.hard_stop_usd)
     policy = EvaluationBudgetPolicy()
     if manifest.step_cap == 100 and not policy.may_promote_to_100_steps(
         proposal.projected_total_usd
@@ -349,19 +604,42 @@ def sample_and_decide_budget(
         )
     for sample in samples:
         ledger.append(sample)
-    accrued_and_committed = ledger.total() + proposal.committed_spend_usd
-    decision = BudgetPolicy(
-        proposal.stop_new_leases_usd,
-        proposal.hard_stop_usd,
-    ).decide(
-        accrued_and_committed,
-        proposal.authorized_active_cost_usd,
-    )
+    totals = ledger.totals_by_resource()
+    accrued_by_provider = {
+        provider: sum(
+            (
+                cost
+                for (sample_provider, _resource), cost in totals.items()
+                if sample_provider == provider
+            ),
+            Decimal("0"),
+        )
+        + budget.committed_spend_usd
+        for provider, budget in proposal.provider_budgets.items()
+    }
+    decisions = {
+        provider: BudgetPolicy(
+            budget.stop_new_leases_usd,
+            budget.hard_stop_usd,
+        ).decide(
+            accrued_by_provider[provider],
+            budget.authorized_active_cost_usd,
+        )
+        for provider, budget in proposal.provider_budgets.items()
+    }
+    if BudgetDecision.HARD_STOP in decisions.values():
+        decision = BudgetDecision.HARD_STOP
+    elif BudgetDecision.STOP_NEW_LEASES in decisions.values():
+        decision = BudgetDecision.STOP_NEW_LEASES
+    else:
+        decision = BudgetDecision.CONTINUE
+    accrued_and_committed = sum(accrued_by_provider.values(), Decimal("0"))
     return ExecutionBudgetState(
         decision=decision,
         accept_new_leases=decision is BudgetDecision.CONTINUE,
         drain=decision is not BudgetDecision.CONTINUE,
         accrued_and_committed_usd=accrued_and_committed,
+        accrued_and_committed_by_provider_usd=accrued_by_provider,
     )
 
 
@@ -426,6 +704,72 @@ def _require_frozen_execution_contract(manifest: FrozenRunManifest) -> Mapping[s
     if run["action_parser_source_sha256"] != OFFICIAL_ACTIONS_SHA256:
         raise ValueError("action parser source checksum is not pinned")
     return run
+
+
+def require_first_tranche_pass(
+    manifest: FrozenRunManifest,
+    result: AttemptResult,
+    *,
+    remote_artifact_verified: bool,
+) -> None:
+    try:
+        _require_frozen_execution_contract(manifest)
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ExecutionBlockedError(
+            f"first tranche does not satisfy the frozen production contract: {exc}"
+        ) from exc
+    if len(manifest.task_ids) != 1 or manifest.step_cap != 50:
+        raise ExecutionBlockedError(
+            "first tranche must contain exactly one frozen task at 50 steps"
+        )
+    if result.terminal_state not in {
+        TerminalState.SUCCESS,
+        TerminalState.TASK_FAILURE,
+    }:
+        raise ExecutionBlockedError(
+            f"first tranche terminal state blocks later leases: {result.terminal_state.value}"
+        )
+    missing = FIRST_TRANCHE_REQUIRED_ARTIFACTS - result.artifact_checksums.keys()
+    if missing:
+        raise ExecutionBlockedError(
+            "first tranche artifact checksums are incomplete: "
+            + ", ".join(sorted(missing))
+        )
+    hashes = (*result.artifact_checksums.values(), result.bundle_sha256)
+    if any(
+        len(checksum) != 64
+        or checksum != checksum.lower()
+        or any(character not in "0123456789abcdef" for character in checksum)
+        for checksum in hashes
+    ):
+        raise ExecutionBlockedError("first tranche artifacts require lowercase SHA-256 hashes")
+    if stable_sha256(dict(result.artifact_checksums)) != result.bundle_sha256:
+        raise ExecutionBlockedError("first tranche bundle hash does not match its checksums")
+    if remote_artifact_verified is not True:
+        raise ExecutionBlockedError("first tranche artifact is not remotely verified")
+
+
+def require_five_task_tranche_lease(
+    first_manifest: FrozenRunManifest,
+    five_task_manifest: FrozenRunManifest,
+    first_result: AttemptResult,
+    *,
+    remote_artifact_verified: bool,
+) -> None:
+    require_first_tranche_pass(
+        first_manifest,
+        first_result,
+        remote_artifact_verified=remote_artifact_verified,
+    )
+    _require_frozen_execution_contract(five_task_manifest)
+    if (
+        len(five_task_manifest.task_ids) != 5
+        or five_task_manifest.step_cap != 50
+        or first_manifest.task_ids != five_task_manifest.task_ids[:1]
+    ):
+        raise ExecutionBlockedError(
+            "five-task tranche must be frozen at 50 steps with the first-task prefix"
+        )
 
 
 def verify_external_checkout(checkout: Path, manifest: FrozenRunManifest) -> None:
@@ -550,7 +894,8 @@ def build_official_aws_environment(checkout: Path, manifest: FrozenRunManifest) 
 
 
 def _safe_task_name(task_id: str) -> str:
-    return task_id.replace("/", "__")
+    readable = re.sub(r"[^A-Za-z0-9_-]+", "_", task_id).strip("_")
+    return f"{readable[:80]}-{stable_sha256(task_id)[:12]}"
 
 
 def _write_new(path: Path, data: bytes) -> None:
@@ -623,6 +968,7 @@ def run_attempt(
     agent: Agent,
     env: Environment,
     results_root: Path,
+    checkpoint_sink: ProductionCheckpointSink,
     sleep_after_execution: float = 0.0,
     clock: Callable[[], str] = now_iso,
 ) -> AttemptResult:
@@ -648,6 +994,44 @@ def run_attempt(
     recording_started = False
     error_payload: dict[str, Any] | None = None
     agent_termination: str | None = None
+    checkpoint_sequence = 0
+    checkpoint_failure: CheckpointFailure | None = None
+
+    def checkpoint(
+        phase_name: str,
+        directory: Path,
+        required_state_kinds: frozenset[str],
+        *,
+        final: bool = False,
+    ) -> None:
+        nonlocal checkpoint_sequence
+        checkpoint_sequence += 1
+        try:
+            durable = checkpoint_sink.checkpoint(
+                run_id=manifest.run_id,
+                task_id=task_id,
+                attempt=attempt_number,
+                sequence=checkpoint_sequence,
+                phase=phase_name,
+                run_root=run_root,
+                attempt_directory=directory,
+                required_state_kinds=required_state_kinds,
+            )
+            if (
+                durable.run_id != manifest.run_id
+                or durable.sequence != checkpoint_sequence
+                or required_state_kinds - durable.state_kinds
+            ):
+                raise ValueError("checkpoint sink returned mismatched durable state")
+            require_safe_lifecycle_transition(
+                "destroy" if final else "pause",
+                durable,
+                provider_preserves_required_disk=not final,
+            )
+        except Exception as exc:
+            raise CheckpointFailure(
+                f"production checkpoint failed at {phase_name}: {exc}"
+            ) from exc
     try:
         _append_event(
             trajectory,
@@ -680,6 +1064,13 @@ def run_attempt(
         )
         env.controller.start_recording()
         recording_started = True
+        checkpoint(
+            "initial_state",
+            staging,
+            frozenset(
+                {"manifest", "trajectory", "screenshots", "logs", "metadata"}
+            ),
+        )
         done = False
         current_screenshot_ref = "screenshots/initial.png"
         terminal_state = TerminalState.TASK_FAILURE
@@ -763,6 +1154,19 @@ def run_attempt(
                 )
                 observation = post_observation
                 current_screenshot_ref = str(post_path.relative_to(staging))
+                checkpoint(
+                    "action_executed",
+                    staging,
+                    frozenset(
+                        {
+                            "manifest",
+                            "trajectory",
+                            "screenshots",
+                            "logs",
+                            "metadata",
+                        }
+                    ),
+                )
                 if action in {"DONE", "FAIL"}:
                     agent_termination = action
                 if done:
@@ -781,6 +1185,8 @@ def run_attempt(
         )
         terminal_state = evaluator_terminal_state(evaluator_score)
     except Exception as exc:
+        if isinstance(exc, CheckpointFailure):
+            checkpoint_failure = exc
         terminal_state = classify_failure(phase, exc)
         error_payload = {
             "phase": phase,
@@ -841,6 +1247,22 @@ def run_attempt(
         logger.removeHandler(handler)
         handler.close()
 
+    if checkpoint_failure is None:
+        checkpoint(
+            "evaluator_recording_finalized",
+            staging,
+            frozenset(
+                {
+                    "manifest",
+                    "trajectory",
+                    "screenshots",
+                    "video",
+                    "logs",
+                    "metadata",
+                }
+            ),
+        )
+
     finished_at = clock()
     _write_json_new(
         staging / "attempt.json",
@@ -885,7 +1307,7 @@ def run_attempt(
         )
     )
     shutil.rmtree(run_root / ".staging", ignore_errors=True)
-    return AttemptResult(
+    result = AttemptResult(
         final_directory,
         terminal_state,
         evaluator_score,
@@ -893,6 +1315,15 @@ def run_attempt(
         bundle_hash,
         agent_termination,
     )
+    if checkpoint_failure is not None:
+        raise checkpoint_failure
+    checkpoint(
+        "attempt_ledger_completed",
+        final_directory,
+        DURABLE_CHECKPOINT_STATE_KINDS,
+        final=True,
+    )
+    return result
 
 
 def export_attempt_before_teardown(
@@ -950,6 +1381,7 @@ def run_attempt_export_then_close(
     agent: Agent,
     env: Environment,
     results_root: Path,
+    checkpoint_sink: ProductionCheckpointSink,
     exporter: ArtifactExporter,
     destination_uri: str,
 ) -> AttemptResult:
@@ -960,6 +1392,7 @@ def run_attempt_export_then_close(
         agent=agent,
         env=env,
         results_root=results_root,
+        checkpoint_sink=checkpoint_sink,
     )
     export_attempt_before_teardown(
         manifest=manifest,

@@ -46,7 +46,13 @@ class BudgetDecision(StrEnum):
     HARD_STOP = "hard-stop"
 
 
-MODEL_RUN_HARD_STOP_USD = Decimal("70")
+MODEL_RUN_HARD_STOP_USD = Decimal("120")
+AWS_STEP_CAP_HARD_STOP_USD = {
+    50: Decimal("75"),
+    100: Decimal("120"),
+}
+STEP_CAP_HARD_STOP_USD = AWS_STEP_CAP_HARD_STOP_USD
+VAST_EVALUATION_HARD_STOP_USD = Decimal("20")
 PROMOTION_PROJECTED_TOTAL_LIMIT_USD = Decimal("60")
 COMBINED_RUN_ENVELOPE_USD = Decimal("140")
 
@@ -409,7 +415,7 @@ class EvaluationBudgetPolicy:
             "combined_run_envelope_usd",
         )
         if model_limit > MODEL_RUN_HARD_STOP_USD:
-            raise ValueError("model run hard stop cannot exceed $70")
+            raise ValueError("model run hard stop cannot exceed $120")
         if promotion_limit > PROMOTION_PROJECTED_TOTAL_LIMIT_USD:
             raise ValueError("100-step promotion limit cannot exceed $60")
         if combined_limit > COMBINED_RUN_ENVELOPE_USD:
@@ -479,10 +485,11 @@ class LaunchResource:
 @dataclass(frozen=True)
 class LaunchProposal:
     run_id: str
+    manifest_sha256: str
     dry_run: bool
     resources: tuple[LaunchResource, ...]
-    projected_total_usd: Decimal
-    maximum_authorized_spend_usd: Decimal
+    provider_budgets: Mapping[str, Mapping[str, Decimal]]
+    evaluation_envelopes: Mapping[str, Decimal]
     teardown_checklist: tuple[str, ...]
 
     @property
@@ -496,31 +503,116 @@ class LaunchProposal:
         )
 
     def as_dict(self) -> dict[str, Any]:
-        return {
+        payload = {
+            "schema_version": 1,
+            "approved": False,
+            "approval_id": None,
+            "approved_at": None,
             "run_id": self.run_id,
+            "manifest_sha256": self.manifest_sha256,
             "dry_run": self.dry_run,
             "resources": [resource.as_dict() for resource in self.resources],
             "estimated_hourly_rate_usd": str(self.estimated_hourly_rate_usd),
-            "projected_total_usd": str(self.projected_total_usd),
-            "maximum_authorized_spend_usd": str(self.maximum_authorized_spend_usd),
+            "provider_budgets": {
+                provider: {
+                    name: str(value)
+                    for name, value in budget.items()
+                }
+                for provider, budget in self.provider_budgets.items()
+            },
+            "evaluation_envelopes": {
+                name: str(value)
+                for name, value in self.evaluation_envelopes.items()
+            },
             "teardown_checklist": list(self.teardown_checklist),
         }
+        payload["proposal_hash"] = proposal_content_sha256(payload)
+        return payload
+
+
+def proposal_content_sha256(payload: Mapping[str, Any]) -> str:
+    approval_metadata = {
+        "approved",
+        "approval_id",
+        "approved_at",
+        "proposal_hash",
+    }
+    content = {
+        key: value
+        for key, value in payload.items()
+        if key not in approval_metadata
+    }
+    return stable_sha256(content)
 
 
 def create_launch_proposal(
     manifest: FrozenRunManifest,
     resources: Sequence[LaunchResource],
-    maximum_authorized_spend_usd: Decimal,
+    provider_budgets: Mapping[str, Mapping[str, Decimal | str | int]],
+    evaluation_envelopes: Mapping[str, Decimal | str | int],
     teardown_checklist: Sequence[str],
-    projected_total_usd: Decimal | None = None,
 ) -> LaunchProposal:
-    maximum_spend = _decimal(maximum_authorized_spend_usd, "maximum_authorized_spend_usd")
-    projected_total = _decimal(
-        projected_total_usd if projected_total_usd is not None else maximum_spend,
-        "projected_total_usd",
+    if set(provider_budgets) != {"aws", "vast"}:
+        raise ValueError("provider_budgets must contain exactly aws and vast")
+    required_budget_fields = {
+        "projected_spend_usd",
+        "maximum_spend_usd",
+        "committed_spend_usd",
+        "authorized_active_cost_usd",
+        "stop_new_leases_usd",
+        "hard_stop_usd",
+    }
+    normalized_budgets: dict[str, dict[str, Decimal]] = {}
+    for provider, values in provider_budgets.items():
+        if set(values) != required_budget_fields:
+            raise ValueError(f"{provider} provider budget fields are incomplete")
+        normalized = {
+            name: _decimal(value, f"{provider}.{name}")
+            for name, value in values.items()
+        }
+        ceiling = (
+            AWS_STEP_CAP_HARD_STOP_USD.get(manifest.step_cap)
+            if provider == "aws"
+            else VAST_EVALUATION_HARD_STOP_USD
+        )
+        if ceiling is None:
+            raise ValueError("manifest step cap has no frozen AWS provider ceiling")
+        if normalized["maximum_spend_usd"] > ceiling:
+            raise ValueError(f"{provider} maximum spend exceeds its provider ceiling")
+        if normalized["projected_spend_usd"] > normalized["maximum_spend_usd"]:
+            raise ValueError(f"{provider} projected spend exceeds its maximum")
+        if normalized["hard_stop_usd"] > normalized["maximum_spend_usd"]:
+            raise ValueError(f"{provider} hard stop exceeds its maximum")
+        BudgetPolicy(
+            normalized["stop_new_leases_usd"],
+            normalized["hard_stop_usd"],
+        )
+        normalized_budgets[provider] = normalized
+    required_envelopes = {
+        "baseline_envelope_usd",
+        "intervention_envelope_usd",
+    }
+    if set(evaluation_envelopes) != required_envelopes:
+        raise ValueError("evaluation_envelopes fields are incomplete")
+    normalized_envelopes = {
+        name: _decimal(value, name)
+        for name, value in evaluation_envelopes.items()
+    }
+    if (
+        EvaluationBudgetPolicy().combined_decision(
+            normalized_envelopes["baseline_envelope_usd"],
+            normalized_envelopes["intervention_envelope_usd"],
+        )
+        is BudgetDecision.HARD_STOP
+    ):
+        raise ValueError("evaluation envelopes reach the $140 combined cap")
+    projected_total = sum(
+        (
+            budget["projected_spend_usd"]
+            for budget in normalized_budgets.values()
+        ),
+        Decimal("0"),
     )
-    if maximum_spend > MODEL_RUN_HARD_STOP_USD:
-        raise ValueError("maximum_authorized_spend_usd cannot exceed the $70 model-run hard stop")
     if (
         manifest.step_cap == 100
         and projected_total >= PROMOTION_PROJECTED_TOTAL_LIMIT_USD
@@ -532,10 +624,11 @@ def create_launch_proposal(
         raise ValueError("teardown_checklist must contain explicit actions")
     return LaunchProposal(
         run_id=manifest.run_id,
+        manifest_sha256=manifest.manifest_hash,
         dry_run=True,
         resources=tuple(resources),
-        projected_total_usd=projected_total,
-        maximum_authorized_spend_usd=maximum_spend,
+        provider_budgets=normalized_budgets,
+        evaluation_envelopes=normalized_envelopes,
         teardown_checklist=tuple(teardown_checklist),
     )
 

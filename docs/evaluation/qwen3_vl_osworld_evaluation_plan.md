@@ -152,24 +152,29 @@ artifacts and acceptance checks must pass.
 1. **Offline harness tests:** Validate prompt construction, screenshot encoding,
    raw-response retention, parser behavior, evaluator invocation, task leasing,
    resume behavior, and immutable manifests without cloud resources.
-2. **Endpoint smoke test:** Start one Vast instance under an approved price and
-   deadline. Verify the exact baseline model, one multimodal request, structured
-   logging, latency, and clean shutdown.
-3. **One OSWorld task:** Start one AWS host and one client. Prove end-to-end
-   setup, action execution, evaluation, recording, durable upload, and forced
-   cleanup.
-4. **Three-to-five tasks:** Exercise different applications and at least one
-   intentional failure. Validate retries and that no completed result is
+2. **First paid production tranche:** Execute the frozen one-task 50-step manifest
+   with the same `build_official_agent`, `build_official_aws_environment`, and
+   `run_attempt` path used by every later task. It uses the pinned official task
+   schema and evaluator, captures the complete trajectory and recording, and
+   performs the same append-only upload and remote checksum verification as
+   later tranches. A scored `task_failure` proves that the production harness
+   ran and may pass this setup gate; model score is not the setup criterion.
+   Refusal, invalid action, model, evaluator, infrastructure, capability, or
+   setup failure stops immediately, and no later task may be leased. This task
+   is exactly the first-task prefix of the frozen five-task manifest. Leasing
+   any remaining task requires `require_first_tranche_pass`.
+3. **Frozen five-task subset:** After the first-tranche gate passes, lease only
+   the remaining four tasks from `pilot_five_50.template.json`. Validate retries,
+   incremental checkpoints, evaluator outputs, and that no completed result is
    overwritten.
-5. **OSWorld-Small:** Run the official 39-task manifest at 15 steps, initially
-   with four environments. Reconcile all attempts and manually inspect a
-   stratified sample of trajectories.
-6. **Full baseline:** Run 369 tasks at 15 steps, initially with eight
+4. **Frozen no-Google-Drive baseline:** Run the exact 361-task, 50-step
+   `test_nogdrive_361_50.template.json` manifest, initially with eight
    environments. Increase concurrency only if the model endpoint sustains it
    without materially changing per-step latency or failure rate.
-7. **Higher step caps:** Treat 50- and 100-step runs as new frozen experiment
-   grids. Do not extend completed 15-step trajectories in place.
-8. **Intervention runs:** Begin only after the unmodified baseline is complete,
+5. **100-step promotion:** Materialize a separate frozen 100-step grid only when
+   measured projected total remains strictly below $60. Never extend completed
+   50-step trajectories in place.
+6. **Intervention runs:** Begin only after the unmodified baseline is complete,
    validated, and immutable. Change only the intervention fields in the run
    manifest.
 
@@ -250,19 +255,38 @@ The table excludes:
 - Failed-attempt retries and manual setup time.
 - Taxes and account-specific credits.
 
-Before any paid launch, Captain must present the live Vast offer, AWS instance
-counts and TTLs, storage target, maximum authorized spend, and exact teardown
-commands. A run may not start until that proposal is explicitly approved.
+Immediately before approval, revalidate measured Vast candidates by projected
+total completed-run cost and wall-clock time, not hourly price. The selected
+offer must be on the measured Pareto frontier; among frontier choices, select
+lower total completed-run cost and then lower wall-clock time. A higher-hourly-
+spend or multi-GPU choice requires approval-bound Pareto evidence and a non-empty
+necessity justification. The approval binds the frontier's minimum measured
+completed-run cost and the best wall-clock time at that minimum. One GPU remains
+the default. Before any paid launch,
+Captain must present that exact Vast offer, evidence hash, AWS instance counts
+and TTLs, storage target, provider-specific maximum spend, and exact teardown
+commands. No launch may occur until the Qwen endpoint URL/API-key and
+`OSWORLD_CLIENT_PASSWORD` gates pass and the exact proposal is explicitly
+approved.
 
 ### Authoritative authorization and teardown rules
 
-The table above remains a planning input, not spend authorization. Each model
-run has a hard stop of $70. A 100-step run may be promoted only when its updated
-projected total is strictly below $60. The combined baseline-plus-intervention
-envelope is $140. These gates apply even when a table ceiling is higher.
+The table above remains a planning input, not spend authorization. Cumulative
+AWS spend has a hard ceiling keyed by the frozen run step cap: $75 for a 50-step
+run and $120 for a 100-step run. A 100-step run may be promoted only when its
+updated projected total is strictly below $60. The combined
+baseline-plus-intervention envelope is $140. These gates apply even when a table
+ceiling is higher.
+
+Vast GPU spend has a separate cumulative $20 hard ceiling for the entire
+evaluation across all tasks, tranches, and runs; it is never a per-task or
+per-tranche allowance. AWS controller, client, storage, address, and transfer
+spend is accounted and enforced separately. Provider samples remain cumulative
+across every resource and tranche.
 
 Cloud launch paths default to dry-run. Vast launches default to one GPU and
-require approval of a concrete offer and hourly rate. The Vast CLI path must be
+require approval of the measured completed-run cost, wall-clock projection,
+Pareto evidence, concrete offer, and hourly rate. The Vast CLI path must be
 resolved explicitly on Linux rather than inherited from a workstation default.
 AWS execution uses the official OSWorld host/client provider; nested KVM on a
 Capy VM is not an execution target.
@@ -273,6 +297,19 @@ resources are terminated only after local and remote artifact SHA-256 values
 match in the append-only artifact manifest. Teardown terminates instances
 rather than leaving them stopped, deletes unattached billable volumes, records
 resource termination IDs, and verifies that worker count shrinks to zero.
+The controller polls leases and run tags, immediately removes checksum-verified
+idle or surplus resources, and reconciles every provider to zero resources.
+
+Every task incrementally checkpoints the frozen manifest, attempt ledger,
+trajectory, screenshots, video, logs, result, metadata, and checksums to a unique
+append-only S3 checkpoint prefix as work proceeds. S3 is authoritative. DVC,
+Drive, Hugging Face, and Git LFS are optional mirrors only after S3 checksum
+verification and are never required connectors. Pause, stop, or destroy requires
+a remotely verified checksum set and resumable manifest state. A pause with
+partially exported state is allowed only when the provider preserves all
+required disk or volume state; otherwise the worker drains and exports first.
+Stop or destroy requires a complete durable-state checkpoint, and unsynced state
+is never destroyed.
 
 The Vast lifecycle policy source inspected for these rules is private
 `p3rciv3l/avi-skills` commit
@@ -320,9 +357,9 @@ behind one generation worker or if thinking responses are long.
 
 Parameter count affects fit and raw inference cost, but endpoint latency,
 reasoning-token length, batching, request concurrency, action validity, early
-termination, and the step cap determine evaluation time. The one-task and
-OSWorld-Small gates must measure those quantities before a full-run quote is
-treated as reliable.
+termination, and the step cap determine evaluation time. The one-task,
+five-task, and 361-task gates must measure those quantities before a larger
+quote is treated as reliable.
 
 ## Frozen run manifest
 
