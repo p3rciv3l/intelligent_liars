@@ -451,6 +451,17 @@ def load_approved_proposal(path: Path, manifest: FrozenRunManifest) -> ApprovedP
         or proposal_hash != proposal_content_sha256(payload)
     ):
         raise ExecutionBlockedError("approved proposal content hash mismatch")
+    approval_id = payload.get("approval_id")
+    approved_at = payload.get("approved_at")
+    if (
+        not isinstance(approval_id, str)
+        or not approval_id.strip()
+        or not isinstance(approved_at, str)
+        or not approved_at.strip()
+    ):
+        raise ExecutionBlockedError(
+            "approved proposal must identify approval with non-empty strings"
+        )
     if payload.get("run_id") != manifest.run_id:
         raise ExecutionBlockedError("approved proposal run_id does not match manifest")
     if payload.get("manifest_sha256") != manifest.manifest_hash:
@@ -536,13 +547,11 @@ def load_approved_proposal(path: Path, manifest: FrozenRunManifest) -> ApprovedP
                 envelopes["intervention_envelope_usd"],
                 "intervention_envelope_usd",
             ),
-            approval_id=str(payload["approval_id"]),
-            approved_at=str(payload["approved_at"]),
+            approval_id=approval_id,
+            approved_at=approved_at,
         )
     except (KeyError, TypeError, ValueError) as exc:
         raise ExecutionBlockedError(f"invalid approved proposal: {exc}") from exc
-    if not proposal.approval_id or not proposal.approved_at:
-        raise ExecutionBlockedError("approved proposal must identify its approval")
     aws_ceiling = AWS_STEP_CAP_HARD_STOP_USD.get(manifest.step_cap)
     if aws_ceiling is None:
         raise ExecutionBlockedError("manifest step cap has no frozen AWS provider ceiling")

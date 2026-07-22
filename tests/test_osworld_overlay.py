@@ -822,6 +822,36 @@ def test_approved_proposal_budget_gate_fails_closed_and_drains_at_threshold(tmp_
         load_approved_proposal(proposal_path, manifest)
 
 
+@pytest.mark.parametrize("field", ("approval_id", "approved_at"))
+@pytest.mark.parametrize(
+    ("mode", "value"),
+    (
+        ("missing", None),
+        ("value", None),
+        ("value", ""),
+        ("value", "   "),
+        ("value", 123),
+    ),
+)
+def test_approved_proposal_rejects_invalid_original_approval_metadata(
+    tmp_path,
+    field,
+    mode,
+    value,
+):
+    manifest = _pilot_manifest()
+    payload = _approved_proposal_payload(manifest)
+    if mode == "missing":
+        payload.pop(field)
+    else:
+        payload[field] = value
+    path = tmp_path / f"{field}-{mode}-{value!r}.json"
+    path.write_text(json.dumps(payload))
+
+    with pytest.raises(ExecutionBlockedError, match="non-empty strings"):
+        load_approved_proposal(path, manifest)
+
+
 @pytest.mark.parametrize(
     ("mutation", "message"),
     [
