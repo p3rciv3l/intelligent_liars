@@ -14,6 +14,9 @@ from intelligent_liars.osworld_runtime import (
     VastLaunchPolicy,
     offline_preflight,
 )
+from intelligent_liars.osworld_overlay import (
+    materialize_run_manifest,
+)
 from intelligent_liars.run_control import (
     LaunchResource,
     ManifestValidationError,
@@ -115,3 +118,34 @@ def osworld_preflight(
     except (KeyError, TypeError, ValueError, InvalidOperation) as exc:
         raise typer.BadParameter(str(exc)) from exc
     typer.echo(json.dumps(report.as_dict(), indent=2, sort_keys=True))
+
+
+@app.command("osworld-materialize")
+def osworld_materialize(
+    template_path: Path = typer.Argument(..., exists=True, dir_okay=False),
+    output_path: Path = typer.Option(..., "--output", dir_okay=False),
+    project_root: Path = typer.Option(Path("."), "--project-root", file_okay=False),
+) -> None:
+    """Materialize a frozen manifest from a template and the clean current HEAD."""
+    try:
+        manifest = materialize_run_manifest(
+            template_path=template_path,
+            output_path=output_path,
+            project_root=project_root,
+        )
+    except (OSError, ValueError, ManifestValidationError) as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    typer.echo(
+        json.dumps(
+            {
+                "cloud_side_effects": False,
+                "manifest": str(output_path.resolve()),
+                "manifest_sha256": manifest.manifest_hash,
+                "run_id": manifest.run_id,
+                "repository_commit": manifest.payload["repository"]["commit"],
+                "task_count": len(manifest.task_ids),
+            },
+            indent=2,
+            sort_keys=True,
+        )
+    )

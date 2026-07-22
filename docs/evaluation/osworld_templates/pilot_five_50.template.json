@@ -1,0 +1,117 @@
+{
+  "artifacts": {
+    "checksum": "sha256",
+    "destination_env": "OSWORLD_ARTIFACT_DESTINATION",
+    "initial_screenshot_required": true,
+    "layout": "content-addressed-append-only",
+    "recording_required": true,
+    "valid_attempt_overwrite": false
+  },
+  "desktop": {
+    "client_password_env": "OSWORLD_CLIENT_PASSWORD",
+    "enable_proxy": false,
+    "implementation": "official-osworld",
+    "provider": "aws",
+    "region": "us-east-1",
+    "screen_height": 1080,
+    "screen_width": 1920,
+    "use_public_ip": false
+  },
+  "endpoint": {
+    "api_key_env": "QWEN_ENDPOINT_API_KEY",
+    "capabilities": {
+      "deployment_profile": "qwen3-vl-8b-thinking-bf16-48gb-v1",
+      "dtype": "bfloat16",
+      "gpu_memory_gb": 48,
+      "max_images_per_request": 4,
+      "max_output_tokens": 16384
+    },
+    "type": "authenticated-openai-compatible",
+    "url_env": "QWEN_ENDPOINT_URL"
+  },
+  "evaluation": {
+    "implementation": "official-task-evaluator",
+    "task_config_sha256": {
+      "gimp/7a4deb26-d57d-4ea9-9a73-630f66a7b568": "8d45710ddce352624a634ab8e650f746cdb11ace0df7fc555f387e54a6cbbffa",
+      "libreoffice_calc/abed40dc-063f-4598-8ba5-9fe749c0615d": "e0f67b3c0dfdfff58a311fb78e9371dff848643a04ad489ea35f050e08bc7d2c",
+      "os/5ea617a3-0e86-4ba6-aab2-dac9aa2e8d57": "4235cb5cf42f47c15c28a4c601592ded5f99bba7ffa89666b2c583adfbeea97a",
+      "vlc/59f21cfb-0120-4326-b255-a5b827b38967": "0810416ef1e1e35e03988bd8110bcedd913e5e13accc8ca603d2de21639aa15c",
+      "vs_code/0ed39f63-6049-43d4-ba4d-5fa2fe04a951": "ba53fb30a0d1064b46a68babbad9b082bb79b7228788c4643fca828c17c075ff"
+    }
+  },
+  "model": {
+    "id": "Qwen/Qwen3-VL-8B-Thinking",
+    "processor_revision": "92f3c4b4feadd3a016ef468d103bb5f58b2a2c6b",
+    "revision": "92f3c4b4feadd3a016ef468d103bb5f58b2a2c6b",
+    "tokenizer_revision": "92f3c4b4feadd3a016ef468d103bb5f58b2a2c6b"
+  },
+  "osworld": {
+    "commit": "b7db4d8c85d9e95e0b1db44de5bec954cf37f0cf",
+    "external_checkout_required": true,
+    "repository": "https://github.com/xlang-ai/OSWorld.git"
+  },
+  "run": {
+    "action_parser": "mm_agents.qwen.actions.parse_internal_response@osworld-pinned",
+    "action_parser_source_sha256": "5bf7d6919726b11d74433716a2d59b1ae3b80e64a8250867add60231c14bfdbf",
+    "action_space": "pyautogui",
+    "add_thought_prefix": false,
+    "captain_action_selection": false,
+    "coordinate_type": "relative",
+    "enable_thinking": true,
+    "endpoint_model": "Qwen/Qwen3-VL-8B-Thinking",
+    "fold_size": 4,
+    "history_n": 20,
+    "history_policy": {
+      "collapse_text": "This screenshot has been collapsed.",
+      "fold_size": 4,
+      "history_n": 20,
+      "image_max": 4,
+      "implementation": "official-qwen-folding"
+    },
+    "image_max": 4,
+    "max_tokens": 16384,
+    "observation_type": "screenshot",
+    "response_capture": "raw-merged-before-parse; separated-think-and-final",
+    "retry_policy": {
+      "backoff_seconds": "min(5*attempt,30)",
+      "classifications": [
+        "model_error",
+        "infrastructure_failure"
+      ],
+      "implementation": "official-qwen-client",
+      "max_attempts": 5
+    },
+    "screenshot_transform": {
+      "encoding": "png-base64",
+      "implementation": "mm_agents.qwen.images.process_image",
+      "max_pixels": "16*16*4*12800",
+      "resize_factor": 32,
+      "source_sha256": "28f60213e02e0d76dd99b564cd8d3f86ede565959a4ccccd1aa9a10a294db31b"
+    },
+    "step_cap": 50,
+    "temperature": 0.0,
+    "top_p": 0.9
+  },
+  "task_grid": {
+    "name": "pilot_five_50",
+    "sha256": "96b9e1bfbd2271caf216d94acb80a74a2373b64d1fd1ac9aa67343d18a661714",
+    "source": "curated-stable-local-task-list",
+    "source_sha256": "96b9e1bfbd2271caf216d94acb80a74a2373b64d1fd1ac9aa67343d18a661714",
+    "task_config_sha256": {
+      "gimp/7a4deb26-d57d-4ea9-9a73-630f66a7b568": "8d45710ddce352624a634ab8e650f746cdb11ace0df7fc555f387e54a6cbbffa",
+      "libreoffice_calc/abed40dc-063f-4598-8ba5-9fe749c0615d": "e0f67b3c0dfdfff58a311fb78e9371dff848643a04ad489ea35f050e08bc7d2c",
+      "os/5ea617a3-0e86-4ba6-aab2-dac9aa2e8d57": "4235cb5cf42f47c15c28a4c601592ded5f99bba7ffa89666b2c583adfbeea97a",
+      "vlc/59f21cfb-0120-4326-b255-a5b827b38967": "0810416ef1e1e35e03988bd8110bcedd913e5e13accc8ca603d2de21639aa15c",
+      "vs_code/0ed39f63-6049-43d4-ba4d-5fa2fe04a951": "ba53fb30a0d1064b46a68babbad9b082bb79b7228788c4643fca828c17c075ff"
+    },
+    "task_ids": [
+      "os/5ea617a3-0e86-4ba6-aab2-dac9aa2e8d57",
+      "libreoffice_calc/abed40dc-063f-4598-8ba5-9fe749c0615d",
+      "gimp/7a4deb26-d57d-4ea9-9a73-630f66a7b568",
+      "vlc/59f21cfb-0120-4326-b255-a5b827b38967",
+      "vs_code/0ed39f63-6049-43d4-ba4d-5fa2fe04a951"
+    ]
+  },
+  "template_kind": "immutable-osworld-run-template",
+  "template_schema_version": 1
+}
