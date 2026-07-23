@@ -26,7 +26,6 @@ from intelligent_liars.models import (
     load_model_and_processor,
 )
 
-MAX_REQUEST_BYTES = 8 * 1024 * 1024
 MAX_IMAGE_BYTES = 6 * 1024 * 1024
 MAX_IMAGE_PIXELS = 16_000_000
 MAX_IMAGES = 4
@@ -38,6 +37,44 @@ CLIENT_HISTORY_N = 4
 CLIENT_IMAGE_MAX = 4
 SERIALIZATION = "single-inference-lock"
 MODEL_WORKERS_PER_GPU = 1
+MAX_ENCODED_IMAGE_BYTES = ((MAX_IMAGE_BYTES + 2) // 3) * 4
+MAX_JSON_ESCAPED_TEXT_BYTES = MAX_TEXT_CHARS * (len(json.dumps("\U0010ffff")) - 2)
+MAX_REQUEST_STRUCTURE_BYTES = len(
+    json.dumps(
+        {
+            "model": DEFAULT_MODEL_ID,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        *[
+                            {
+                                "type": "image_url",
+                                "image_url": {"url": "data:image/png;base64,"},
+                            }
+                            for _ in range(MAX_IMAGES)
+                        ],
+                        {"type": "text", "text": ""},
+                    ],
+                },
+                *[
+                    {"role": "assistant", "content": ""}
+                    for _ in range(MAX_MESSAGES - 1)
+                ],
+            ],
+            "max_tokens": MAX_OUTPUT_TOKENS,
+            "temperature": 0,
+            "top_p": FROZEN_TOP_P,
+            "stream": False,
+        },
+        separators=(",", ":"),
+    ).encode()
+)
+MAX_REQUEST_BYTES = (
+    MAX_IMAGES * MAX_ENCODED_IMAGE_BYTES
+    + MAX_JSON_ESCAPED_TEXT_BYTES
+    + MAX_REQUEST_STRUCTURE_BYTES
+)
 FINGERPRINT_SOURCE = {
     "model": DEFAULT_MODEL_ID,
     "revision": DEFAULT_MODEL_REVISION,
@@ -96,8 +133,7 @@ class QwenEndpoint:
     def handle(self, method: str, path: str, headers: Mapping[str, str], body: bytes = b"") -> EndpointResponse:
         try:
             self._authenticate(headers)
-            if len(body) > MAX_REQUEST_BYTES:
-                raise RequestError(HTTPStatus.REQUEST_ENTITY_TOO_LARGE, "request body is too large")
+            _validate_request_body_size(len(body))
             if method == "GET" and path == "/health":
                 return EndpointResponse(HTTPStatus.OK, self._health())
             if method == "GET" and path == "/v1/models":
@@ -311,7 +347,7 @@ def _decode_image_url(value: Any) -> Image.Image:
     metadata, separator, encoded = value.partition(",")
     if not separator or not metadata.endswith(";base64"):
         raise RequestError(HTTPStatus.BAD_REQUEST, "image_url must use base64 encoding")
-    if len(encoded) > ((MAX_IMAGE_BYTES + 2) // 3) * 4:
+    if len(encoded) > MAX_ENCODED_IMAGE_BYTES:
         raise RequestError(HTTPStatus.REQUEST_ENTITY_TOO_LARGE, "image is too large")
     try:
         raw = base64.b64decode(encoded, validate=True)
@@ -331,6 +367,11 @@ def _decode_image_url(value: Any) -> Image.Image:
     return image.convert("RGB")
 
 
+def _validate_request_body_size(length: int) -> None:
+    if length < 0 or length > MAX_REQUEST_BYTES:
+        raise RequestError(HTTPStatus.REQUEST_ENTITY_TOO_LARGE, "request body is too large")
+
+
 def make_handler(endpoint: QwenEndpoint) -> type[BaseHTTPRequestHandler]:
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self) -> None:
@@ -344,7 +385,9 @@ def make_handler(endpoint: QwenEndpoint) -> type[BaseHTTPRequestHandler]:
                 length = int(self.headers.get("Content-Length", "0"))
             except ValueError:
                 length = MAX_REQUEST_BYTES + 1
-            if length < 0 or length > MAX_REQUEST_BYTES:
+            try:
+                _validate_request_body_size(length)
+            except RequestError:
                 response = EndpointResponse(
                     HTTPStatus.REQUEST_ENTITY_TOO_LARGE,
                     {"error": {"message": "request body is too large", "type": "invalid_request_error"}},

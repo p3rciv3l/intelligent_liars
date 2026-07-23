@@ -48,7 +48,7 @@ models:
       history_n: 4
       image_max: 4
     limits:
-      max_request_bytes: 8388608
+      max_request_bytes: 35959180
       max_image_bytes: 6291456
       max_image_pixels: 16000000
       max_images: 4

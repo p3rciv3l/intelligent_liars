@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import base64
+import http.client
 import io
 import json
+import threading
 import tomllib
+from http.server import ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 
@@ -23,10 +26,19 @@ from intelligent_liars.qwen_endpoint import (
     CLIENT_IMAGE_MAX,
     FINGERPRINT_SOURCE,
     FROZEN_TOP_P,
+    MAX_ENCODED_IMAGE_BYTES,
+    MAX_IMAGE_BYTES,
+    MAX_IMAGES,
+    MAX_MESSAGES,
     MAX_OUTPUT_TOKENS,
+    MAX_REQUEST_BYTES,
+    MAX_TEXT_CHARS,
     MODEL_FINGERPRINT,
     QwenEndpoint,
+    RequestError,
+    _validate_request_body_size,
     main,
+    make_handler,
 )
 
 API_KEY = "unit-test-key-that-must-stay-private"
@@ -124,6 +136,46 @@ def png_data_url() -> str:
     return "data:image/png;base64," + base64.b64encode(output.getvalue()).decode()
 
 
+def padded_png_data_url(size: int) -> str:
+    output = io.BytesIO()
+    Image.new("RGB", (2, 3), (1, 2, 3)).save(output, format="PNG")
+    raw = output.getvalue()
+    assert len(raw) <= size
+    return "data:image/png;base64," + base64.b64encode(raw.ljust(size, b"\0")).decode()
+
+
+def maximum_openai_request_body() -> bytes:
+    return json.dumps(
+        {
+            "model": DEFAULT_MODEL_ID,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        *[
+                            {
+                                "type": "image_url",
+                                "image_url": {"url": padded_png_data_url(MAX_IMAGE_BYTES)},
+                            }
+                            for _ in range(MAX_IMAGES)
+                        ],
+                        {"type": "text", "text": "\U0010ffff" * MAX_TEXT_CHARS},
+                    ],
+                },
+                *[
+                    {"role": "assistant", "content": ""}
+                    for _ in range(MAX_MESSAGES - 1)
+                ],
+            ],
+            "max_tokens": MAX_OUTPUT_TOKENS,
+            "temperature": 0,
+            "top_p": FROZEN_TOP_P,
+            "stream": False,
+        },
+        separators=(",", ":"),
+    ).encode()
+
+
 @pytest.mark.parametrize(
     "headers",
     [
@@ -183,6 +235,65 @@ def test_invalid_json_is_rejected():
 
     assert response.status == 400
     assert loads == []
+
+
+def test_maximum_four_image_openai_request_shape_fits_derived_body_limit():
+    body = maximum_openai_request_body()
+
+    assert len(body) == MAX_REQUEST_BYTES
+    assert MAX_ENCODED_IMAGE_BYTES == 8 * 1024 * 1024
+    _validate_request_body_size(len(body))
+    with pytest.raises(RequestError) as exc_info:
+        _validate_request_body_size(len(body) + 1)
+    assert exc_info.value.status == 413
+
+
+def test_real_http_boundary_accepts_runtime_sized_multimodal_body_and_rejects_over_cap():
+    endpoint, _, _, _ = make_endpoint()
+    image_url = padded_png_data_url(1_671_573)
+    payload = basic_payload(
+        messages=[
+            {
+                "role": "user",
+                "content": [
+                    *[
+                        {"type": "image_url", "image_url": {"url": image_url}}
+                        for _ in range(MAX_IMAGES)
+                    ],
+                    {"type": "text", "text": "Continue from the frozen history."},
+                ],
+            }
+        ]
+    )
+    body = json.dumps(payload, separators=(",", ":")).encode()
+    assert 8 * 1024 * 1024 < len(body) <= MAX_REQUEST_BYTES
+    server = ThreadingHTTPServer(("127.0.0.1", 0), make_handler(endpoint))
+    thread = threading.Thread(target=server.serve_forever)
+    thread.start()
+    try:
+        connection = http.client.HTTPConnection(*server.server_address)
+        connection.request(
+            "POST",
+            "/v1/chat/completions",
+            body=body,
+            headers={**AUTH, "Content-Type": "application/json"},
+        )
+        assert connection.getresponse().status == 200
+        connection.close()
+
+        connection = http.client.HTTPConnection(*server.server_address)
+        connection.putrequest("POST", "/v1/chat/completions")
+        connection.putheader("Authorization", f"Bearer {API_KEY}")
+        connection.putheader("Content-Length", str(MAX_REQUEST_BYTES + 1))
+        connection.endheaders()
+        response = connection.getresponse()
+        assert response.status == 413
+        assert json.loads(response.read())["error"]["message"] == "request body is too large"
+        connection.close()
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join()
 
 
 def test_base64_image_is_decoded_and_passed_to_template_and_processor():
@@ -450,6 +561,7 @@ def test_endpoint_manifest_freezes_revision_runtime_and_scaling():
         "history_n": CLIENT_HISTORY_N,
         "image_max": CLIENT_IMAGE_MAX,
     }
+    assert deployment["limits"]["max_request_bytes"] == MAX_REQUEST_BYTES
     assert "QWEN_ENDPOINT_API_KEY=" not in deployment["endpoint"]["command"]
 
 
