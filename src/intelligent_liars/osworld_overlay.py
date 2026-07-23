@@ -901,7 +901,6 @@ def build_official_aws_environment(checkout: Path, manifest: FrozenRunManifest) 
         require_a11y_tree=False,
         enable_proxy=desktop["enable_proxy"],
         client_password=client_password,
-        use_public_ip=desktop["use_public_ip"],
     )
 
 

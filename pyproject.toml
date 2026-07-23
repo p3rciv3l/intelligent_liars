@@ -59,6 +59,7 @@ endpoint = [
     "qwen-vl-utils==0.0.14",
     "setuptools==75.8.0",
     "torch==2.5.1",
+    "torchvision==0.20.1",
     "transformers==4.57.1",
     "wheel==0.45.1",
 ]

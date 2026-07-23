@@ -13,6 +13,7 @@ chmod 0600 "${key_path}"
 
 uv sync --frozen --no-dev --group endpoint --no-editable
 export PATH="${PWD}/.venv/bin:${PATH}"
+python -c 'import torch, torchvision; assert torch.__version__.split("+")[0] == "2.5.1"; assert torchvision.__version__.split("+")[0] == "0.20.1"'
 qwen-endpoint --dry-run
 export QWEN_ENDPOINT_API_KEY
 exec qwen-endpoint --host 127.0.0.1 --port 8000

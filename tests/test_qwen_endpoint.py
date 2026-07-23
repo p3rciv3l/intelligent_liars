@@ -430,6 +430,7 @@ def test_endpoint_manifest_freezes_revision_runtime_and_scaling():
         "qwen-vl-utils": "0.0.14",
         "setuptools": "75.8.0",
         "torch": "2.5.1",
+        "torchvision": "0.20.1",
         "transformers": "4.57.1",
         "wheel": "0.45.1",
     }
@@ -465,6 +466,7 @@ def test_endpoint_dependency_group_and_lock_are_exact_without_cuda13_drift():
         "qwen-vl-utils": "0.0.14",
         "setuptools": "75.8.0",
         "torch": "2.5.1",
+        "torchvision": "0.20.1",
         "transformers": "4.57.1",
         "wheel": "0.45.1",
     }
@@ -507,9 +509,16 @@ def test_endpoint_provisioning_uses_only_frozen_uv_sync_and_loopback_start():
 
     assert script_path.stat().st_mode & 0o777 == 0o755
     assert "uv sync --frozen --no-dev --group endpoint --no-editable" in script
+    runtime_import = (
+        "import torch, torchvision; "
+        'assert torch.__version__.split("+")[0] == "2.5.1"; '
+        'assert torchvision.__version__.split("+")[0] == "0.20.1"'
+    )
+    assert runtime_import in script
     assert "qwen-endpoint --dry-run" in script
     assert "exec qwen-endpoint --host 127.0.0.1 --port 8000" in script
     assert script.index("uv sync") < script.index("qwen-endpoint --dry-run")
+    assert script.index(runtime_import) < script.index("qwen-endpoint --dry-run")
     assert script.index("qwen-endpoint --dry-run") < script.index("exec qwen-endpoint")
     assert "chmod 0600" in script
     assert "pip " not in script

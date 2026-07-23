@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 import json
 import subprocess
 from dataclasses import replace
@@ -722,6 +723,7 @@ def test_official_aws_environment_requires_and_passes_nonempty_client_password(
             captured.update(kwargs)
 
     desktop = manifest.payload["desktop"]
+    assert desktop["use_public_ip"] is False
     size = (desktop["screen_width"], desktop["screen_height"])
 
     def fake_import(name):
@@ -741,6 +743,78 @@ def test_official_aws_environment_requires_and_passes_nonempty_client_password(
 
     build_official_aws_environment(tmp_path, manifest)
 
+    assert captured["client_password"] == "opaque-client-password"
+
+
+def test_official_aws_environment_matches_pinned_desktop_env_signature(
+    monkeypatch,
+    tmp_path,
+):
+    manifest = _pilot_manifest()
+    captured = {}
+
+    class PinnedDesktopEnv:
+        def __init__(
+            self,
+            provider_name="vmware",
+            region=None,
+            path_to_vm=None,
+            snapshot_name="init_state",
+            action_space="pyautogui",
+            cache_dir="cache",
+            screen_size=(1920, 1080),
+            headless=False,
+            require_a11y_tree=True,
+            require_terminal=False,
+            os_type="Ubuntu",
+            enable_proxy=False,
+            client_password="",
+            vm_secret_mounts=None,
+        ):
+            captured.update(locals())
+
+    assert tuple(inspect.signature(PinnedDesktopEnv).parameters) == (
+        "provider_name",
+        "region",
+        "path_to_vm",
+        "snapshot_name",
+        "action_space",
+        "cache_dir",
+        "screen_size",
+        "headless",
+        "require_a11y_tree",
+        "require_terminal",
+        "os_type",
+        "enable_proxy",
+        "client_password",
+        "vm_secret_mounts",
+    )
+
+    desktop = manifest.payload["desktop"]
+    size = (desktop["screen_width"], desktop["screen_height"])
+
+    def fake_import(name):
+        if name == "desktop_env.desktop_env":
+            return SimpleNamespace(DesktopEnv=PinnedDesktopEnv)
+        if name == "desktop_env.providers.aws.manager":
+            return SimpleNamespace(
+                IMAGE_ID_MAP={desktop["region"]: {size: "ami-pinned-test"}}
+            )
+        raise AssertionError(name)
+
+    monkeypatch.setattr(
+        "intelligent_liars.osworld_overlay.importlib.import_module",
+        fake_import,
+    )
+    monkeypatch.setenv("OSWORLD_CLIENT_PASSWORD", "opaque-client-password")
+
+    build_official_aws_environment(tmp_path, manifest)
+
+    assert "use_public_ip" not in captured
+    assert captured["provider_name"] == "aws"
+    assert captured["screen_size"] == size
+    assert captured["action_space"] == "pyautogui"
+    assert captured["require_a11y_tree"] is False
     assert captured["client_password"] == "opaque-client-password"
 
 
