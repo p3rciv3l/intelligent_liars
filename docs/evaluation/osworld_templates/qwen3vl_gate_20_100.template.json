@@ -1,0 +1,238 @@
+{
+  "acceptance_gates": {
+    "artifact_checksum_completeness": 1.0,
+    "coordinate_key_text_retention_gte": 0.99,
+    "implicit_terminal_actions_eq": 0,
+    "official_evaluator_invocation": 1.0,
+    "proxy": {
+      "mode": "enabled",
+      "required_checks": [
+        "dns",
+        "tls",
+        "status",
+        "expected_content",
+        "screenshot"
+      ]
+    },
+    "score": {
+      "gate_20_mean_gte": 0.2,
+      "small_39_engineering_mean_gte": 0.2564,
+      "small_39_target_compatible_mean": [
+        0.3077,
+        0.3846
+      ]
+    },
+    "tool_call_initial_validity_gte": 0.99,
+    "tool_call_valid_after_correction_or_typed_failure": 1.0
+  },
+  "artifacts": {
+    "checksum": "sha256",
+    "destination_env": "OSWORLD_ARTIFACT_DESTINATION",
+    "initial_screenshot_required": true,
+    "layout": "content-addressed-append-only",
+    "recording_required": true,
+    "valid_attempt_overwrite": false
+  },
+  "desktop": {
+    "client_password_env": "OSWORLD_CLIENT_PASSWORD",
+    "enable_proxy": true,
+    "implementation": "official-osworld",
+    "provider": "aws",
+    "region": "us-east-1",
+    "screen_height": 1080,
+    "screen_width": 1920,
+    "use_public_ip": false
+  },
+  "endpoint": {
+    "api_key_env": "QWEN_ENDPOINT_API_KEY",
+    "capabilities": {
+      "deployment_profile": "qwen3-vl-8b-thinking-bf16-48gb-v1",
+      "dtype": "bfloat16",
+      "gpu_memory_gb": 48,
+      "max_images_per_request": 5,
+      "max_output_tokens": 32768
+    },
+    "type": "authenticated-openai-compatible",
+    "url_env": "QWEN_ENDPOINT_URL"
+  },
+  "evaluation": {
+    "evaluator_sha256": {
+      "chrome/7b6c7e24-c58a-49fc-a5bb-d57b80e5b4c3": "610b0c6fa9f000fd63bf1dc2ce1efc32b507f0a48273f360cecb8b9417b582b1",
+      "chrome/bb5e4c0d-f964-439c-97b6-bdb9747de3f4": "941ecedfd2aaa73017c1403c4fe3af91c07f4d9ade7fdbe5c4d944fa541d1bd5",
+      "gimp/554785e9-4523-4e7a-b8e1-8016f565f56a": "5cb087194a6f6566c87ed9a60bb935187ff38c72a10f382c3dada4e0eb4d5e21",
+      "gimp/7a4deb26-d57d-4ea9-9a73-630f66a7b568": "908ee46609ba3af38fc4ddef96349d3ca111dc5629a45912f9eb164a4e9bc73c",
+      "libreoffice_calc/357ef137-7eeb-4c80-a3bb-0951f26a8aff": "4a411bd6fccb2b309a59f969da5d511d0201a6cb505ec1673c5150e170420334",
+      "libreoffice_calc/42e0a640-4f19-4b28-973d-729602b5a4a7": "c015dd55b89d52de56dbd0cc35326cb4eb65d975aad6bd48005da9d9070b6f7a",
+      "libreoffice_impress/550ce7e7-747b-495f-b122-acdc4d0b8e54": "806e0bfcbf1b9a43cd6020057bc8abed999911d5c2a45d3a906c3c29e25d4b48",
+      "libreoffice_impress/5d901039-a89c-4bfb-967b-bf66f4df075e": "f5833bdf7a8376f634882158fcf2e63c406d307bf759d3424d84469942929b6b",
+      "libreoffice_writer/0810415c-bde4-4443-9047-d5f70165a697": "aaeb410e2592dd67dfe78c85bbf84a80295d862d27afdafb76bab2153c772195",
+      "libreoffice_writer/0a0faba3-5580-44df-965d-f562a99b291c": "951a232095a068e91b97196bed0be3407acdaffc679ae72a6866ec3ac5a6dcfd",
+      "multi_apps/510f64c8-9bcc-4be1-8d30-638705850618": "893dba0aacd5e4af68b1f1b49008f9f3af41ee7a267fc3143a4d3090e27931ce",
+      "multi_apps/a74b607e-6bb5-4ea8-8a7c-5d97c7bbcd2a": "0504e102a7d7709d5251de2780543674d6ee55e2f3e67b9f339364143d83b052",
+      "os/5812b315-e7bd-4265-b51f-863c02174c28": "5bfc848883a2cd6b062d8eda205a0d4ba2c0723ccac7bac7cee0dfaf9e8a93fa",
+      "os/5ea617a3-0e86-4ba6-aab2-dac9aa2e8d57": "1b8331f63d1e1807da5b7e3ac2c2d29fd21d0fa5e494bbb06e8400270a2e9807",
+      "thunderbird/15c3b339-88f7-4a86-ab16-e71c58dcb01e": "cc518bb2a429e9d2f7903633c534ed07abafa5993daca752cd62d07d0170ccaa",
+      "thunderbird/dfac9ee8-9bc4-4cdc-b465-4a4bfcd2f397": "6ce6b2db52fe9f1f28a73ea305b8c0e063d8365bc4140aac4383976d2fffe142",
+      "vlc/59f21cfb-0120-4326-b255-a5b827b38967": "f9a7f2462852add45b05910c256bda73b9c8284768b17bee1438223cd0a534b1",
+      "vlc/8f080098-ddb1-424c-b438-4e96e5e4786e": "39c53a05237c602e4764e43e824646785cac297f3f3138b517a76001f1a07823",
+      "vs_code/0ed39f63-6049-43d4-ba4d-5fa2fe04a951": "3572831c8deafa73bbccda04f311c5830193de8ad17383da0428c971de2d46d6",
+      "vs_code/276cc624-87ea-4f08-ab93-f770e3790175": "6fee61ba961c979f54cf734868538d8722b0871a273ca0ee9bfbb47ea67bc1ec"
+    },
+    "implementation": "official-task-evaluator",
+    "task_config_sha256": {
+      "chrome/7b6c7e24-c58a-49fc-a5bb-d57b80e5b4c3": "895dd907cdd3456893aa6f1232a68dbad80178227ab004d0a38669588f868d4d",
+      "chrome/bb5e4c0d-f964-439c-97b6-bdb9747de3f4": "810d924383e9723f8e59cef2ddf03a0ea4858cd40e1f2c801d4b110d6a4ae684",
+      "gimp/554785e9-4523-4e7a-b8e1-8016f565f56a": "b1a1031a95a4240a6979eb5aa8a8012cf9cb2a2c2864c63fb4d76e2bfc46c5d7",
+      "gimp/7a4deb26-d57d-4ea9-9a73-630f66a7b568": "8d45710ddce352624a634ab8e650f746cdb11ace0df7fc555f387e54a6cbbffa",
+      "libreoffice_calc/357ef137-7eeb-4c80-a3bb-0951f26a8aff": "c7cb07720392d1fd5da5aa323e989d8e9d772de02b8317b0f05370d6ab896511",
+      "libreoffice_calc/42e0a640-4f19-4b28-973d-729602b5a4a7": "bcd746edcaed3eb248bbe951435151d34ab98a5a39ff347244972d5612d99163",
+      "libreoffice_impress/550ce7e7-747b-495f-b122-acdc4d0b8e54": "a974293524335d36d0505f7fc8b3a97f90beba8e675bda3452ba0fc9923d43b9",
+      "libreoffice_impress/5d901039-a89c-4bfb-967b-bf66f4df075e": "23b1f8de916f3cf5940a147b45b02207dc9ea2f03ccad65be033e7cd84b5e408",
+      "libreoffice_writer/0810415c-bde4-4443-9047-d5f70165a697": "25b48b75bbe896e3b50f5304c831ff8c768ddf6057c4cca2f1901ba1ad6a4e3d",
+      "libreoffice_writer/0a0faba3-5580-44df-965d-f562a99b291c": "8a6dba40b4279df2bcad960c9d2918ff13996185572ee2b6c985a3d9f643bfe8",
+      "multi_apps/510f64c8-9bcc-4be1-8d30-638705850618": "7615fcf76726181b35284b36230cc83d1625827e07ee1d871af8449d36084948",
+      "multi_apps/a74b607e-6bb5-4ea8-8a7c-5d97c7bbcd2a": "cc4ccba71d172d733e44ca80566c86b7fb063bddbaa125b12c0768210c42022c",
+      "os/5812b315-e7bd-4265-b51f-863c02174c28": "bb117334fc9e9c2a6bdf5ab1409c3c5fdeb9da57ae34351271340eb14e9eded3",
+      "os/5ea617a3-0e86-4ba6-aab2-dac9aa2e8d57": "4235cb5cf42f47c15c28a4c601592ded5f99bba7ffa89666b2c583adfbeea97a",
+      "thunderbird/15c3b339-88f7-4a86-ab16-e71c58dcb01e": "603665b5e60be4d6dd89ca00d4856703372ca16912a582351e5cb48f11d6e699",
+      "thunderbird/dfac9ee8-9bc4-4cdc-b465-4a4bfcd2f397": "a6481280f1d740920ce499da2e299364cf5c3b9dedb862c7a3017542c126c672",
+      "vlc/59f21cfb-0120-4326-b255-a5b827b38967": "0810416ef1e1e35e03988bd8110bcedd913e5e13accc8ca603d2de21639aa15c",
+      "vlc/8f080098-ddb1-424c-b438-4e96e5e4786e": "eda0dbc5a3983adbb6bf640fff4250ca5ba57a693f6337ff083444e2f5fb990e",
+      "vs_code/0ed39f63-6049-43d4-ba4d-5fa2fe04a951": "ba53fb30a0d1064b46a68babbad9b082bb79b7228788c4643fca828c17c075ff",
+      "vs_code/276cc624-87ea-4f08-ab93-f770e3790175": "ed65692b91ca94dbdc60cc44d2d06407772ccf48de352286bc037c58e85053e9"
+    }
+  },
+  "model": {
+    "id": "Qwen/Qwen3-VL-8B-Thinking",
+    "processor_revision": "92f3c4b4feadd3a016ef468d103bb5f58b2a2c6b",
+    "revision": "92f3c4b4feadd3a016ef468d103bb5f58b2a2c6b",
+    "tokenizer_revision": "92f3c4b4feadd3a016ef468d103bb5f58b2a2c6b"
+  },
+  "osworld": {
+    "commit": "b7db4d8c85d9e95e0b1db44de5bec954cf37f0cf",
+    "external_checkout_required": true,
+    "repository": "https://github.com/xlang-ai/OSWorld.git"
+  },
+  "run": {
+    "action_parser": "intelligent_liars.qwen3vl_osworld.parse_qwen3vl_response@strict-v1",
+    "action_parser_source_sha256": "7eda5c2921af152f63d8b261f01ea89fd3177d0b59a20d8a841251678228dc0a",
+    "action_space": "pyautogui",
+    "add_thought_prefix": false,
+    "agent_class": "mm_agents.qwen3vl_agent.Qwen3VLAgent@osworld-pinned",
+    "agent_source_sha256": "c9bb34d3ad822168c66133cd97c607d4645b7eff08072e1e45c49dbbad8491b4",
+    "captain_action_selection": false,
+    "coordinate_type": "relative",
+    "enable_thinking": true,
+    "endpoint_model": "Qwen/Qwen3-VL-8B-Thinking",
+    "fold_size": 0,
+    "history_n": 4,
+    "history_policy": {
+      "history_n": 4,
+      "image_max": 5,
+      "implementation": "qwen3vl-rolling-four-plus-current",
+      "older_history": "numbered-action-summary-without-reasoning-json-or-coordinates",
+      "retain_thinking": true
+    },
+    "image_max": 5,
+    "max_tokens": 32768,
+    "observation_type": "screenshot",
+    "response_capture": "raw-merged-before-parse; separated-think-and-final",
+    "retry_policy": {
+      "backoff_seconds": "min(5*attempt,30)",
+      "classifications": [
+        "invalid_action",
+        "model_error",
+        "infrastructure_failure"
+      ],
+      "implementation": "strict-qwen3vl-correction-v1",
+      "invalid_action_corrections_per_observation": 2,
+      "invalid_actions_per_task": 10,
+      "max_attempts": 5,
+      "model_request_counts_toward_step_cap": true
+    },
+    "screenshot_transform": {
+      "encoding": "png-base64",
+      "implementation": "mm_agents.qwen3vl_agent.process_image@osworld-pinned",
+      "max_pixels": "16*16*4*12800",
+      "resize_factor": 32,
+      "source_sha256": "c9bb34d3ad822168c66133cd97c607d4645b7eff08072e1e45c49dbbad8491b4"
+    },
+    "step_cap": 100,
+    "temperature": 0.0,
+    "top_p": 0.9
+  },
+  "task_grid": {
+    "evaluator_sha256": {
+      "chrome/7b6c7e24-c58a-49fc-a5bb-d57b80e5b4c3": "610b0c6fa9f000fd63bf1dc2ce1efc32b507f0a48273f360cecb8b9417b582b1",
+      "chrome/bb5e4c0d-f964-439c-97b6-bdb9747de3f4": "941ecedfd2aaa73017c1403c4fe3af91c07f4d9ade7fdbe5c4d944fa541d1bd5",
+      "gimp/554785e9-4523-4e7a-b8e1-8016f565f56a": "5cb087194a6f6566c87ed9a60bb935187ff38c72a10f382c3dada4e0eb4d5e21",
+      "gimp/7a4deb26-d57d-4ea9-9a73-630f66a7b568": "908ee46609ba3af38fc4ddef96349d3ca111dc5629a45912f9eb164a4e9bc73c",
+      "libreoffice_calc/357ef137-7eeb-4c80-a3bb-0951f26a8aff": "4a411bd6fccb2b309a59f969da5d511d0201a6cb505ec1673c5150e170420334",
+      "libreoffice_calc/42e0a640-4f19-4b28-973d-729602b5a4a7": "c015dd55b89d52de56dbd0cc35326cb4eb65d975aad6bd48005da9d9070b6f7a",
+      "libreoffice_impress/550ce7e7-747b-495f-b122-acdc4d0b8e54": "806e0bfcbf1b9a43cd6020057bc8abed999911d5c2a45d3a906c3c29e25d4b48",
+      "libreoffice_impress/5d901039-a89c-4bfb-967b-bf66f4df075e": "f5833bdf7a8376f634882158fcf2e63c406d307bf759d3424d84469942929b6b",
+      "libreoffice_writer/0810415c-bde4-4443-9047-d5f70165a697": "aaeb410e2592dd67dfe78c85bbf84a80295d862d27afdafb76bab2153c772195",
+      "libreoffice_writer/0a0faba3-5580-44df-965d-f562a99b291c": "951a232095a068e91b97196bed0be3407acdaffc679ae72a6866ec3ac5a6dcfd",
+      "multi_apps/510f64c8-9bcc-4be1-8d30-638705850618": "893dba0aacd5e4af68b1f1b49008f9f3af41ee7a267fc3143a4d3090e27931ce",
+      "multi_apps/a74b607e-6bb5-4ea8-8a7c-5d97c7bbcd2a": "0504e102a7d7709d5251de2780543674d6ee55e2f3e67b9f339364143d83b052",
+      "os/5812b315-e7bd-4265-b51f-863c02174c28": "5bfc848883a2cd6b062d8eda205a0d4ba2c0723ccac7bac7cee0dfaf9e8a93fa",
+      "os/5ea617a3-0e86-4ba6-aab2-dac9aa2e8d57": "1b8331f63d1e1807da5b7e3ac2c2d29fd21d0fa5e494bbb06e8400270a2e9807",
+      "thunderbird/15c3b339-88f7-4a86-ab16-e71c58dcb01e": "cc518bb2a429e9d2f7903633c534ed07abafa5993daca752cd62d07d0170ccaa",
+      "thunderbird/dfac9ee8-9bc4-4cdc-b465-4a4bfcd2f397": "6ce6b2db52fe9f1f28a73ea305b8c0e063d8365bc4140aac4383976d2fffe142",
+      "vlc/59f21cfb-0120-4326-b255-a5b827b38967": "f9a7f2462852add45b05910c256bda73b9c8284768b17bee1438223cd0a534b1",
+      "vlc/8f080098-ddb1-424c-b438-4e96e5e4786e": "39c53a05237c602e4764e43e824646785cac297f3f3138b517a76001f1a07823",
+      "vs_code/0ed39f63-6049-43d4-ba4d-5fa2fe04a951": "3572831c8deafa73bbccda04f311c5830193de8ad17383da0428c971de2d46d6",
+      "vs_code/276cc624-87ea-4f08-ab93-f770e3790175": "6fee61ba961c979f54cf734868538d8722b0871a273ca0ee9bfbb47ea67bc1ec"
+    },
+    "name": "qwen3vl_stratified_gate_20_100",
+    "sha256": "7530c7ed617da624a072f161a3d35d8be42b473543a9effaf6791281448d6c86",
+    "source": "reconstruction-gate-20",
+    "source_sha256": "7530c7ed617da624a072f161a3d35d8be42b473543a9effaf6791281448d6c86",
+    "task_config_sha256": {
+      "chrome/7b6c7e24-c58a-49fc-a5bb-d57b80e5b4c3": "895dd907cdd3456893aa6f1232a68dbad80178227ab004d0a38669588f868d4d",
+      "chrome/bb5e4c0d-f964-439c-97b6-bdb9747de3f4": "810d924383e9723f8e59cef2ddf03a0ea4858cd40e1f2c801d4b110d6a4ae684",
+      "gimp/554785e9-4523-4e7a-b8e1-8016f565f56a": "b1a1031a95a4240a6979eb5aa8a8012cf9cb2a2c2864c63fb4d76e2bfc46c5d7",
+      "gimp/7a4deb26-d57d-4ea9-9a73-630f66a7b568": "8d45710ddce352624a634ab8e650f746cdb11ace0df7fc555f387e54a6cbbffa",
+      "libreoffice_calc/357ef137-7eeb-4c80-a3bb-0951f26a8aff": "c7cb07720392d1fd5da5aa323e989d8e9d772de02b8317b0f05370d6ab896511",
+      "libreoffice_calc/42e0a640-4f19-4b28-973d-729602b5a4a7": "bcd746edcaed3eb248bbe951435151d34ab98a5a39ff347244972d5612d99163",
+      "libreoffice_impress/550ce7e7-747b-495f-b122-acdc4d0b8e54": "a974293524335d36d0505f7fc8b3a97f90beba8e675bda3452ba0fc9923d43b9",
+      "libreoffice_impress/5d901039-a89c-4bfb-967b-bf66f4df075e": "23b1f8de916f3cf5940a147b45b02207dc9ea2f03ccad65be033e7cd84b5e408",
+      "libreoffice_writer/0810415c-bde4-4443-9047-d5f70165a697": "25b48b75bbe896e3b50f5304c831ff8c768ddf6057c4cca2f1901ba1ad6a4e3d",
+      "libreoffice_writer/0a0faba3-5580-44df-965d-f562a99b291c": "8a6dba40b4279df2bcad960c9d2918ff13996185572ee2b6c985a3d9f643bfe8",
+      "multi_apps/510f64c8-9bcc-4be1-8d30-638705850618": "7615fcf76726181b35284b36230cc83d1625827e07ee1d871af8449d36084948",
+      "multi_apps/a74b607e-6bb5-4ea8-8a7c-5d97c7bbcd2a": "cc4ccba71d172d733e44ca80566c86b7fb063bddbaa125b12c0768210c42022c",
+      "os/5812b315-e7bd-4265-b51f-863c02174c28": "bb117334fc9e9c2a6bdf5ab1409c3c5fdeb9da57ae34351271340eb14e9eded3",
+      "os/5ea617a3-0e86-4ba6-aab2-dac9aa2e8d57": "4235cb5cf42f47c15c28a4c601592ded5f99bba7ffa89666b2c583adfbeea97a",
+      "thunderbird/15c3b339-88f7-4a86-ab16-e71c58dcb01e": "603665b5e60be4d6dd89ca00d4856703372ca16912a582351e5cb48f11d6e699",
+      "thunderbird/dfac9ee8-9bc4-4cdc-b465-4a4bfcd2f397": "a6481280f1d740920ce499da2e299364cf5c3b9dedb862c7a3017542c126c672",
+      "vlc/59f21cfb-0120-4326-b255-a5b827b38967": "0810416ef1e1e35e03988bd8110bcedd913e5e13accc8ca603d2de21639aa15c",
+      "vlc/8f080098-ddb1-424c-b438-4e96e5e4786e": "eda0dbc5a3983adbb6bf640fff4250ca5ba57a693f6337ff083444e2f5fb990e",
+      "vs_code/0ed39f63-6049-43d4-ba4d-5fa2fe04a951": "ba53fb30a0d1064b46a68babbad9b082bb79b7228788c4643fca828c17c075ff",
+      "vs_code/276cc624-87ea-4f08-ab93-f770e3790175": "ed65692b91ca94dbdc60cc44d2d06407772ccf48de352286bc037c58e85053e9"
+    },
+    "task_ids": [
+      "chrome/bb5e4c0d-f964-439c-97b6-bdb9747de3f4",
+      "chrome/7b6c7e24-c58a-49fc-a5bb-d57b80e5b4c3",
+      "gimp/7a4deb26-d57d-4ea9-9a73-630f66a7b568",
+      "gimp/554785e9-4523-4e7a-b8e1-8016f565f56a",
+      "libreoffice_calc/357ef137-7eeb-4c80-a3bb-0951f26a8aff",
+      "libreoffice_calc/42e0a640-4f19-4b28-973d-729602b5a4a7",
+      "libreoffice_impress/5d901039-a89c-4bfb-967b-bf66f4df075e",
+      "libreoffice_impress/550ce7e7-747b-495f-b122-acdc4d0b8e54",
+      "libreoffice_writer/0810415c-bde4-4443-9047-d5f70165a697",
+      "libreoffice_writer/0a0faba3-5580-44df-965d-f562a99b291c",
+      "multi_apps/a74b607e-6bb5-4ea8-8a7c-5d97c7bbcd2a",
+      "multi_apps/510f64c8-9bcc-4be1-8d30-638705850618",
+      "os/5ea617a3-0e86-4ba6-aab2-dac9aa2e8d57",
+      "os/5812b315-e7bd-4265-b51f-863c02174c28",
+      "thunderbird/dfac9ee8-9bc4-4cdc-b465-4a4bfcd2f397",
+      "thunderbird/15c3b339-88f7-4a86-ab16-e71c58dcb01e",
+      "vlc/59f21cfb-0120-4326-b255-a5b827b38967",
+      "vlc/8f080098-ddb1-424c-b438-4e96e5e4786e",
+      "vs_code/0ed39f63-6049-43d4-ba4d-5fa2fe04a951",
+      "vs_code/276cc624-87ea-4f08-ab93-f770e3790175"
+    ]
+  },
+  "template_kind": "immutable-osworld-run-template",
+  "template_schema_version": 1
+}

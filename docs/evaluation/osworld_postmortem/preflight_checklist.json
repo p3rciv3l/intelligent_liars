@@ -1,0 +1,47 @@
+{
+  "schema_version": 1,
+  "name": "osworld_qwen3vl_future_run_preflight",
+  "source_run_root": "live-c6be945-resume-20260723T050624Z",
+  "default_policy": "deny",
+  "scale_up_requires_all": true,
+  "required_invariants": [
+    {"id":"INV-01","name":"paper_baseline_score_gate","phase":"gate","blocking":true,"assertions":{"task_count":20,"stratified":true,"max_steps_primary":15,"separate_max_50_report":true,"valid_tool_call_rate_gte":0.99,"raw_to_executed_retention_gte":0.98,"implicit_termination_count_eq":0,"terminal_timeout_rate_lte":0.05,"artifact_checksum_completeness_eq":1.0,"score_gte":0.20,"wilson_interval_required":true,"domain_breakdown_required":true}},
+    {"id":"INV-02","name":"malformed_action_fail_closed","phase":"contract_test","blocking":true,"assertions":{"invalid_result":"INVALID_ACTION","environment_actions_eq":0,"implicit_done_eq":0,"implicit_fail_eq":0,"explicit_schema_valid_terminate_only":true}},
+    {"id":"INV-03","name":"exact_task_commit_model_manifest","phase":"release","blocking":true,"required_fields":["ordered_task_ids","task_config_sha256","evaluator_sha256","repository_commit","repository_dirty","osworld_commit","agent_class","prompt_sha256","parser_sha256","processor_revision","tokenizer_revision","model_id","model_revision","wheel_or_image_digest","endpoint_limits","generation","history_policy","proxy","desktop","retry_policy","checkpoint_policy"]},
+    {"id":"INV-04","name":"per_transition_status_and_evaluator_metrics","phase":"all","blocking":true,"assertions":{"immutable_event_each_transition":true,"content_addressed":true,"transition_fields":["task_id","attempt","from","to","timestamp_utc","reason","worker_id","resource_id","manifest_sha256","artifact_refs"],"metrics_fields":["evaluator_count","score_sum","score_mean","positive_count","domain_scores","action_distribution","termination_distribution","timeout_rate","gpu_utilization","resource_state","spend"]}},
+    {"id":"INV-05","name":"checksum_durability","phase":"attempt_finalize","blocking":true,"required_artifacts":["evaluator.json","trajectory.jsonl","raw_response","runtime.log","initial_screenshot","transition_screenshots","recording.mp4","attempt_manifest","checksums.json"],"assertions":{"remote_rehydration_verified":true,"metadata_sha256_verified":true,"if_none_match_star":true}},
+    {"id":"INV-06","name":"authoritative_billing_reconciliation","phase":"finalize","blocking":true,"assertions":{"all_lineage_resources":true,"vast_charge_history":true,"aws_billing_or_ledger_fallback":true,"uncertainty_labeled":true,"retained_monthly_burn":true,"partial_estimate_not_actual":true}},
+    {"id":"INV-07","name":"resource_ownership","phase":"release","blocking":true,"required_fields":["owner","run_root","managed_by","created_at","billing_scope","cleanup_policy","preexisting"],"assertions":{"mutate_owned_only":true,"preexisting_excluded_from_cost":true}},
+    {"id":"INV-08","name":"pause_cleanup_order","phase":"finalize","blocking":true,"ordered_steps":["stop_admission","quiesce_workers","persist_transitions_and_ledgers","upload_required_artifacts","remote_verify_artifacts","produce_final_task_map_and_receipt","reconcile_owned_resources","stop_paid_gpu","terminate_ephemeral_clients","stop_controller","verify_zero_running_owned","optional_authorized_disposal"]},
+    {"id":"INV-09","name":"no_scale_up_on_early_score_divergence","phase":"admission","blocking":true,"assertions":{"passing_gate_receipt_required":true,"receipt_manifest_match":true,"quality_checkpoint_enforced":true,"budget_cannot_override":true,"manual_override_same_run_forbidden":true}}
+  ],
+  "checks": [
+    {"id":"F-01","name":"qwen_agent_parser_contract","phase":"contract_test","blocking":true,"test":"Golden and live-emission corpus covers every action type and malformed fields","pass":"Qwen3 JSON contract bundle hashes match manifest; valid >=99%; retention >=98%; no default action values"},
+    {"id":"F-02","name":"silent_done_fallback","phase":"contract_test","blocking":true,"test":"Property/fuzz invalid tool calls and end-to-end injection","pass":"Every malformed call returns INVALID_ACTION; zero environment actions and zero synthesized terminal states"},
+    {"id":"F-03","name":"history_image_contract","phase":"contract_test","blocking":true,"test":"Render steps 1-10 and compare roles, image lineage/order, token hashes and lengths to golden","pass":"No step-5 collapse; image count within declared endpoint cap; current plus required history present"},
+    {"id":"F-04","name":"proxy_health","phase":"preflight","blocking":true,"test":"Matched proxy-on/off Chrome page-health controls","pass":"Frozen proxy mode passes DNS, TLS, status, expected-content and screenshot thresholds"},
+    {"id":"F-05","name":"request_body_limit","phase":"preflight","blocking":true,"test":"Send representative, declared-max and max-plus-one requests through complete serving path","pass":"Expected HTTP statuses 200, 200, 413; all layer limits agree; p99 <=90% limit"},
+    {"id":"F-06","name":"immutable_environment","phase":"release","blocking":true,"test":"Remote attestation and periodic drift scan","pass":"All source, wheel/container, dependency, controller, endpoint and manifest hashes equal signed release; no dirty files"},
+    {"id":"F-07","name":"iam_and_access_bootstrap","phase":"preflight","blocking":true,"test":"IAM API matrix and SSH/SSM connect-command test","pass":"All required runtime/lifecycle/audit calls allowed; run-scoped access restricted; no private key or secret in user data"},
+    {"id":"F-08","name":"watchdog_detachment","phase":"preflight","blocking":true,"test":"Kill launcher shell/controller and disrupt network independently","pass":"Independent service survives or pauses owned resources within SLO; checksum heartbeat and stale-heartbeat alert verified"},
+    {"id":"F-09","name":"vast_offer_semantics","phase":"capacity","blocking":true,"test":"Validate raw offers, field units/equalities, topology and one-machine constraint; benchmark selection","pass":"dph_total used as host price; VRAM semantics correct; TP counted as one replica unless measured otherwise; offer current/rentable"},
+    {"id":"F-10","name":"spend_accounting","phase":"all","blocking":true,"test":"Reconcile provider inventory, lifecycle ledger, charge/billing data and retained resources","pass":"No missing/overlapping lineage; estimated/best/upper/authoritative separated; cap uses conservative upper bound"},
+    {"id":"F-11","name":"retry_staging_checkpoint_idempotency","phase":"contract_test","blocking":true,"test":"Fault inject every stage/move/upload boundary and restart repeatedly","pass":"Unique immutable attempt IDs; no overwrite/duplicate; failed attempt preserved before retry; deterministic resume from genuine evaluators"},
+    {"id":"F-12","name":"signal_thread_safety","phase":"preflight","blocking":true,"test":"Start production concurrency topology and send SIGINT/SIGTERM","pass":"Only main process owns signals; workers quiesce; artifacts flush; owned resources follow cleanup policy"},
+    {"id":"F-13","name":"recording_file_retrieval","phase":"contract_test","blocking":true,"test":"Delay, truncate and interrupt screenshot/recording retrieval","pass":"Bounded polling/resume succeeds or typed infrastructure failure occurs; attempt cannot complete without remote checksum verification"},
+    {"id":"F-14","name":"gpu_utilization","phase":"scale_ramp","blocking":true,"test":"End-to-end action-cycle load test at each replica count","pass":"Declared utilization and throughput floor met; queue supplies every replica; added replica improves aggregate throughput"},
+    {"id":"F-15","name":"slow_tail","phase":"production","blocking":true,"test":"Synthetic fast/timeout/checkpoint-failure workload","pass":"Unseen tasks not blocked; retries bounded; work stealing/quarantine works; p95/p99 and tail-cost SLOs pass"},
+    {"id":"F-16","name":"scale_admission","phase":"admission","blocking":true,"test":"Try launch with absent, stale, wrong-manifest and failing gate receipts","pass":"All denied; only current checksum-addressed passing receipt enables ramp"},
+    {"id":"F-17","name":"teardown_retained_cost","phase":"finalize","blocking":true,"test":"Ownership-aware teardown simulation and live post-stop inventory","pass":"Required order honored; zero running owned resources; preexisting untouched; retained costs/deadlines reported"}
+  ],
+  "runtime_stop_conditions": [
+    {"metric":"gate_or_checkpoint_score","operator":"<","threshold":0.20,"action":"stop_admission_and_pause"},
+    {"metric":"valid_tool_call_rate","operator":"<","threshold":0.99,"action":"stop_admission_and_pause"},
+    {"metric":"raw_to_executed_retention","operator":"<","threshold":0.98,"action":"stop_admission_and_pause"},
+    {"metric":"implicit_termination_count","operator":">","threshold":0,"action":"stop_immediately"},
+    {"metric":"terminal_timeout_rate","operator":">","threshold":0.05,"action":"stop_admission_and_investigate"},
+    {"metric":"artifact_checksum_completeness","operator":"<","threshold":1.0,"action":"block_completion_and_cleanup"},
+    {"metric":"conservative_projected_spend_usd","operator":">=","threshold_ref":"budget.hard_cap_usd","action":"pause_owned_paid_resources"},
+    {"metric":"watchdog_missed_heartbeats","operator":">=","threshold":2,"action":"alert_and_pause_owned_paid_resources"}
+  ]
+}

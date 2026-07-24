@@ -9,7 +9,7 @@
   },
   "desktop": {
     "client_password_env": "OSWORLD_CLIENT_PASSWORD",
-    "enable_proxy": false,
+    "enable_proxy": true,
     "implementation": "official-osworld",
     "provider": "aws",
     "region": "us-east-1",
@@ -23,8 +23,8 @@
       "deployment_profile": "qwen3-vl-8b-thinking-bf16-48gb-v1",
       "dtype": "bfloat16",
       "gpu_memory_gb": 48,
-      "max_images_per_request": 4,
-      "max_output_tokens": 16384
+      "max_images_per_request": 5,
+      "max_output_tokens": 32768
     },
     "type": "authenticated-openai-compatible",
     "url_env": "QWEN_ENDPOINT_URL"
@@ -47,42 +47,48 @@
     "repository": "https://github.com/xlang-ai/OSWorld.git"
   },
   "run": {
-    "action_parser": "mm_agents.qwen.actions.parse_internal_response@osworld-pinned",
-    "action_parser_source_sha256": "5bf7d6919726b11d74433716a2d59b1ae3b80e64a8250867add60231c14bfdbf",
+    "action_parser": "intelligent_liars.qwen3vl_osworld.parse_qwen3vl_response@strict-v1",
+    "action_parser_source_sha256": "7eda5c2921af152f63d8b261f01ea89fd3177d0b59a20d8a841251678228dc0a",
     "action_space": "pyautogui",
     "add_thought_prefix": false,
+    "agent_class": "mm_agents.qwen3vl_agent.Qwen3VLAgent@osworld-pinned",
+    "agent_source_sha256": "c9bb34d3ad822168c66133cd97c607d4645b7eff08072e1e45c49dbbad8491b4",
     "captain_action_selection": false,
     "coordinate_type": "relative",
     "enable_thinking": true,
     "endpoint_model": "Qwen/Qwen3-VL-8B-Thinking",
-    "fold_size": 4,
-    "history_n": 20,
+    "fold_size": 0,
+    "history_n": 4,
     "history_policy": {
-      "collapse_text": "This screenshot has been collapsed.",
-      "fold_size": 4,
-      "history_n": 20,
-      "image_max": 4,
-      "implementation": "official-qwen-folding"
+      "history_n": 4,
+      "image_max": 5,
+      "implementation": "qwen3vl-rolling-four-plus-current",
+      "older_history": "numbered-action-summary-without-reasoning-json-or-coordinates",
+      "retain_thinking": true
     },
-    "image_max": 4,
-    "max_tokens": 16384,
+    "image_max": 5,
+    "max_tokens": 32768,
     "observation_type": "screenshot",
     "response_capture": "raw-merged-before-parse; separated-think-and-final",
     "retry_policy": {
       "backoff_seconds": "min(5*attempt,30)",
       "classifications": [
+        "invalid_action",
         "model_error",
         "infrastructure_failure"
       ],
-      "implementation": "official-qwen-client",
-      "max_attempts": 5
+      "implementation": "strict-qwen3vl-correction-v1",
+      "invalid_action_corrections_per_observation": 2,
+      "invalid_actions_per_task": 10,
+      "max_attempts": 5,
+      "model_request_counts_toward_step_cap": true
     },
     "screenshot_transform": {
       "encoding": "png-base64",
-      "implementation": "mm_agents.qwen.images.process_image",
+      "implementation": "mm_agents.qwen3vl_agent.process_image@osworld-pinned",
       "max_pixels": "16*16*4*12800",
       "resize_factor": 32,
-      "source_sha256": "28f60213e02e0d76dd99b564cd8d3f86ede565959a4ccccd1aa9a10a294db31b"
+      "source_sha256": "c9bb34d3ad822168c66133cd97c607d4645b7eff08072e1e45c49dbbad8491b4"
     },
     "step_cap": 50,
     "temperature": 0.0,

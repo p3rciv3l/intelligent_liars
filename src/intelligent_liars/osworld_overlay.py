@@ -22,6 +22,14 @@ from intelligent_liars.osworld_cloud import (
     DurableCheckpoint,
     require_safe_lifecycle_transition,
 )
+from intelligent_liars.qwen3vl_osworld import (
+    MAX_CORRECTIONS_PER_OBSERVATION,
+    MAX_INVALID_ACTIONS_PER_TASK,
+    QWEN3VL_ACTION_PARSER,
+    QWEN3VL_AGENT_PATH,
+    QWEN3VL_AGENT_SOURCE_SHA256,
+    build_strict_qwen3vl_agent,
+)
 from intelligent_liars.run_control import (
     AttemptLedger,
     BudgetDecision,
@@ -52,11 +60,14 @@ ENDPOINT_URL_ENV = "QWEN_ENDPOINT_URL"
 ENDPOINT_API_KEY_ENV = "QWEN_ENDPOINT_API_KEY"
 OFFICIAL_GRID_PATH = "evaluation_examples/test_nogdrive.json"
 OFFICIAL_GRID_SHA256 = "fcb9497e93a8986407345d3012c872c9c2fed253420730fbea64ccfcace67dbb"
-OFFICIAL_QWEN_MAIN_SHA256 = "bd0b8b1c088fe809fbcfb87b931c68d8c6140e25ef7b4301bb5110d9d7f10582"
-OFFICIAL_ACTIONS_SHA256 = "5bf7d6919726b11d74433716a2d59b1ae3b80e64a8250867add60231c14bfdbf"
+OFFICIAL_SMALL_PATH = "evaluation_examples/test_small.json"
+OFFICIAL_SMALL_SHA256 = "bb29275171b78728d71825b125af311d74e66bb2a6d693c45c497d380b1fc640"
+STRICT_ACTION_PARSER_SHA256 = (
+    "7eda5c2921af152f63d8b261f01ea89fd3177d0b59a20d8a841251678228dc0a"
+)
 ENDPOINT_PROFILE = "qwen3-vl-8b-thinking-bf16-48gb-v1"
-ENDPOINT_MAX_OUTPUT_TOKENS = 16384
-ENDPOINT_MAX_IMAGES = 4
+ENDPOINT_MAX_OUTPUT_TOKENS = 32768
+ENDPOINT_MAX_IMAGES = 5
 FIRST_TRANCHE_REQUIRED_ARTIFACTS = frozenset(
     {
         "attempt.json",
@@ -668,7 +679,10 @@ def _require_frozen_execution_contract(manifest: FrozenRunManifest) -> Mapping[s
         "image_max",
         "fold_size",
         "coordinate_type",
+        "agent_class",
+        "agent_source_sha256",
         "action_parser",
+        "action_parser_source_sha256",
         "endpoint_model",
         "screenshot_transform",
         "retry_policy",
@@ -702,7 +716,9 @@ def _require_frozen_execution_contract(manifest: FrozenRunManifest) -> Mapping[s
         or run["image_max"] != capabilities["max_images_per_request"]
         or history.get("image_max") != run["image_max"]
         or history.get("history_n") != run["history_n"]
-        or history.get("fold_size") != run["fold_size"]
+        or run["history_n"] != 4
+        or run["image_max"] != 5
+        or history.get("implementation") != "qwen3vl-rolling-four-plus-current"
     ):
         raise ValueError("runner history/image/token limits do not exactly match endpoint capabilities")
     provider = payload.get("desktop", {})
@@ -710,8 +726,21 @@ def _require_frozen_execution_contract(manifest: FrozenRunManifest) -> Mapping[s
         raise ValueError("desktop provider must be official OSWorld AWS")
     if provider.get("client_password_env") != "OSWORLD_CLIENT_PASSWORD":
         raise ValueError("AWS client password must be represented only by OSWORLD_CLIENT_PASSWORD")
-    if run["action_parser_source_sha256"] != OFFICIAL_ACTIONS_SHA256:
-        raise ValueError("action parser source checksum is not pinned")
+    if run["agent_class"] != "mm_agents.qwen3vl_agent.Qwen3VLAgent@osworld-pinned":
+        raise ValueError("agent class must be the pinned Qwen-authored Qwen3VLAgent")
+    if run["agent_source_sha256"] != QWEN3VL_AGENT_SOURCE_SHA256:
+        raise ValueError("Qwen3VLAgent source checksum is not pinned")
+    if run["action_parser"] != QWEN3VL_ACTION_PARSER:
+        raise ValueError("action parser must be the strict Qwen3-VL JSON parser")
+    if run["action_parser_source_sha256"] != STRICT_ACTION_PARSER_SHA256:
+        raise ValueError("strict Qwen3-VL action parser source checksum is not pinned")
+    retry = run["retry_policy"]
+    if (
+        retry.get("invalid_action_corrections_per_observation")
+        != MAX_CORRECTIONS_PER_OBSERVATION
+        or retry.get("invalid_actions_per_task") != MAX_INVALID_ACTIONS_PER_TASK
+    ):
+        raise ValueError("invalid action correction bounds do not match the reviewed policy")
     return run
 
 
@@ -796,17 +825,25 @@ def verify_external_checkout(checkout: Path, manifest: FrozenRunManifest) -> Non
     ).strip()
     if head != OSWORLD_COMMIT:
         raise ValueError(f"OSWorld checkout HEAD is {head}, expected {OSWORLD_COMMIT}")
-    qwen_main = checkout / "mm_agents/qwen/main.py"
-    if file_sha256(qwen_main) != OFFICIAL_QWEN_MAIN_SHA256:
-        raise ValueError("official QwenAgent source checksum does not match the pinned commit")
-    if file_sha256(checkout / "mm_agents/qwen/actions.py") != OFFICIAL_ACTIONS_SHA256:
-        raise ValueError("official QwenAgent action parser checksum does not match the pinned commit")
+    qwen3_agent = checkout / QWEN3VL_AGENT_PATH
+    if file_sha256(qwen3_agent) != QWEN3VL_AGENT_SOURCE_SHA256:
+        raise ValueError("Qwen3VLAgent source checksum does not match the pinned commit")
     grid = checkout / OFFICIAL_GRID_PATH
     if file_sha256(grid) != OFFICIAL_GRID_SHA256:
         raise ValueError("test_nogdrive.json checksum does not match the pinned commit")
     task_grid = manifest.payload["task_grid"]
-    if task_grid.get("source") == OFFICIAL_GRID_PATH:
-        grid_payload = json.loads(grid.read_text())
+    source = task_grid.get("source")
+    source_hashes = {
+        OFFICIAL_GRID_PATH: OFFICIAL_GRID_SHA256,
+        OFFICIAL_SMALL_PATH: OFFICIAL_SMALL_SHA256,
+    }
+    if source in source_hashes:
+        source_path = checkout / source
+        if file_sha256(source_path) != source_hashes[source]:
+            raise ValueError(f"{source} checksum does not match the pinned commit")
+        if task_grid.get("source_sha256") != source_hashes[source]:
+            raise ValueError(f"{source} checksum is not frozen in the manifest")
+        grid_payload = json.loads(source_path.read_text())
         pinned_ids = [
             f"{domain}/{task}"
             for domain, tasks in grid_payload.items()
@@ -815,6 +852,7 @@ def verify_external_checkout(checkout: Path, manifest: FrozenRunManifest) -> Non
         if pinned_ids != list(manifest.task_ids):
             raise ValueError("frozen task IDs do not match pinned test_nogdrive.json")
     expected_configs = task_grid.get("task_config_sha256", {})
+    expected_evaluators = task_grid.get("evaluator_sha256")
     for task_id in manifest.task_ids:
         domain, _, example_id = task_id.partition("/")
         config_path = (
@@ -825,8 +863,14 @@ def verify_external_checkout(checkout: Path, manifest: FrozenRunManifest) -> Non
         )
         if file_sha256(config_path) != expected_configs.get(task_id):
             raise ValueError(f"task config checksum does not match for {task_id}")
-    if run["action_parser"] != "mm_agents.qwen.actions.parse_internal_response@osworld-pinned":
-        raise ValueError("action parser must be the pinned official Qwen internal parser")
+        if expected_evaluators is not None:
+            task_config = json.loads(config_path.read_text())
+            if stable_sha256(task_config.get("evaluator")) != expected_evaluators.get(
+                task_id
+            ):
+                raise ValueError(f"evaluator checksum does not match for {task_id}")
+    if run["agent_source_sha256"] != QWEN3VL_AGENT_SOURCE_SHA256:
+        raise ValueError("Qwen3VLAgent source checksum is not frozen in the manifest")
 
 
 def load_task_config(checkout: Path, task_id: str) -> dict[str, Any]:
@@ -855,8 +899,11 @@ def build_official_agent(
     checkout_text = str(checkout.resolve())
     if checkout_text not in sys.path:
         sys.path.insert(0, checkout_text)
-    module = importlib.import_module("mm_agents.qwen")
-    return module.QwenAgent(
+    module = importlib.import_module("mm_agents.qwen3vl_agent")
+    return build_strict_qwen3vl_agent(
+        module.Qwen3VLAgent,
+        base_url=endpoint_url,
+        api_key=api_key,
         model=run["endpoint_model"],
         max_tokens=run["max_tokens"],
         top_p=run["top_p"],
@@ -866,12 +913,14 @@ def build_official_agent(
         coordinate_type=run["coordinate_type"],
         add_thought_prefix=run["add_thought_prefix"],
         history_n=run["history_n"],
-        image_max=run["image_max"],
-        fold_size=run["fold_size"],
         enable_thinking=run["enable_thinking"],
         api_backend="openai",
-        base_url=endpoint_url,
-        api_key=api_key,
+        max_corrections_per_observation=run["retry_policy"][
+            "invalid_action_corrections_per_observation"
+        ],
+        max_invalid_actions_per_task=run["retry_policy"][
+            "invalid_actions_per_task"
+        ],
     )
 
 
@@ -926,6 +975,23 @@ def _append_event(path: Path, payload: Mapping[str, Any]) -> None:
     from intelligent_liars.run_control import _append_json_line
 
     _append_json_line(path, payload)
+
+
+def _validated_action_evidence(agent: Agent) -> Mapping[str, Any] | None:
+    parsed = getattr(agent, "last_parsed_action", None)
+    if parsed is None:
+        return None
+    return {
+        "description": parsed.description,
+        "raw_arguments": dict(parsed.raw_arguments),
+        "normalized_action": parsed.action,
+        "mapped_coordinate": (
+            list(parsed.mapped_coordinate)
+            if parsed.mapped_coordinate is not None
+            else None
+        ),
+        "mapped_command": parsed.command,
+    }
 
 
 def classify_failure(phase: str, exc: BaseException | None = None) -> TerminalState:
@@ -1085,6 +1151,7 @@ def run_attempt(
         done = False
         current_screenshot_ref = "screenshots/initial.png"
         terminal_state = TerminalState.TASK_FAILURE
+        invalid_action_exhausted = False
         for step in range(1, manifest.step_cap + 1):
             if done:
                 break
@@ -1104,15 +1171,28 @@ def run_attempt(
                     "reasoning": parts.reasoning,
                     "final_content": parts.final_content,
                     "parsed_actions": list(actions),
-                    "action_provenance": "mm_agents.qwen.QwenAgent.predict",
-                    "retry": {"overlay_attempt": 1, "classification": "none"},
+                    "validated_action": _validated_action_evidence(agent),
+                    "action_provenance": (
+                        "mm_agents.qwen3vl_agent.Qwen3VLAgent.predict"
+                        "+intelligent_liars.strict_json_validation"
+                    ),
+                    "retry": {
+                        "decision_attempt": step,
+                        "classification": (
+                            "invalid_action"
+                            if not actions
+                            else "none"
+                        ),
+                    },
                     "pre_screenshot": current_screenshot_ref,
                     "timestamp": predicted_finished_at,
                 },
             )
             if not actions:
                 phase = "invalid_action"
-                terminal_state = TerminalState.INVALID_ACTION
+                retryable = bool(
+                    getattr(agent, "last_invalid_action_retryable", False)
+                ) and step < manifest.step_cap
                 _append_event(
                     trajectory,
                     {
@@ -1120,11 +1200,18 @@ def run_attempt(
                         "step": step,
                         "phase": "action_parser",
                         "classification": TerminalState.INVALID_ACTION.value,
-                        "message": "QwenAgent.predict returned no parsed actions",
-                        "retryable": False,
+                        "message": (
+                            getattr(agent, "last_validation_error", None)
+                            or "Qwen3VLAgent returned no validated action"
+                        ),
+                        "retryable": retryable,
                         "timestamp": clock(),
                     },
                 )
+                if retryable:
+                    continue
+                terminal_state = TerminalState.INVALID_ACTION
+                invalid_action_exhausted = True
                 break
             for action_index, action in enumerate(actions, start=1):
                 pre_path = staging / f"screenshots/step_{step:04d}_action_{action_index:02d}_pre.png"
@@ -1150,8 +1237,12 @@ def run_attempt(
                         "reasoning": parts.reasoning,
                         "final_content": parts.final_content,
                         "parsed_actions": list(actions),
+                        "validated_action": _validated_action_evidence(agent),
                         "executed_action": action,
-                        "action_provenance": "mm_agents.qwen.QwenAgent.predict",
+                        "action_provenance": (
+                            "mm_agents.qwen3vl_agent.Qwen3VLAgent.predict"
+                            "+intelligent_liars.strict_json_validation"
+                        ),
                         "execution_result": {
                             "reward": reward,
                             "done": done,
@@ -1194,7 +1285,8 @@ def run_attempt(
                 "implementation": "official OSWorld task evaluator",
             },
         )
-        terminal_state = evaluator_terminal_state(evaluator_score)
+        if not invalid_action_exhausted:
+            terminal_state = evaluator_terminal_state(evaluator_score)
     except Exception as exc:
         if isinstance(exc, CheckpointFailure):
             checkpoint_failure = exc

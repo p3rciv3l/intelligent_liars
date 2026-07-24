@@ -125,6 +125,22 @@ class FakeAgent:
         )
 
 
+class ExhaustedInvalidAgent:
+    def __init__(self) -> None:
+        self.calls = 0
+        self.last_invalid_action_retryable = False
+        self.last_validation_error = "missing coordinate"
+
+    def reset(self, logger=None, **kwargs) -> None:
+        del logger, kwargs
+
+    def predict(self, instruction, observation):
+        del instruction, observation
+        self.calls += 1
+        self.last_invalid_action_retryable = self.calls < 3
+        return "malformed action", []
+
+
 class FakeCheckpointSink:
     def __init__(self, fail_phase: str | None = None) -> None:
         self.fail_phase = fail_phase
@@ -215,6 +231,40 @@ def _task_config() -> dict:
         "id": PILOT_TASK.split("/", 1)[1],
         "instruction": "fake instruction",
     }
+
+
+@pytest.mark.parametrize("termination", ["DONE", "FAIL"])
+def test_explicit_valid_termination_is_honored_immediately(tmp_path, termination):
+    environment = FakeEnvironment(score=1.0 if termination == "DONE" else 0.0)
+    result = run_attempt(
+        manifest=_pilot_manifest(),
+        task_id=PILOT_TASK,
+        task_config=_task_config(),
+        agent=FakeAgent(termination),
+        env=environment,
+        results_root=tmp_path,
+        checkpoint_sink=FakeCheckpointSink(),
+    )
+
+    assert environment.actions == [termination]
+    assert result.agent_termination == termination
+
+
+def test_invalid_correction_exhaustion_executes_no_action_and_remains_invalid(tmp_path):
+    environment = FakeEnvironment(score=1.0)
+    result = run_attempt(
+        manifest=_pilot_manifest(),
+        task_id=PILOT_TASK,
+        task_config=_task_config(),
+        agent=ExhaustedInvalidAgent(),
+        env=environment,
+        results_root=tmp_path,
+        checkpoint_sink=FakeCheckpointSink(),
+    )
+
+    assert environment.actions == []
+    assert result.terminal_state is TerminalState.INVALID_ACTION
+    assert result.agent_termination is None
 
 
 def test_templates_pin_inputs_without_claiming_self_referential_commit():
@@ -661,11 +711,11 @@ def test_endpoint_and_runner_limits_are_exactly_compatible(monkeypatch, tmp_path
     assert run["max_tokens"] == capabilities["max_output_tokens"] == ENDPOINT_MAX_OUTPUT_TOKENS
     assert run["image_max"] == capabilities["max_images_per_request"] == ENDPOINT_MAX_IMAGES
     assert run["history_policy"] == {
-        "collapse_text": "This screenshot has been collapsed.",
-        "fold_size": 4,
-        "history_n": 20,
-        "image_max": 4,
-        "implementation": "official-qwen-folding",
+        "history_n": 4,
+        "image_max": 5,
+        "implementation": "qwen3vl-rolling-four-plus-current",
+        "older_history": "numbered-action-summary-without-reasoning-json-or-coordinates",
+        "retain_thinking": True,
     }
 
     captured = {}
@@ -674,9 +724,12 @@ def test_endpoint_and_runner_limits_are_exactly_compatible(monkeypatch, tmp_path
         def __init__(self, **kwargs):
             captured.update(kwargs)
 
+        def reset(self, logger=None):
+            del logger
+
     monkeypatch.setattr(
         "intelligent_liars.osworld_overlay.importlib.import_module",
-        lambda name: SimpleNamespace(QwenAgent=CapturingQwenAgent),
+        lambda name: SimpleNamespace(Qwen3VLAgent=CapturingQwenAgent),
     )
     build_official_agent(
         tmp_path,
@@ -687,7 +740,7 @@ def test_endpoint_and_runner_limits_are_exactly_compatible(monkeypatch, tmp_path
         },
     )
     assert captured["max_tokens"] == ENDPOINT_MAX_OUTPUT_TOKENS
-    assert captured["image_max"] == ENDPOINT_MAX_IMAGES
+    assert captured["history_n"] == 4
 
     incompatible = json.loads(json.dumps(manifest.payload))
     incompatible["endpoint"]["capabilities"]["max_output_tokens"] = 4096
@@ -1131,7 +1184,10 @@ def test_trajectory_preserves_reasoning_provenance_and_evaluator(tmp_path):
     transition = next(event for event in events if event["event"] == "model_transition")
     assert transition["reasoning"] == "inspect the desktop"
     assert transition["parsed_actions"] == ["DONE"]
-    assert transition["action_provenance"] == "mm_agents.qwen.QwenAgent.predict"
+    assert transition["action_provenance"] == (
+        "mm_agents.qwen3vl_agent.Qwen3VLAgent.predict"
+        "+intelligent_liars.strict_json_validation"
+    )
     assert json.loads((result.directory / "evaluator.json").read_text())["score"] == 1.0
     assert [call["phase"] for call in checkpoint_sink.calls] == [
         "initial_state",

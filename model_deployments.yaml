@@ -46,12 +46,12 @@ models:
       horizontal_scaling: multiple identical workers behind the AWS controller
     client_policy:
       history_n: 4
-      image_max: 4
+      image_max: 5
     limits:
-      max_request_bytes: 35959180
+      max_request_bytes: 44347854
       max_image_bytes: 6291456
       max_image_pixels: 16000000
-      max_images: 4
+      max_images: 5
       max_text_chars: 200000
 
   # Prefer the official Z.AI endpoint; fall back only to Wafer.

@@ -237,7 +237,7 @@ def test_invalid_json_is_rejected():
     assert loads == []
 
 
-def test_maximum_four_image_openai_request_shape_fits_derived_body_limit():
+def test_maximum_five_image_openai_request_shape_fits_derived_body_limit():
     body = maximum_openai_request_body()
 
     assert len(body) == MAX_REQUEST_BYTES
@@ -441,7 +441,7 @@ def test_health_and_models_have_pinned_fingerprint_without_loading():
     assert FINGERPRINT_SOURCE["top_p"] == FROZEN_TOP_P
     assert FINGERPRINT_SOURCE["max_output_tokens"] == 32768
     assert FINGERPRINT_SOURCE["client_history_n"] == CLIENT_HISTORY_N == 4
-    assert FINGERPRINT_SOURCE["client_image_max"] == CLIENT_IMAGE_MAX == 4
+    assert FINGERPRINT_SOURCE["client_image_max"] == CLIENT_IMAGE_MAX == 5
     assert FINGERPRINT_SOURCE["serialization"] == "single-inference-lock"
     assert FINGERPRINT_SOURCE["model_workers_per_gpu"] == 1
     assert loads == []
