@@ -4,7 +4,7 @@ import json
 import os
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 import typer
 
@@ -33,6 +33,18 @@ def _load_proposal_config(path: Path) -> dict[str, Any]:
     if not isinstance(payload, dict):
         raise typer.BadParameter("proposal config root must be an object")
     return payload
+
+
+def _object_section(
+    config: Mapping[str, Any],
+    name: str,
+    *,
+    required: bool = True,
+) -> Mapping[str, Any]:
+    value = config.get(name) if required else config.get(name, {})
+    if not isinstance(value, Mapping):
+        raise typer.BadParameter(f"{name} must be an object")
+    return value
 
 
 @app.command("osworld-proposal")
@@ -80,9 +92,10 @@ def osworld_preflight(
 ) -> None:
     """Report credential names and offline launch-gate status without cloud calls."""
     config = _load_proposal_config(config_path)
+    target_config = _object_section(config, "target")
+    vast_config = _object_section(config, "vast")
+    aws_config = _object_section(config, "aws", required=False)
     try:
-        target_config = config["target"]
-        vast_config = config["vast"]
         report = offline_preflight(
             os.environ,
             InfrastructureTarget(
@@ -101,7 +114,7 @@ def osworld_preflight(
                 price_approved=vast_config["price_approved"],
                 gpu_count=vast_config.get("gpu_count", 1),
             ),
-            aws_auth_mode=config.get("aws", {}).get(
+            aws_auth_mode=aws_config.get(
                 "auth_mode",
                 "controller-iam-role",
             ),

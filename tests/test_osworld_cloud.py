@@ -41,6 +41,7 @@ from intelligent_liars.run_control import (
     BudgetDecision,
     CostLedger,
     CostSample,
+    stable_sha256,
 )
 
 
@@ -355,6 +356,63 @@ def test_security_groups_are_run_separated_and_never_public():
     with pytest.raises(BootstrapValidationError, match="prohibited"):
         SecurityGroupRule("tcp", 5900, 5900, source_cidr="0.0.0.0/0")
 
+    security_groups = plan.approval_payload["security_groups"]
+    assert security_groups == plan.as_dict()["security_groups"]
+    assert security_groups["host"]["name"] == (
+        "osworld-run-test-001-host"
+    )
+    assert security_groups["client"]["name"] == (
+        "osworld-run-test-001-clients"
+    )
+    assert security_groups["host"]["rules"] == [
+        {
+            "protocol": "tcp",
+            "from_port": 22,
+            "to_port": 22,
+            "source_cidr": "198.51.100.7/32",
+            "source_security_group_id": None,
+        }
+    ]
+    assert len(security_groups["client"]["rules"]) == len(
+        OSWORLD_REQUIRED_SERVICE_PORTS
+    )
+
+
+def test_approval_hash_binds_security_groups_and_all_execution_fields():
+    plan = create_dry_run_plan(make_spec())
+    approval = make_approval(plan)
+    payload = plan.approval_payload
+
+    assert payload["tier"] == "pilot"
+    assert payload["vast"]["verified"] is True
+    assert payload["aws"]["controller_public_address"] is True
+    assert payload["aws"]["client_private_addresses"] is True
+    assert payload["aws"]["key_pair_name"] == "osworld-run-test-001-ephemeral"
+    assert payload["aws"]["tags"] == plan.spec.tags
+    assert payload["aws"]["sts_ttl_minutes"] == 60
+    assert payload["artifact_bucket"] == ARTIFACT_BUCKET
+    assert payload["destroy_after_verified_export"] is True
+
+    changed_name = replace(plan, host_security_group_name="different-host-sg")
+    changed_rule = replace(
+        plan,
+        host_rules=(
+            SecurityGroupRule(
+                "tcp",
+                22,
+                22,
+                source_cidr="203.0.113.9/32",
+            ),
+        ),
+    )
+    assert changed_name.content_hash != plan.content_hash
+    assert changed_rule.content_hash != plan.content_hash
+    now = datetime(2026, 7, 22, 12, 30, tzinfo=UTC)
+    with pytest.raises(ApprovalError, match="exact launch plan"):
+        verify_approval(changed_name, approval, now=now)
+    with pytest.raises(ApprovalError, match="exact launch plan"):
+        verify_approval(changed_rule, approval, now=now)
+
 
 @pytest.mark.parametrize(
     "ports",
@@ -445,6 +503,44 @@ def test_approval_is_content_addressed_and_fails_closed_on_every_mismatch():
             plan,
             approval,
             now=datetime(2026, 7, 22, 13, tzinfo=UTC),
+        )
+
+
+@pytest.mark.parametrize(
+    ("approved_at", "expires_at", "message"),
+    [
+        ("not-a-time", "2026-07-22T13:00:00+00:00", "valid ISO-8601"),
+        ("2026-07-22T12:00:00", "2026-07-22T13:00:00+00:00", "aware and increasing"),
+        ("2026-07-22T12:00:00+00:00", "2026-07-22T13:00:00", "aware and increasing"),
+        ("2026-07-22T13:00:00+00:00", "2026-07-22T12:00:00+00:00", "aware and increasing"),
+        ("2026-07-22T12:00:00+00:00", "2026-07-22T12:00:00+00:00", "aware and increasing"),
+    ],
+)
+def test_approval_timestamp_validation_fails_closed(
+    approved_at,
+    expires_at,
+    message,
+):
+    plan = create_dry_run_plan(make_spec())
+    approval = make_approval(plan)
+    body = {
+        "plan_hash": approval.plan_hash,
+        "run_id": approval.run_id,
+        "approved_at": approved_at,
+        "expires_at": expires_at,
+    }
+    malformed = replace(
+        approval,
+        approval_id=stable_sha256(body),
+        approved_at=approved_at,
+        expires_at=expires_at,
+    )
+
+    with pytest.raises(ApprovalError, match=message):
+        verify_approval(
+            plan,
+            malformed,
+            now=datetime(2026, 7, 22, 12, 30, tzinfo=UTC),
         )
 
 
@@ -704,6 +800,23 @@ def test_spend_sampling_uses_cumulative_ledger_and_exact_boundaries(tmp_path):
             handle,
             ledger,
             other_model_run_cost_usd=Decimal("65"),
+        )
+        is BudgetDecision.HARD_STOP
+    )
+
+
+def test_combined_spend_uses_committed_authorized_aws_cost(tmp_path):
+    orchestrator, handle, aws, vast, _s3, _ssh = bootstrap(tmp_path)
+    ledger = CostLedger(tmp_path / "authorized-combined-costs.jsonl")
+    aws.cost = Decimal("4")
+    vast.cost = Decimal("0")
+
+    assert (
+        orchestrator.sample_spend(
+            handle,
+            ledger,
+            authorized_active_cost_usd=Decimal("6"),
+            other_model_run_cost_usd=Decimal("130"),
         )
         is BudgetDecision.HARD_STOP
     )

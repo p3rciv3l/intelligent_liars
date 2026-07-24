@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import pytest
 
@@ -148,3 +149,42 @@ def test_osworld_preflight_reports_only_env_names_and_status(tmp_path, monkeypat
     assert report["ready"] is False
     assert report["credential_values_included"] is False
     assert {item["name"] for item in report["environment"]} == set(names)
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("target", []),
+        ("target", "aws"),
+        ("vast", []),
+        ("vast", 1),
+        ("aws", []),
+        ("aws", "controller-iam-role"),
+    ],
+)
+def test_osworld_preflight_rejects_non_object_sections(tmp_path, field, value):
+    payload = {
+        "target": {},
+        "vast": {
+            "offer_id": "offer-reviewed-offline",
+            "estimated_hourly_rate_usd": "0.60",
+            "price_approved": False,
+        },
+        "aws": {},
+    }
+    payload[field] = value
+    config = tmp_path / "invalid-preflight.json"
+    config.write_text(json.dumps(payload))
+
+    result = CliRunner().invoke(
+        app,
+        ["osworld-preflight", "--config", str(config)],
+    )
+
+    assert result.exit_code == 2
+    assert f"{field} must be an object" in result.output
+
+
+def test_env_example_declares_osworld_client_password():
+    env_example = (Path(__file__).parents[1] / ".env.example").read_text()
+    assert env_example.splitlines().count("OSWORLD_CLIENT_PASSWORD=") == 1

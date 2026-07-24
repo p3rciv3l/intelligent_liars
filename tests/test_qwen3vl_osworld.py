@@ -71,11 +71,13 @@ def test_correct_qwen3_json_calls_retain_coordinates_keys_and_text():
         "action": "left_click",
         "coordinate": [0, 999],
     }
-    assert click.mapped_coordinate == (0, 1080)
-    assert click.command == "pyautogui.click(0, 1080)"
+    assert click.mapped_coordinate == (0, 1079)
+    assert click.command == "pyautogui.click(0, 1079)"
 
     interior = parse({"action": "mouse_move", "coordinate": [500, 500]})
     assert interior.mapped_coordinate == (960, 540)
+    bottom_right = parse({"action": "mouse_move", "coordinate": [999, 999]})
+    assert bottom_right.mapped_coordinate == (1919, 1079)
 
     keys = parse({"action": "key", "keys": ["ctrl", "shift", "s"]})
     assert keys.raw_arguments["keys"] == ["ctrl", "shift", "s"]
@@ -116,6 +118,37 @@ def test_missing_malformed_unknown_arguments_and_invalid_termination_are_rejecte
 def test_valid_success_and_failure_termination_are_explicit():
     assert parse({"action": "terminate", "status": "success"}).command == "DONE"
     assert parse({"action": "terminate", "status": "failure"}).command == "FAIL"
+
+
+@pytest.mark.parametrize(
+    ("width", "height"),
+    [(0, 1080), (-1, 1080), (1920, 0), (1920, -1)],
+)
+def test_coordinate_mapping_rejects_nonpositive_original_dimensions(width, height):
+    with pytest.raises(InvalidModelAction, match="dimensions must be positive"):
+        parse_qwen3vl_response(
+            response({"action": "left_click", "coordinate": [0, 0]}),
+            original_width=width,
+            original_height=height,
+        )
+
+
+@pytest.mark.parametrize(
+    ("processed_width", "processed_height"),
+    [(0, 704), (-1, 704), (1280, 0), (1280, -1)],
+)
+def test_absolute_mapping_rejects_nonpositive_processed_dimensions(
+    processed_width, processed_height
+):
+    with pytest.raises(InvalidModelAction, match="positive processed dimensions"):
+        parse_qwen3vl_response(
+            response({"action": "left_click", "coordinate": [0, 0]}),
+            original_width=1920,
+            original_height=1080,
+            processed_width=processed_width,
+            processed_height=processed_height,
+            coordinate_type="absolute",
+        )
 
 
 class FakeUpstreamQwen3VLAgent:

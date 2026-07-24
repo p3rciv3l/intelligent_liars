@@ -90,6 +90,8 @@ def _coordinate(
     processed_width: int | None,
     processed_height: int | None,
 ) -> tuple[int, int]:
+    if original_width <= 0 or original_height <= 0:
+        raise InvalidModelAction("original screenshot dimensions must be positive")
     if not isinstance(value, list) or len(value) != 2:
         raise InvalidModelAction("coordinate must be a two-item array")
     x = _number(value[0], "coordinate[0]")
@@ -98,13 +100,18 @@ def _coordinate(
         if not 0 <= x <= 999 or not 0 <= y <= 999:
             raise InvalidModelAction("relative coordinates must be in [0, 999]")
         return (
-            int(x * original_width / 999),
-            int(y * original_height / 999),
+            int(x * (original_width - 1) / 999),
+            int(y * (original_height - 1) / 999),
         )
     if coordinate_type != "absolute":
         raise InvalidModelAction("coordinate_type must be relative or absolute")
-    if not processed_width or not processed_height:
-        raise InvalidModelAction("absolute coordinates require processed dimensions")
+    if (
+        processed_width is None
+        or processed_height is None
+        or processed_width <= 0
+        or processed_height <= 0
+    ):
+        raise InvalidModelAction("absolute coordinates require positive processed dimensions")
     if not 0 <= x < processed_width or not 0 <= y < processed_height:
         raise InvalidModelAction("absolute coordinate is outside the processed image")
     return (

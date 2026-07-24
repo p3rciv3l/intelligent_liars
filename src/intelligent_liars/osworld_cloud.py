@@ -412,6 +412,7 @@ class DryRunPlan:
         return {
             "schema_version": self.schema_version,
             "run_id": spec.run_id,
+            "tier": spec.tier.value,
             "vast": {
                 "offer_id": spec.vast_offer.offer_id,
                 "gpu_model": spec.vast_offer.gpu_model,
@@ -442,6 +443,7 @@ class DryRunPlan:
                 "disk_gb": spec.vast_disk_gb,
                 "worker_dtype": spec.worker_dtype,
                 "workers_per_gpu": spec.workers_per_gpu,
+                "verified": spec.vast_offer.verified,
             },
             "aws": {
                 "region": spec.region,
@@ -453,6 +455,11 @@ class DryRunPlan:
                 "client_hourly_rate_usd": str(OSWORLD_CLIENT_RATE_USD),
                 "vpc_id": spec.vpc_id,
                 "subnet_id": spec.subnet_id,
+                "controller_public_address": True,
+                "client_private_addresses": True,
+                "key_pair_name": f"osworld-{spec.run_id}-ephemeral",
+                "tags": spec.tags,
+                "sts_ttl_minutes": min(spec.controller_ttl_minutes, 60),
             },
             "ttls_minutes": {
                 "controller": spec.controller_ttl_minutes,
@@ -468,6 +475,17 @@ class DryRunPlan:
                 "qwen_local_bind": f"127.0.0.1:{spec.qwen_port}",
                 "qwen_remote_bind": f"127.0.0.1:{spec.qwen_port}",
             },
+            "security_groups": {
+                "host": {
+                    "name": self.host_security_group_name,
+                    "rules": [_rule_dict(rule) for rule in self.host_rules],
+                },
+                "client": {
+                    "name": self.client_security_group_name,
+                    "rules": [_rule_dict(rule) for rule in self.client_rules],
+                },
+            },
+            "artifact_bucket": spec.artifact_bucket,
             "artifact_uri": spec.artifact_prefix,
             "artifact_bucket_policy": {
                 "encryption": "AES256",
@@ -493,6 +511,7 @@ class DryRunPlan:
             },
             "projected_total_usd": str(spec.projected_total_usd),
             "teardown_plan": list(self.teardown_plan),
+            "destroy_after_verified_export": spec.destroy_after_verified_export,
             "osworld_commit": spec.osworld_commit,
             "step_cap": spec.step_cap,
         }
@@ -666,12 +685,23 @@ def verify_approval(
         raise ApprovalError("approval artifact content hash mismatch")
     if approval.plan_hash != plan.content_hash or approval.run_id != plan.spec.run_id:
         raise ApprovalError("approval does not bind the exact launch plan")
+    try:
+        approved_at = datetime.fromisoformat(approval.approved_at)
+        expires_at = datetime.fromisoformat(approval.expires_at)
+    except (TypeError, ValueError) as exc:
+        raise ApprovalError("approval timestamps must be valid ISO-8601 values") from exc
+    if (
+        approved_at.utcoffset() is None
+        or expires_at.utcoffset() is None
+        or expires_at <= approved_at
+    ):
+        raise ApprovalError("approval timestamps must be aware and increasing")
     current = now or datetime.now(UTC)
-    if current.tzinfo is None:
+    if current.utcoffset() is None:
         raise ApprovalError("approval verification time must be timezone-aware")
-    if current < datetime.fromisoformat(approval.approved_at):
+    if current < approved_at:
         raise ApprovalError("approval artifact is not active yet")
-    if current >= datetime.fromisoformat(approval.expires_at):
+    if current >= expires_at:
         raise ApprovalError("approval artifact has expired")
 
 
@@ -1164,7 +1194,7 @@ class CloudOrchestrator:
             else BudgetDecision.CONTINUE
         )
         combined = EvaluationBudgetPolicy().combined_decision(
-            aws_total,
+            aws_authorized,
             other_model_run_cost_usd,
         )
         if combined is BudgetDecision.HARD_STOP:
