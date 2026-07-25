@@ -47,8 +47,8 @@
     "repository": "https://github.com/xlang-ai/OSWorld.git"
   },
   "run": {
-    "action_parser": "intelligent_liars.qwen3vl_osworld.parse_qwen3vl_response@strict-v1",
-    "action_parser_source_sha256": "1611f9fe2e2a38416e0e42f84623a80e481caad7f1fd0c1a95afba91ebf9ce13",
+    "action_parser": "intelligent_liars.qwen3vl_osworld.parse_qwen3vl_response@strict-v2",
+    "action_parser_source_sha256": "1824b752dd49c1ead490321c82a803eb6a12ae076c9d3ef9a0b18420c2b24870",
     "action_space": "pyautogui",
     "add_thought_prefix": false,
     "agent_class": "mm_agents.qwen3vl_agent.Qwen3VLAgent@osworld-pinned",

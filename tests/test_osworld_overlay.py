@@ -3,6 +3,7 @@ from __future__ import annotations
 import inspect
 import json
 import subprocess
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from decimal import Decimal
 from pathlib import Path
@@ -32,6 +33,7 @@ from intelligent_liars.osworld_overlay import (
     CheckpointFailure,
     ExecutionBlockedError,
     StoreBackedProductionCheckpointSink,
+    _ensure_run_root,
     build_official_agent,
     build_official_aws_environment,
     classify_failure,
@@ -611,6 +613,73 @@ def test_store_backed_sink_rejects_claimed_state_without_real_files(tmp_path):
                 {"manifest", "trajectory", "screenshots", "metadata"}
             ),
         )
+
+
+def test_store_backed_sink_preserves_empty_required_log(tmp_path):
+    run_root = tmp_path / "run"
+    attempt_directory = run_root / ".staging" / "attempt"
+    attempt_directory.mkdir(parents=True)
+    (run_root / "manifest.json").write_text("{}")
+    (attempt_directory / "trajectory.jsonl").write_text("{}\n")
+    (attempt_directory / "runtime.log").write_bytes(b"")
+    store = MemoryCheckpointStore()
+
+    checkpoint = StoreBackedProductionCheckpointSink(store).checkpoint(
+        run_id="run-checkpoint",
+        task_id="os/task-one",
+        attempt=1,
+        sequence=1,
+        phase="initial_state",
+        run_root=run_root,
+        attempt_directory=attempt_directory,
+        required_state_kinds=frozenset(
+            {"manifest", "trajectory", "logs", "metadata"}
+        ),
+    )
+
+    log_uri = next(uri for uri in store.objects if uri.endswith("/attempt/runtime.log"))
+    assert store.objects[log_uri] == b""
+    assert checkpoint.artifact_checksums["attempt/runtime.log"] == (
+        "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    )
+
+
+def test_run_root_manifest_creation_is_atomic_across_workers(tmp_path):
+    manifest = _pilot_manifest()
+
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        roots = list(
+            executor.map(
+                lambda _: _ensure_run_root(tmp_path, manifest),
+                range(32),
+            )
+        )
+
+    assert set(roots) == {tmp_path / manifest.run_id}
+    assert json.loads((roots[0] / "manifest.json").read_text()) == manifest.payload
+
+
+def test_run_attempt_does_not_delete_sibling_staging_directory(tmp_path):
+    manifest = _pilot_manifest()
+    sibling = tmp_path / manifest.run_id / ".staging" / "other-attempt"
+    sibling.mkdir(parents=True)
+    sentinel = sibling / "runtime.log"
+    sentinel.write_bytes(b"")
+
+    run_attempt(
+        manifest=manifest,
+        task_id=PILOT_TASK,
+        task_config=_task_config(),
+        agent=FakeAgent(),
+        env=FakeEnvironment(),
+        results_root=tmp_path,
+        checkpoint_sink=StoreBackedProductionCheckpointSink(
+            MemoryCheckpointStore()
+        ),
+    )
+
+    assert sentinel.is_file()
+    assert sentinel.read_bytes() == b""
 
 
 def test_store_backed_sink_runs_all_production_checkpoints(tmp_path):

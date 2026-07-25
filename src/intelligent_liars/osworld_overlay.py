@@ -5,9 +5,9 @@ import json
 import logging
 import os
 import re
-import shutil
 import sys
 import traceback
+import uuid
 from copy import deepcopy
 from dataclasses import dataclass
 from decimal import Decimal
@@ -63,7 +63,7 @@ OFFICIAL_GRID_SHA256 = "fcb9497e93a8986407345d3012c872c9c2fed253420730fbea64ccfc
 OFFICIAL_SMALL_PATH = "evaluation_examples/test_small.json"
 OFFICIAL_SMALL_SHA256 = "bb29275171b78728d71825b125af311d74e66bb2a6d693c45c497d380b1fc640"
 STRICT_ACTION_PARSER_SHA256 = (
-    "1611f9fe2e2a38416e0e42f84623a80e481caad7f1fd0c1a95afba91ebf9ce13"
+    "1824b752dd49c1ead490321c82a803eb6a12ae076c9d3ef9a0b18420c2b24870"
 )
 ENDPOINT_PROFILE = "qwen3-vl-8b-thinking-bf16-48gb-v1"
 ENDPOINT_MAX_OUTPUT_TOKENS = 32768
@@ -1029,11 +1029,17 @@ def _ensure_run_root(results_root: Path, manifest: FrozenRunManifest) -> Path:
     run_root.mkdir(parents=True, exist_ok=True)
     manifest_path = run_root / "manifest.json"
     expected = json.dumps(manifest.payload, indent=2, sort_keys=True) + "\n"
-    if manifest_path.exists():
-        if manifest_path.read_text() != expected:
-            raise LedgerValidationError("run directory manifest does not match")
-    else:
-        _write_new(manifest_path, expected.encode())
+    if not manifest_path.exists():
+        temporary = run_root / f".manifest-{uuid.uuid4().hex}.tmp"
+        _write_new(temporary, expected.encode())
+        try:
+            os.link(temporary, manifest_path)
+        except FileExistsError:
+            pass
+        finally:
+            temporary.unlink(missing_ok=True)
+    if manifest_path.read_text() != expected:
+        raise LedgerValidationError("run directory manifest does not match")
     return run_root
 
 
@@ -1409,7 +1415,10 @@ def run_attempt(
             detail=str(final_directory.relative_to(run_root)),
         )
     )
-    shutil.rmtree(run_root / ".staging", ignore_errors=True)
+    try:
+        (run_root / ".staging").rmdir()
+    except OSError:
+        pass
     result = AttemptResult(
         final_directory,
         terminal_state,

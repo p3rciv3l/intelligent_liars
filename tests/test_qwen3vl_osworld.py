@@ -83,10 +83,30 @@ def test_correct_qwen3_json_calls_retain_coordinates_keys_and_text():
     assert keys.raw_arguments["keys"] == ["ctrl", "shift", "s"]
     assert keys.command == "pyautogui.hotkey('ctrl', 'shift', 's')"
 
-    typed = parse({"action": "type", "text": "quoted 'line'\nsecond"})
-    assert typed.raw_arguments["text"] == "quoted 'line'\nsecond"
-    assert "pyautogui.press('enter')" in typed.command
-    assert repr("quoted 'line'") in typed.command
+    typed = parse({"action": "type", "text": r"quoted 'line' C:\Users\user"})
+    assert typed.raw_arguments["text"] == r"quoted 'line' C:\Users\user"
+    assert typed.command == (
+        """pyautogui.write("quoted 'line' C:\\\\Users\\\\user", interval=0.03)"""
+    )
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        r"code ~/Desktop/project\n",
+        "code ~/Desktop/project\n",
+        "first\rsecond",
+        "first\tsecond",
+        r"first\x0asecond",
+        r"first\u000asecond",
+    ],
+)
+def test_type_rejects_literal_and_decoded_keyboard_control_sequences(text):
+    with pytest.raises(
+        InvalidModelAction,
+        match="split text entry from key actions",
+    ):
+        parse({"action": "type", "text": text})
 
 
 @pytest.mark.parametrize(
@@ -212,6 +232,30 @@ def test_invalid_action_requests_correction_on_same_observation_without_history_
     _, actions = agent.predict("task", observation)
     assert actions == ["pyautogui.hotkey('ctrl', 'c')"]
     assert "same screenshot" in FakeUpstreamQwen3VLAgent.instructions[-1]
+    assert len(agent.responses) == len(agent.screenshots) == len(agent.actions) == 1
+
+
+def test_malformed_terminal_type_requests_split_text_and_enter_correction():
+    malformed = response(
+        {"action": "type", "text": r"code ~/Desktop/project\n"}
+    )
+    corrected = response(
+        {"action": "type", "text": "code ~/Desktop/project"}
+    )
+    agent = make_agent([malformed, corrected])
+    observation = {"screenshot": b"same screenshot"}
+
+    _, actions = agent.predict("open the project", observation)
+    assert actions == []
+    assert agent.last_invalid_action_retryable is True
+    assert "split text entry from key actions" in agent.last_validation_error
+    assert agent.responses == agent.actions == agent.screenshots == []
+
+    _, actions = agent.predict("open the project", observation)
+    assert actions == [
+        "pyautogui.write('code ~/Desktop/project', interval=0.03)"
+    ]
+    assert "key ['enter']" in FakeUpstreamQwen3VLAgent.instructions[-1]
     assert len(agent.responses) == len(agent.screenshots) == len(agent.actions) == 1
 
 

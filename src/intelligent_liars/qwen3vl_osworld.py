@@ -13,7 +13,7 @@ QWEN3VL_AGENT_SOURCE_SHA256 = (
 )
 QWEN3VL_AGENT_PATH = "mm_agents/qwen3vl_agent.py"
 QWEN3VL_ACTION_PARSER = (
-    "intelligent_liars.qwen3vl_osworld.parse_qwen3vl_response@strict-v1"
+    "intelligent_liars.qwen3vl_osworld.parse_qwen3vl_response@strict-v2"
 )
 MAX_CORRECTIONS_PER_OBSERVATION = 2
 MAX_INVALID_ACTIONS_PER_TASK = 10
@@ -33,6 +33,10 @@ _COORDINATE_ACTIONS = frozenset(
         "middle_click",
         "double_click",
     }
+)
+_LITERAL_CONTROL_ESCAPE_RE = re.compile(
+    r"\\(?:(?P<named>[0abfnrtv])|x(?P<byte>[0-9a-fA-F]{2})|"
+    r"u(?P<short>[0-9a-fA-F]{4})|U(?P<long>[0-9a-fA-F]{8}))"
 )
 _ACTION_ARGUMENTS = {
     "mouse_move": frozenset({"action", "coordinate"}),
@@ -79,6 +83,26 @@ def _number(value: Any, name: str) -> int | float:
     ):
         raise InvalidModelAction(f"{name} must be a finite number")
     return value
+
+
+def _type_text_contains_control_sequence(text: str) -> bool:
+    if any(ord(character) < 32 or ord(character) == 127 for character in text):
+        return True
+    for match in _LITERAL_CONTROL_ESCAPE_RE.finditer(text):
+        if match.group("named") is not None:
+            return True
+        encoded = next(
+            value
+            for value in (
+                match.group("byte"),
+                match.group("short"),
+                match.group("long"),
+            )
+            if value is not None
+        )
+        if int(encoded, 16) < 32 or int(encoded, 16) == 127:
+            return True
+    return False
 
 
 def _coordinate(
@@ -203,14 +227,12 @@ def parse_qwen3vl_response(
         text = arguments["text"]
         if not isinstance(text, str) or not text:
             raise InvalidModelAction("text must be a non-empty string")
-        commands: list[str] = []
-        lines = text.split("\n")
-        for index, line in enumerate(lines):
-            if line:
-                commands.append(f"pyautogui.write({line!r}, interval=0.03)")
-            if index < len(lines) - 1:
-                commands.append("pyautogui.press('enter')")
-        command = "; ".join(commands)
+        if _type_text_contains_control_sequence(text):
+            raise InvalidModelAction(
+                "type text must not contain keyboard control sequences; "
+                "split text entry from key actions such as key ['enter'] or a hotkey"
+            )
+        command = f"pyautogui.write({text!r}, interval=0.03)"
     elif action == "scroll":
         pixels = _number(arguments["pixels"], "pixels")
         if pixels == 0:
