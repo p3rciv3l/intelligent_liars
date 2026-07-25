@@ -34,9 +34,10 @@ _COORDINATE_ACTIONS = frozenset(
         "double_click",
     }
 )
-_LITERAL_CONTROL_ESCAPE_RE = re.compile(
-    r"\\(?:(?P<named>[0abfnrtv])|x(?P<byte>[0-9a-fA-F]{2})|"
-    r"u(?P<short>[0-9a-fA-F]{4})|U(?P<long>[0-9a-fA-F]{8}))"
+_TRAILING_LITERAL_NEWLINE_RE = re.compile(r"\\[nr]\Z")
+_TERMINAL_ENTER_INTENT_RE = re.compile(r"\b(?:enter|return)\b", re.IGNORECASE)
+_TERMINAL_COMMAND_SHAPE_RE = re.compile(
+    r"(?:^|\s)(?:~?/|\./|\.\./|\$[A-Za-z_])|&&|\|\||[|;]"
 )
 _ACTION_ARGUMENTS = {
     "mouse_move": frozenset({"action", "coordinate"}),
@@ -85,24 +86,19 @@ def _number(value: Any, name: str) -> int | float:
     return value
 
 
-def _type_text_contains_control_sequence(text: str) -> bool:
+def _type_text_contains_control_sequence(text: str, description: str) -> bool:
     if any(ord(character) < 32 or ord(character) == 127 for character in text):
         return True
-    for match in _LITERAL_CONTROL_ESCAPE_RE.finditer(text):
-        if match.group("named") is not None:
-            return True
-        encoded = next(
-            value
-            for value in (
-                match.group("byte"),
-                match.group("short"),
-                match.group("long"),
-            )
-            if value is not None
+    if _TRAILING_LITERAL_NEWLINE_RE.search(text) is None:
+        return False
+    command_text = text[:-2].strip()
+    return bool(
+        command_text
+        and (
+            _TERMINAL_ENTER_INTENT_RE.search(description)
+            or _TERMINAL_COMMAND_SHAPE_RE.search(command_text)
         )
-        if int(encoded, 16) < 32 or int(encoded, 16) == 127:
-            return True
-    return False
+    )
 
 
 def _coordinate(
@@ -227,7 +223,10 @@ def parse_qwen3vl_response(
         text = arguments["text"]
         if not isinstance(text, str) or not text:
             raise InvalidModelAction("text must be a non-empty string")
-        if _type_text_contains_control_sequence(text):
+        if _type_text_contains_control_sequence(
+            text,
+            match.group("description"),
+        ):
             raise InvalidModelAction(
                 "type text must not contain keyboard control sequences; "
                 "split text entry from key actions such as key ['enter'] or a hotkey"

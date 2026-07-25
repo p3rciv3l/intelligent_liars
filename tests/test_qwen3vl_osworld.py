@@ -83,25 +83,52 @@ def test_correct_qwen3_json_calls_retain_coordinates_keys_and_text():
     assert keys.raw_arguments["keys"] == ["ctrl", "shift", "s"]
     assert keys.command == "pyautogui.hotkey('ctrl', 'shift', 's')"
 
-    typed = parse({"action": "type", "text": r"quoted 'line' C:\Users\user"})
-    assert typed.raw_arguments["text"] == r"quoted 'line' C:\Users\user"
+    typed = parse({"action": "type", "text": r"quoted 'line' C:\temp"})
+    assert typed.raw_arguments["text"] == r"quoted 'line' C:\temp"
     assert typed.command == (
-        """pyautogui.write("quoted 'line' C:\\\\Users\\\\user", interval=0.03)"""
+        """pyautogui.write("quoted 'line' C:\\\\temp", interval=0.03)"""
     )
 
 
 @pytest.mark.parametrize(
     "text",
     [
-        r"code ~/Desktop/project\n",
         "code ~/Desktop/project\n",
         "first\rsecond",
         "first\tsecond",
-        r"first\x0asecond",
-        r"first\u000asecond",
     ],
 )
-def test_type_rejects_literal_and_decoded_keyboard_control_sequences(text):
+def test_type_rejects_decoded_keyboard_control_sequences(text):
+    with pytest.raises(
+        InvalidModelAction,
+        match="split text entry from key actions",
+    ):
+        parse({"action": "type", "text": text})
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        r"C:\temp",
+        r"Use the two literal characters \n",
+        r"column\tvalue",
+        r'print("\\n"); raw = r"\x0a"; unicode = r"\u000a"',
+    ],
+)
+def test_type_preserves_ordinary_literal_backslash_sequences(text):
+    typed = parse({"action": "type", "text": text})
+    assert typed.raw_arguments["text"] == text
+    assert typed.command == f"pyautogui.write({text!r}, interval=0.03)"
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        r"code ~/Desktop/project\n",
+        r"code ~/Desktop/project\r",
+    ],
+)
+def test_type_rejects_trailing_terminal_enter_escape(text):
     with pytest.raises(
         InvalidModelAction,
         match="split text entry from key actions",

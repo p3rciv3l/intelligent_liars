@@ -408,7 +408,7 @@
   },
   "run": {
     "action_parser": "intelligent_liars.qwen3vl_osworld.parse_qwen3vl_response@strict-v2",
-    "action_parser_source_sha256": "1824b752dd49c1ead490321c82a803eb6a12ae076c9d3ef9a0b18420c2b24870",
+    "action_parser_source_sha256": "3dbe9e9e11473670ed5c70c24545096e44768d805ab919b159182f3576891aa1",
     "action_space": "pyautogui",
     "add_thought_prefix": false,
     "agent_class": "mm_agents.qwen3vl_agent.Qwen3VLAgent@osworld-pinned",
