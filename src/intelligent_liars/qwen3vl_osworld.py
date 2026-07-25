@@ -67,6 +67,62 @@ class ParsedQwen3VLAction:
     mapped_coordinate: tuple[int, int] | None = None
 
 
+@dataclass(frozen=True)
+class OpenAIResponseBoundary:
+    raw_content: str
+    canonical_content: str
+    reasoning_content: str | None
+    normalization: str
+
+
+def _openai_message_field(message: Any, name: str) -> Any:
+    if isinstance(message, Mapping):
+        return message.get(name)
+    value = getattr(message, name, None)
+    if value is not None:
+        return value
+    model_extra = getattr(message, "model_extra", None)
+    if isinstance(model_extra, Mapping) and name in model_extra:
+        return model_extra[name]
+    model_dump = getattr(message, "model_dump", None)
+    if callable(model_dump):
+        serialized = model_dump()
+        if isinstance(serialized, Mapping):
+            return serialized.get(name)
+    return None
+
+
+def normalize_openai_qwen_response(message: Any) -> OpenAIResponseBoundary:
+    content = _openai_message_field(message, "content")
+    reasoning = _openai_message_field(message, "reasoning_content")
+    if not isinstance(content, str):
+        raise RuntimeError("Qwen endpoint returned no response content")
+    unchanged = OpenAIResponseBoundary(content, content, reasoning, "unchanged")
+    if (
+        not isinstance(reasoning, str)
+        or not reasoning.strip()
+        or "<think>" in content
+        or content.count("</think>") != 1
+        or any(
+            token in reasoning
+            for token in ("<think>", "</think>", "<tool_call>", "</tool_call>")
+        )
+    ):
+        return unchanged
+    prefix, suffix = content.split("</think>", 1)
+    if not suffix.lstrip().startswith("Action:"):
+        return unchanged
+    if prefix.strip() and prefix.strip() != reasoning.strip():
+        return unchanged
+    canonical = f"<think>{reasoning.strip()}</think>\n{suffix.lstrip()}"
+    normalization = (
+        "hf_reasoning_content_with_orphan_close"
+        if not prefix.strip()
+        else "hf_duplicated_reasoning_with_orphan_close"
+    )
+    return OpenAIResponseBoundary(content, canonical, reasoning, normalization)
+
+
 def _reject_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
     result: dict[str, Any] = {}
     for key, value in pairs:
@@ -307,6 +363,7 @@ def build_strict_qwen3vl_agent(
             self.last_invalid_action_retryable = False
             self.last_validation_error: str | None = None
             self.last_parsed_action: ParsedQwen3VLAction | None = None
+            self.last_openai_response_boundary: OpenAIResponseBoundary | None = None
             self._invalid_response = ""
             self._invalid_total = 0
             self._invalid_for_observation = 0
@@ -318,6 +375,7 @@ def build_strict_qwen3vl_agent(
             self.last_invalid_action_retryable = False
             self.last_validation_error = None
             self.last_parsed_action = None
+            self.last_openai_response_boundary = None
             self._invalid_response = ""
             self._invalid_total = 0
             self._invalid_for_observation = 0
@@ -336,10 +394,11 @@ def build_strict_qwen3vl_agent(
                 top_p=self.top_p,
                 stream=False,
             )
-            content = response.choices[0].message.content
-            if not isinstance(content, str) or not content:
+            boundary = normalize_openai_qwen_response(response.choices[0].message)
+            if not boundary.canonical_content:
                 raise RuntimeError("Qwen endpoint returned no response content")
-            return content
+            self.last_openai_response_boundary = boundary
+            return boundary.canonical_content
 
         def parse_response(
             self,

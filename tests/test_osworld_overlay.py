@@ -1234,11 +1234,25 @@ def test_trajectory_preserves_reasoning_provenance_and_evaluator(tmp_path):
     assert parts.final_content == "final tool call"
 
     checkpoint_sink = FakeCheckpointSink()
+    agent = FakeAgent()
+    agent.last_openai_response_boundary = type(
+        "Boundary",
+        (),
+        {
+            "raw_content": "raw endpoint response",
+            "canonical_content": (
+                "<think>\ninspect the desktop\n</think>\n"
+                '<tool_call>{"name":"computer","arguments":'
+                '{"action":"terminate"}}</tool_call>'
+            ),
+            "normalization": "hf_reasoning_content_with_orphan_close",
+        },
+    )()
     result = run_attempt(
         manifest=_pilot_manifest(),
         task_id=PILOT_TASK,
         task_config=_task_config(),
-        agent=FakeAgent(),
+        agent=agent,
         env=FakeEnvironment(),
         results_root=tmp_path,
         checkpoint_sink=checkpoint_sink,
@@ -1252,6 +1266,10 @@ def test_trajectory_preserves_reasoning_provenance_and_evaluator(tmp_path):
     ]
     transition = next(event for event in events if event["event"] == "model_transition")
     assert transition["reasoning"] == "inspect the desktop"
+    assert transition["raw_endpoint_response"] == "raw endpoint response"
+    assert transition["response_boundary"]["normalization"] == (
+        "hf_reasoning_content_with_orphan_close"
+    )
     assert transition["parsed_actions"] == ["DONE"]
     assert transition["action_provenance"] == (
         "mm_agents.qwen3vl_agent.Qwen3VLAgent.predict"

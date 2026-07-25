@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -14,6 +16,7 @@ from intelligent_liars.osworld_overlay import (
 from intelligent_liars.qwen3vl_osworld import (
     InvalidModelAction,
     build_strict_qwen3vl_agent,
+    normalize_openai_qwen_response,
     parse_qwen3vl_response,
     validate_qwen3vl_history,
 )
@@ -168,6 +171,138 @@ def test_valid_success_and_failure_termination_are_explicit():
 
 
 @pytest.mark.parametrize(
+    ("content", "reasoning", "normalization"),
+    [
+        (
+            "</think>\nAction: Click\n"
+            '<tool_call>{"name":"computer_use","arguments":'
+            '{"action":"left_click","coordinate":[18,59]}}</tool_call>',
+            "inspect the desktop",
+            "hf_reasoning_content_with_orphan_close",
+        ),
+        (
+            "inspect the desktop\n</think>\nAction: Click\n"
+            '<tool_call>{"name":"computer_use","arguments":'
+            '{"action":"left_click","coordinate":[18,59]}}</tool_call>',
+            "inspect the desktop",
+            "hf_duplicated_reasoning_with_orphan_close",
+        ),
+    ],
+)
+def test_known_hf_reasoning_shapes_are_canonicalized(
+    content, reasoning, normalization
+):
+    boundary = normalize_openai_qwen_response(
+        {"content": content, "reasoning_content": reasoning}
+    )
+
+    assert boundary.raw_content == content
+    assert boundary.canonical_content == (
+        "<think>inspect the desktop</think>\nAction: Click\n"
+        '<tool_call>{"name":"computer_use","arguments":'
+        '{"action":"left_click","coordinate":[18,59]}}</tool_call>'
+    )
+    assert boundary.normalization == normalization
+    parsed = parse_qwen3vl_response(
+        boundary.canonical_content,
+        original_width=1920,
+        original_height=1080,
+    )
+    assert parsed.action == "left_click"
+
+
+def test_serialized_openai_extra_field_is_used_for_known_hf_shape():
+    content = (
+        "</think>\nAction: Click\n"
+        '<tool_call>{"name":"computer_use","arguments":'
+        '{"action":"left_click","coordinate":[18,59]}}</tool_call>'
+    )
+
+    class SerializedMessage:
+        def __init__(self):
+            self.content = content
+            self.model_extra = {"reasoning_content": "inspect the desktop"}
+
+        def model_dump(self):
+            return {
+                "content": self.content,
+                "reasoning_content": self.model_extra["reasoning_content"],
+            }
+
+    boundary = normalize_openai_qwen_response(SerializedMessage())
+    assert boundary.canonical_content.startswith(
+        "<think>inspect the desktop</think>\nAction: Click"
+    )
+    assert boundary.normalization == "hf_reasoning_content_with_orphan_close"
+
+
+def test_observed_multi_tool_call_shape_remains_rejected_after_normalization():
+    content = (
+        "inspect\n</think>\nAction: Drag\n"
+        '<tool_call>{"name":"computer_use","arguments":'
+        '{"action":"mouse_move","coordinate":[224,500]}}</tool_call>\n'
+        '<tool_call>{"name":"computer_use","arguments":'
+        '{"action":"left_click_drag","coordinate":[485,502]}}</tool_call>'
+    )
+    boundary = normalize_openai_qwen_response(
+        {"content": content, "reasoning_content": "inspect"}
+    )
+
+    with pytest.raises(
+        InvalidModelAction,
+        match="tool_call must contain one strict JSON object",
+    ):
+        parse_qwen3vl_response(
+            boundary.canonical_content,
+            original_width=1920,
+            original_height=1080,
+        )
+
+
+@pytest.mark.parametrize(
+    ("content", "reasoning"),
+    [
+        (
+            "</think>\nAction: Click\n"
+            '<tool_call>{"name":"computer_use","arguments":'
+            '{"action":"left_click","coordinate":[18,59]}}</tool_call>',
+            None,
+        ),
+        (
+            "different reasoning</think>\nAction: Click\n"
+            '<tool_call>{"name":"computer_use","arguments":'
+            '{"action":"left_click","coordinate":[18,59]}}</tool_call>',
+            "inspect the desktop",
+        ),
+        (
+            "</think>\nnot an action",
+            "inspect the desktop",
+        ),
+    ],
+)
+def test_absent_or_mismatched_reasoning_does_not_normalize(content, reasoning):
+    boundary = normalize_openai_qwen_response(
+        {"content": content, "reasoning_content": reasoning}
+    )
+    assert boundary.canonical_content == content
+    assert boundary.normalization == "unchanged"
+
+
+def test_valid_envelope_is_unchanged_for_strict_parser_compatibility():
+    content = response({"action": "key", "keys": ["ctrl", "a"]})
+    boundary = normalize_openai_qwen_response(
+        {"content": content, "reasoning_content": "inspect"}
+    )
+    assert boundary.raw_content == boundary.canonical_content == content
+    assert boundary.normalization == "unchanged"
+    assert parse_qwen3vl_response(
+        boundary.canonical_content,
+        original_width=1920,
+        original_height=1080,
+    ).command == "pyautogui.hotkey('ctrl', 'a')"
+
+
+@pytest.mark.parametrize(
     ("width", "height"),
     [(0, 1080), (-1, 1080), (1920, 0), (1920, -1)],
 )
@@ -296,6 +431,73 @@ def test_retry_exhaustion_has_no_fallback_terminal_action():
     assert agent.last_invalid_action_retryable is False
     assert agent.last_parsed_action is None
     assert agent.responses == agent.actions == agent.screenshots == []
+
+
+def test_openai_boundary_returns_canonical_history_and_retains_raw_evidence(
+    monkeypatch,
+):
+    raw = (
+        "inspect</think>\nAction: Copy\n"
+        '<tool_call>{"name":"computer_use","arguments":'
+        '{"action":"key","keys":["ctrl","c"]}}</tool_call>'
+    )
+
+    class Message:
+        content = raw
+        reasoning_content = "inspect"
+
+    class Completions:
+        @staticmethod
+        def create(**kwargs):
+            del kwargs
+            return type(
+                "Response",
+                (),
+                {"choices": [type("Choice", (), {"message": Message()})()]},
+            )()
+
+    class Client:
+        def __init__(self, **kwargs):
+            del kwargs
+            self.chat = type("Chat", (), {"completions": Completions()})()
+
+    class OpenAIHistoryAgent(FakeUpstreamQwen3VLAgent):
+        def __init__(self, **kwargs):
+            super().__init__(**kwargs)
+            self.max_tokens = 32768
+            self.temperature = 0.0
+            self.top_p = 0.9
+
+        def predict(self, instruction, obs):
+            del instruction
+            canonical = self._call_llm_openai(_messages(0), MODEL_ID)
+            self.responses.append(canonical)
+            self.screenshots.append(bytes(obs["screenshot"]))
+            description, actions = self.parse_response(
+                canonical,
+                original_width=1920,
+                original_height=1080,
+                processed_width=1280,
+                processed_height=704,
+            )
+            self.actions.append(description)
+            return canonical, actions
+
+    monkeypatch.setitem(sys.modules, "openai", SimpleNamespace(OpenAI=Client))
+    agent = build_strict_qwen3vl_agent(
+        OpenAIHistoryAgent,
+        base_url="https://endpoint.invalid/v1",
+        api_key="test",
+        model=MODEL_ID,
+        coordinate_type="relative",
+    )
+    canonical, actions = agent.predict("copy", {"screenshot": b"same screenshot"})
+
+    assert canonical.startswith("<think>inspect</think>\nAction: Copy")
+    assert actions == ["pyautogui.hotkey('ctrl', 'c')"]
+    assert agent.responses == [canonical]
+    assert agent.last_openai_response_boundary.raw_content == raw
+    assert agent.last_openai_response_boundary.canonical_content == canonical
 
 
 def _messages(rounds: int) -> list[dict]:

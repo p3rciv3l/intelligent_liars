@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import importlib
 import json
 import logging
@@ -63,7 +64,7 @@ OFFICIAL_GRID_SHA256 = "fcb9497e93a8986407345d3012c872c9c2fed253420730fbea64ccfc
 OFFICIAL_SMALL_PATH = "evaluation_examples/test_small.json"
 OFFICIAL_SMALL_SHA256 = "bb29275171b78728d71825b125af311d74e66bb2a6d693c45c497d380b1fc640"
 STRICT_ACTION_PARSER_SHA256 = (
-    "3dbe9e9e11473670ed5c70c24545096e44768d805ab919b159182f3576891aa1"
+    "93b4dc7e0fc2b70c080544ca7aef015cd6cba35814532406eb6f5c3e4ae7dc92"
 )
 ENDPOINT_PROFILE = "qwen3-vl-8b-thinking-bf16-48gb-v1"
 ENDPOINT_MAX_OUTPUT_TOKENS = 32768
@@ -994,6 +995,29 @@ def _validated_action_evidence(agent: Agent) -> Mapping[str, Any] | None:
     }
 
 
+def _response_boundary_evidence(
+    agent: Agent,
+    canonical_response: str,
+) -> tuple[str, Mapping[str, Any]]:
+    boundary = getattr(agent, "last_openai_response_boundary", None)
+    raw_content = getattr(boundary, "raw_content", canonical_response)
+    normalized_content = getattr(boundary, "canonical_content", canonical_response)
+    normalization = getattr(boundary, "normalization", "unchanged")
+    if not isinstance(raw_content, str) or normalized_content != canonical_response:
+        return canonical_response, {
+            "normalization": "unavailable",
+            "raw_sha256": hashlib.sha256(canonical_response.encode()).hexdigest(),
+            "canonical_sha256": hashlib.sha256(
+                canonical_response.encode()
+            ).hexdigest(),
+        }
+    return raw_content, {
+        "normalization": normalization,
+        "raw_sha256": hashlib.sha256(raw_content.encode()).hexdigest(),
+        "canonical_sha256": hashlib.sha256(canonical_response.encode()).hexdigest(),
+    }
+
+
 def classify_failure(phase: str, exc: BaseException | None = None) -> TerminalState:
     if phase == "invalid_action":
         return TerminalState.INVALID_ACTION
@@ -1165,6 +1189,10 @@ def run_attempt(
             predicted_at = clock()
             response, actions = agent.predict(task_config["instruction"], observation)
             parts = split_merged_response(response)
+            raw_endpoint_response, boundary_evidence = _response_boundary_evidence(
+                agent,
+                response,
+            )
             predicted_finished_at = clock()
             _append_event(
                 trajectory,
@@ -1174,6 +1202,8 @@ def run_attempt(
                     "predict_started_at": predicted_at,
                     "predict_finished_at": predicted_finished_at,
                     "raw_merged_response": parts.raw_merged,
+                    "raw_endpoint_response": raw_endpoint_response,
+                    "response_boundary": boundary_evidence,
                     "reasoning": parts.reasoning,
                     "final_content": parts.final_content,
                     "parsed_actions": list(actions),
@@ -1240,6 +1270,8 @@ def run_attempt(
                         "execution_started_at": execution_started_at,
                         "execution_finished_at": clock(),
                         "raw_merged_response": parts.raw_merged,
+                        "raw_endpoint_response": raw_endpoint_response,
+                        "response_boundary": boundary_evidence,
                         "reasoning": parts.reasoning,
                         "final_content": parts.final_content,
                         "parsed_actions": list(actions),
