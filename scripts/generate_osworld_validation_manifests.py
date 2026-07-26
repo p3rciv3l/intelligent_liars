@@ -8,7 +8,7 @@ from copy import deepcopy
 from pathlib import Path
 from typing import Any
 
-from intelligent_liars.osworld_overlay import OSWORLD_COMMIT
+from intelligent_liars.osworld_overlay import EXECUTION_CONTRACT_FIELDS, OSWORLD_COMMIT
 from intelligent_liars.run_control import stable_sha256
 
 
@@ -40,6 +40,11 @@ ACCEPTANCE_GATES = {
     "coordinate_key_text_retention_gte": 0.99,
     "implicit_terminal_actions_eq": 0,
     "official_evaluator_invocation": 1.0,
+    "pre_wave_canary": {
+        "required": True,
+        "checkpoint_remote_verified": True,
+        "exactly_one_validated_action": True,
+    },
     "proxy": {
         "mode": "enabled",
         "required_checks": ["dns", "tls", "status", "expected_content", "screenshot"],
@@ -74,12 +79,7 @@ def _task_metadata(
     evaluators: dict[str, str] = {}
     for task_id in task_ids:
         domain, example_id = task_id.split("/", 1)
-        path = (
-            checkout
-            / "evaluation_examples/examples"
-            / domain
-            / f"{example_id}.json"
-        )
+        path = checkout / "evaluation_examples/examples" / domain / f"{example_id}.json"
         payload = json.loads(path.read_text())
         if payload.get("id") != example_id:
             raise ValueError(f"task ID mismatch in {path}")
@@ -116,6 +116,9 @@ def _build(
         "evaluator_sha256": evaluators,
     }
     payload["acceptance_gates"] = deepcopy(ACCEPTANCE_GATES)
+    payload["contract_sha256"] = stable_sha256(
+        {field: payload[field] for field in EXECUTION_CONTRACT_FIELDS}
+    )
     return payload
 
 

@@ -9,11 +9,14 @@ from types import SimpleNamespace
 import pytest
 
 from intelligent_liars.osworld_overlay import (
+    EXECUTION_CONTRACT_FIELDS,
     MODEL_ID,
     MODEL_REVISION,
     OSWORLD_COMMIT,
 )
 from intelligent_liars.qwen3vl_osworld import (
+    ENDPOINT_MAX_RETRIES,
+    ENDPOINT_READ_TIMEOUT_SECONDS,
     InvalidModelAction,
     build_strict_qwen3vl_agent,
     normalize_openai_qwen_response,
@@ -29,7 +32,9 @@ TEMPLATES = ROOT / "docs/evaluation/osworld_templates"
 
 def response(arguments: dict, *, name: str = "computer_use") -> str:
     call = json.dumps({"name": name, "arguments": arguments})
-    return f"<think>inspect</think>\nAction: Perform action\n<tool_call>{call}</tool_call>"
+    return (
+        f"<think>inspect</think>\nAction: Perform action\n<tool_call>{call}</tool_call>"
+    )
 
 
 def parse(arguments: dict):
@@ -50,7 +55,7 @@ def parse(arguments: dict):
             "<parameter=action>left_click</parameter></function>"
         ),
         "Action: click\n<tool_call>{",
-        "Action: click\n<tool_call>{\"name\":\"computer_use\",\"arguments\":{\"action\":\"left_click\",\"coordinate\":[1,2]}}",
+        'Action: click\n<tool_call>{"name":"computer_use","arguments":{"action":"left_click","coordinate":[1,2]}}',
         "Action: click",
         (
             "Action: click\n<tool_call>"
@@ -189,9 +194,7 @@ def test_valid_success_and_failure_termination_are_explicit():
         ),
     ],
 )
-def test_known_hf_reasoning_shapes_are_canonicalized(
-    content, reasoning, normalization
-):
+def test_known_hf_reasoning_shapes_are_canonicalized(content, reasoning, normalization):
     boundary = normalize_openai_qwen_response(
         {"content": content, "reasoning_content": reasoning}
     )
@@ -259,11 +262,53 @@ def test_observed_multi_tool_call_shape_remains_rejected_after_normalization():
         )
 
 
+def test_five_observed_response_boundaries_are_golden():
+    fixtures = json.loads(
+        (ROOT / "tests/fixtures/osworld_observed_response_boundaries.json").read_text()
+    )
+    assert len(fixtures) == 5
+
+    for fixture in fixtures:
+        raw = fixture["raw_content"]
+        assert hashlib.sha256(raw.encode()).hexdigest() == fixture["raw_sha256"]
+        boundary = normalize_openai_qwen_response(
+            {
+                "content": raw,
+                "reasoning_content": fixture["reasoning_content"],
+            }
+        )
+        assert boundary.raw_content == raw
+        assert (
+            hashlib.sha256(boundary.raw_content.encode()).hexdigest()
+            == (fixture["raw_sha256"])
+        )
+        if fixture["expected"] == "normalized_valid":
+            assert boundary.normalization == "hf_raw_reasoning_with_orphan_close"
+            assert parse_qwen3vl_response(
+                boundary.canonical_content,
+                original_width=1920,
+                original_height=1080,
+            )
+        else:
+            if fixture["expected"] == "unchanged_invalid_multiple_tools":
+                assert boundary.normalization == "unchanged"
+            else:
+                assert boundary.normalization == (
+                    "hf_duplicated_reasoning_with_orphan_close"
+                )
+            with pytest.raises(InvalidModelAction):
+                parse_qwen3vl_response(
+                    boundary.canonical_content,
+                    original_width=1920,
+                    original_height=1080,
+                )
+
+
 @pytest.mark.parametrize(
     ("content", "reasoning"),
     [
         (
-            "</think>\nAction: Click\n"
+            "<broken>reasoning</broken></think>\nAction: Click\n"
             '<tool_call>{"name":"computer_use","arguments":'
             '{"action":"left_click","coordinate":[18,59]}}</tool_call>',
             None,
@@ -295,11 +340,14 @@ def test_valid_envelope_is_unchanged_for_strict_parser_compatibility():
     )
     assert boundary.raw_content == boundary.canonical_content == content
     assert boundary.normalization == "unchanged"
-    assert parse_qwen3vl_response(
-        boundary.canonical_content,
-        original_width=1920,
-        original_height=1080,
-    ).command == "pyautogui.hotkey('ctrl', 'a')"
+    assert (
+        parse_qwen3vl_response(
+            boundary.canonical_content,
+            original_width=1920,
+            original_height=1080,
+        ).command
+        == "pyautogui.hotkey('ctrl', 'a')"
+    )
 
 
 @pytest.mark.parametrize(
@@ -398,12 +446,8 @@ def test_invalid_action_requests_correction_on_same_observation_without_history_
 
 
 def test_malformed_terminal_type_requests_split_text_and_enter_correction():
-    malformed = response(
-        {"action": "type", "text": r"code ~/Desktop/project\n"}
-    )
-    corrected = response(
-        {"action": "type", "text": "code ~/Desktop/project"}
-    )
+    malformed = response({"action": "type", "text": r"code ~/Desktop/project\n"})
+    corrected = response({"action": "type", "text": "code ~/Desktop/project"})
     agent = make_agent([malformed, corrected])
     observation = {"screenshot": b"same screenshot"}
 
@@ -414,9 +458,7 @@ def test_malformed_terminal_type_requests_split_text_and_enter_correction():
     assert agent.responses == agent.actions == agent.screenshots == []
 
     _, actions = agent.predict("open the project", observation)
-    assert actions == [
-        "pyautogui.write('code ~/Desktop/project', interval=0.03)"
-    ]
+    assert actions == ["pyautogui.write('code ~/Desktop/project', interval=0.03)"]
     assert "key ['enter']" in FakeUpstreamQwen3VLAgent.instructions[-1]
     assert len(agent.responses) == len(agent.screenshots) == len(agent.actions) == 1
 
@@ -500,6 +542,119 @@ def test_openai_boundary_returns_canonical_history_and_retains_raw_evidence(
     assert agent.last_openai_response_boundary.canonical_content == canonical
 
 
+def test_endpoint_timeout_is_bounded_and_records_replica_duration(monkeypatch):
+    client_kwargs = {}
+
+    class Completions:
+        @staticmethod
+        def create(**kwargs):
+            del kwargs
+            raise TimeoutError("bounded read timeout")
+
+    class Client:
+        def __init__(self, **kwargs):
+            client_kwargs.update(kwargs)
+            self.chat = type("Chat", (), {"completions": Completions()})()
+
+    class TimeoutAgent(FakeUpstreamQwen3VLAgent):
+        def __init__(self, **kwargs):
+            super().__init__(**kwargs)
+            self.max_tokens = 32768
+            self.temperature = 0.0
+            self.top_p = 0.9
+
+    ticks = iter((10.0, 356.0))
+    monkeypatch.setitem(sys.modules, "openai", SimpleNamespace(OpenAI=Client))
+    agent = build_strict_qwen3vl_agent(
+        TimeoutAgent,
+        base_url="https://endpoint.invalid/v1",
+        api_key="test",
+        model=MODEL_ID,
+        coordinate_type="relative",
+        replica_id="replica-3",
+        monotonic_clock=lambda: next(ticks),
+    )
+
+    with pytest.raises(TimeoutError, match="bounded read timeout"):
+        agent._call_llm_openai(_messages(0), MODEL_ID)
+
+    assert client_kwargs["timeout"] == ENDPOINT_READ_TIMEOUT_SECONDS == 420.0
+    assert client_kwargs["max_retries"] == ENDPOINT_MAX_RETRIES == 0
+    assert agent.last_model_request_telemetry == {
+        "request_id": agent.last_model_request_telemetry["request_id"],
+        "replica_id": "replica-3",
+        "duration_seconds": 346.0,
+        "timeout_seconds": 420.0,
+        "http_status": None,
+        "outcome": "timeout",
+        "exception_type": "TimeoutError",
+    }
+
+
+def test_endpoint_raw_response_records_http_status(monkeypatch):
+    content = response({"action": "key", "keys": ["ctrl", "a"]})
+
+    class RawResponse:
+        status_code = 200
+
+        @staticmethod
+        def parse():
+            message = SimpleNamespace(content=content, reasoning_content=None)
+            return SimpleNamespace(choices=[SimpleNamespace(message=message)])
+
+    class RawCompletions:
+        @staticmethod
+        def create(**kwargs):
+            del kwargs
+            return RawResponse()
+
+    class Completions:
+        with_raw_response = RawCompletions()
+
+    class Client:
+        def __init__(self, **kwargs):
+            del kwargs
+            self.chat = SimpleNamespace(completions=Completions())
+
+    class StatusAgent(FakeUpstreamQwen3VLAgent):
+        def __init__(self, **kwargs):
+            super().__init__(**kwargs)
+            self.max_tokens = 32768
+            self.temperature = 0.0
+            self.top_p = 0.9
+
+    ticks = iter((20.0, 22.5))
+    monkeypatch.setitem(sys.modules, "openai", SimpleNamespace(OpenAI=Client))
+    agent = build_strict_qwen3vl_agent(
+        StatusAgent,
+        base_url="https://endpoint.invalid/v1",
+        api_key="test",
+        model=MODEL_ID,
+        coordinate_type="relative",
+        replica_id="replica-2",
+        monotonic_clock=lambda: next(ticks),
+    )
+
+    assert agent._call_llm_openai(_messages(0), MODEL_ID) == content
+    assert agent.last_model_request_telemetry["http_status"] == 200
+    assert agent.last_model_request_telemetry["duration_seconds"] == 2.5
+    assert agent.last_model_request_telemetry["replica_id"] == "replica-2"
+    assert agent.last_model_request_telemetry["outcome"] == "response"
+
+
+@pytest.mark.parametrize("timeout", [345.0, 600.1])
+def test_endpoint_timeout_rejects_unreviewed_bounds(timeout):
+    with pytest.raises(ValueError, match="timeout"):
+        build_strict_qwen3vl_agent(
+            FakeUpstreamQwen3VLAgent,
+            base_url="https://endpoint.invalid/v1",
+            api_key="test",
+            model=MODEL_ID,
+            coordinate_type="relative",
+            request_timeout_seconds=timeout,
+        )
+
+
 def _messages(rounds: int) -> list[dict]:
     messages = [{"role": "system", "content": [{"type": "text", "text": "tools"}]}]
     for index in range(rounds):
@@ -552,9 +707,7 @@ def test_history_is_four_prior_rounds_plus_current_and_never_six_images():
         ),
     ],
 )
-def test_validation_fixtures_pin_source_revision_and_rca_gates(
-    name, count, grid_hash
-):
+def test_validation_fixtures_pin_source_revision_and_rca_gates(name, count, grid_hash):
     payload = json.loads((TEMPLATES / name).read_text())
     assert payload["osworld"]["commit"] == OSWORLD_COMMIT
     assert payload["model"]["id"] == MODEL_ID
@@ -568,9 +721,10 @@ def test_validation_fixtures_pin_source_revision_and_rca_gates(
         "c9bb34d3ad822168c66133cd97c607d4645b7eff08072e1e45c49dbbad8491b4"
     )
     parser_path = ROOT / "src/intelligent_liars/qwen3vl_osworld.py"
-    assert payload["run"]["action_parser_source_sha256"] == hashlib.sha256(
-        parser_path.read_bytes()
-    ).hexdigest()
+    assert (
+        payload["run"]["action_parser_source_sha256"]
+        == hashlib.sha256(parser_path.read_bytes()).hexdigest()
+    )
     assert payload["run"]["screenshot_transform"] == {
         "encoding": "png-base64",
         "implementation": "mm_agents.qwen3vl_agent.process_image@osworld-pinned",
@@ -583,6 +737,8 @@ def test_validation_fixtures_pin_source_revision_and_rca_gates(
     assert payload["run"]["step_cap"] == 100
     assert payload["run"]["history_n"] == 4
     assert payload["run"]["image_max"] == 5
+    assert payload["run"]["endpoint_read_timeout_seconds"] == 420.0
+    assert payload["run"]["endpoint_max_retries"] == 0
     assert len(payload["task_grid"]["task_ids"]) == count
     assert payload["task_grid"]["sha256"] == stable_sha256(
         payload["task_grid"]["task_ids"]
@@ -591,8 +747,16 @@ def test_validation_fixtures_pin_source_revision_and_rca_gates(
         assert payload["task_grid"]["sha256"] == grid_hash
     assert len(payload["evaluation"]["evaluator_sha256"]) == count
     gates = payload["acceptance_gates"]
+    assert gates["pre_wave_canary"] == {
+        "required": True,
+        "checkpoint_remote_verified": True,
+        "exactly_one_validated_action": True,
+    }
     assert gates["tool_call_initial_validity_gte"] == 0.99
     assert gates["coordinate_key_text_retention_gte"] == 0.99
     assert gates["proxy"]["mode"] == "enabled"
     assert gates["artifact_checksum_completeness"] == 1.0
     assert gates["implicit_terminal_actions_eq"] == 0
+    assert payload["contract_sha256"] == stable_sha256(
+        {field: payload[field] for field in EXECUTION_CONTRACT_FIELDS}
+    )

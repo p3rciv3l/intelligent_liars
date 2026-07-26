@@ -4,6 +4,11 @@
     "coordinate_key_text_retention_gte": 0.99,
     "implicit_terminal_actions_eq": 0,
     "official_evaluator_invocation": 1.0,
+    "pre_wave_canary": {
+      "checkpoint_remote_verified": true,
+      "exactly_one_validated_action": true,
+      "required": true
+    },
     "proxy": {
       "mode": "enabled",
       "required_checks": [
@@ -33,6 +38,7 @@
     "recording_required": true,
     "valid_attempt_overwrite": false
   },
+  "contract_sha256": "c7d7565051f9cf6e12718101e17b209ca00991ab91aae6c957210dcccb087acb",
   "desktop": {
     "client_password_env": "OSWORLD_CLIENT_PASSWORD",
     "enable_proxy": true,
@@ -153,7 +159,7 @@
   },
   "run": {
     "action_parser": "intelligent_liars.qwen3vl_osworld.parse_qwen3vl_response@strict-v2",
-    "action_parser_source_sha256": "93b4dc7e0fc2b70c080544ca7aef015cd6cba35814532406eb6f5c3e4ae7dc92",
+    "action_parser_source_sha256": "c4170da6236f0c0cffd38e8ffa50ec41b81c8fddaa126374626f5dcf21f181de",
     "action_space": "pyautogui",
     "add_thought_prefix": false,
     "agent_class": "mm_agents.qwen3vl_agent.Qwen3VLAgent@osworld-pinned",
@@ -161,7 +167,9 @@
     "captain_action_selection": false,
     "coordinate_type": "relative",
     "enable_thinking": true,
+    "endpoint_max_retries": 0,
     "endpoint_model": "Qwen/Qwen3-VL-8B-Thinking",
+    "endpoint_read_timeout_seconds": 420.0,
     "fold_size": 0,
     "history_n": 4,
     "history_policy": {

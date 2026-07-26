@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import inspect
+import hashlib
 import json
 import subprocess
+import threading
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from decimal import Decimal
@@ -25,6 +27,7 @@ from intelligent_liars.osworld_cloud import (
 from intelligent_liars.osworld_overlay import (
     ENDPOINT_MAX_IMAGES,
     ENDPOINT_MAX_OUTPUT_TOKENS,
+    EXECUTION_CONTRACT_FIELDS,
     MODEL_ID,
     MODEL_REVISION,
     OSWORLD_COMMIT,
@@ -34,6 +37,7 @@ from intelligent_liars.osworld_overlay import (
     ExecutionBlockedError,
     StoreBackedProductionCheckpointSink,
     _ensure_run_root,
+    _safe_task_name,
     build_official_agent,
     build_official_aws_environment,
     classify_failure,
@@ -43,6 +47,7 @@ from intelligent_liars.osworld_overlay import (
     load_run_template,
     materialize_run_manifest,
     require_first_tranche_pass,
+    require_checkpoint_and_action_canary,
     require_five_task_tranche_lease,
     run_attempt,
     run_attempt_export_then_close,
@@ -64,6 +69,7 @@ from intelligent_liars.run_control import (
 ROOT = Path(__file__).parents[1]
 TEMPLATES = ROOT / "docs/evaluation/osworld_templates"
 PILOT_TASK = "os/5ea617a3-0e86-4ba6-aab2-dac9aa2e8d57"
+ATTEMPT_ID = "12345678-1234-4234-8234-123456789abc"
 
 
 class FakeController:
@@ -120,6 +126,13 @@ class FakeAgent:
 
     def predict(self, instruction, observation):
         del instruction, observation
+        self.last_parsed_action = SimpleNamespace(
+            description="terminate canary",
+            raw_arguments={"action": "terminate", "status": "success"},
+            action="terminate",
+            mapped_coordinate=None,
+            command=self.action,
+        )
         return (
             "<think>\ninspect the desktop\n</think>\n"
             '<tool_call>{"name":"computer","arguments":{"action":"terminate"}}</tool_call>',
@@ -159,7 +172,8 @@ class FakeCheckpointSink:
             sequence=sequence,
             artifact_prefix=(
                 f"s3://{ARTIFACT_BUCKET}/runs/{run_id}/"
-                f"tasks/fake/attempt-{kwargs['attempt']:04d}/"
+                f"tasks/fake/attempt-{kwargs['attempt']:04d}-"
+                f"{kwargs['attempt_id']}/"
                 f"checkpoints/{sequence:08d}/"
             ),
             artifact_checksums={"checkpoint.json": "a" * 64},
@@ -235,6 +249,13 @@ def _task_config() -> dict:
     }
 
 
+def _refresh_contract(payload: dict) -> dict:
+    payload["contract_sha256"] = stable_sha256(
+        {field: payload[field] for field in EXECUTION_CONTRACT_FIELDS}
+    )
+    return payload
+
+
 @pytest.mark.parametrize("termination", ["DONE", "FAIL"])
 def test_explicit_valid_termination_is_honored_immediately(tmp_path, termination):
     environment = FakeEnvironment(score=1.0 if termination == "DONE" else 0.0)
@@ -293,12 +314,11 @@ def test_templates_pin_inputs_without_claiming_self_referential_commit():
 
 
 def test_attempt_source_has_single_initial_screenshot_assignment():
-    source = (
-        ROOT / "src/intelligent_liars/osworld_overlay.py"
-    ).read_text()
-    assert source.count(
-        '        initial_screenshot = bytes(observation["screenshot"])\n'
-    ) == 1
+    source = (ROOT / "src/intelligent_liars/osworld_overlay.py").read_text()
+    assert (
+        source.count('        initial_screenshot = bytes(observation["screenshot"])\n')
+        == 1
+    )
 
 
 @pytest.mark.parametrize(
@@ -400,6 +420,7 @@ def test_first_tranche_gate_requires_exactly_one_task_and_50_steps(tmp_path):
         )
     payload = json.loads(json.dumps(_first_tranche_manifest().payload))
     payload["run"]["step_cap"] = 49
+    _refresh_contract(payload)
     with pytest.raises(ExecutionBlockedError, match="50 steps"):
         require_first_tranche_pass(
             validate_run_manifest(payload),
@@ -411,7 +432,16 @@ def test_first_tranche_gate_requires_exactly_one_task_and_50_steps(tmp_path):
 def test_five_task_leasing_depends_on_first_tranche_gate_and_exact_prefix(tmp_path):
     first = _first_tranche_manifest()
     five = _pilot_manifest()
-    result = _first_tranche_result(tmp_path)
+    result = run_attempt(
+        manifest=first,
+        task_id=PILOT_TASK,
+        task_config=_task_config(),
+        agent=FakeAgent(),
+        env=FakeEnvironment(),
+        results_root=tmp_path,
+        checkpoint_sink=FakeCheckpointSink(),
+        attempt_id_factory=lambda: ATTEMPT_ID,
+    )
 
     require_five_task_tranche_lease(
         first,
@@ -424,6 +454,57 @@ def test_five_task_leasing_depends_on_first_tranche_gate_and_exact_prefix(tmp_pa
             first,
             five,
             _first_tranche_result(tmp_path, TerminalState.MODEL_ERROR),
+            remote_artifact_verified=True,
+        )
+
+
+def test_pre_wave_canary_rejects_missing_action_or_checkpoint_verification(tmp_path):
+    manifest = _first_tranche_manifest()
+    result = run_attempt(
+        manifest=manifest,
+        task_id=PILOT_TASK,
+        task_config=_task_config(),
+        agent=FakeAgent(),
+        env=FakeEnvironment(),
+        results_root=tmp_path,
+        checkpoint_sink=FakeCheckpointSink(),
+        attempt_id_factory=lambda: ATTEMPT_ID,
+    )
+    require_checkpoint_and_action_canary(
+        manifest,
+        result,
+        remote_artifact_verified=True,
+    )
+    with pytest.raises(ExecutionBlockedError, match="remotely verified"):
+        require_checkpoint_and_action_canary(
+            manifest,
+            result,
+            remote_artifact_verified=False,
+        )
+    trajectory = result.directory / "trajectory.jsonl"
+    events = [json.loads(line) for line in trajectory.read_text().splitlines() if line]
+    trajectory.write_text(
+        "\n".join(
+            json.dumps(event)
+            for event in events
+            if event.get("event") != "model_transition"
+        )
+        + "\n"
+    )
+    checksums = dict(result.artifact_checksums)
+    checksums["trajectory.jsonl"] = hashlib.sha256(trajectory.read_bytes()).hexdigest()
+    missing_action = result.__class__(
+        result.directory,
+        result.terminal_state,
+        result.evaluator_score,
+        checksums,
+        stable_sha256(checksums),
+        result.agent_termination,
+    )
+    with pytest.raises(ExecutionBlockedError, match="exactly one"):
+        require_checkpoint_and_action_canary(
+            manifest,
+            missing_action,
             remote_artifact_verified=True,
         )
 
@@ -458,14 +539,13 @@ def test_incremental_checkpoints_are_append_only_s3_authoritative_and_resumable(
         path = tmp_path / relative_path
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(state_kind)
-        partial_artifacts.append(
-            CheckpointArtifact(state_kind, relative_path, path)
-        )
+        partial_artifacts.append(CheckpointArtifact(state_kind, relative_path, path))
 
     partial = export_incremental_checkpoint(
         run_id="run-checkpoint",
         task_id="os/task-one",
         attempt=1,
+        attempt_id=ATTEMPT_ID,
         sequence=1,
         artifacts=partial_artifacts,
         resumable_manifest_path=resumable,
@@ -483,7 +563,9 @@ def test_incremental_checkpoints_are_append_only_s3_authoritative_and_resumable(
         "s3://intelligent-liars-osworld-29a36b2b927f4078b2ac95ca83ec9c21/"
         "runs/run-checkpoint/tasks/"
     )
-    assert "/attempt-0001/checkpoints/00000001/" in partial.artifact_prefix
+    assert (
+        f"/attempt-0001-{ATTEMPT_ID}/checkpoints/00000001/" in partial.artifact_prefix
+    )
     require_safe_lifecycle_transition(
         "pause",
         partial,
@@ -501,11 +583,24 @@ def test_incremental_checkpoints_are_append_only_s3_authoritative_and_resumable(
             partial,
             provider_preserves_required_disk=True,
         )
-    with pytest.raises(RuntimeError, match="append-only collision"):
+    resumed = export_incremental_checkpoint(
+        run_id="run-checkpoint",
+        task_id="os/task-one",
+        attempt=1,
+        attempt_id=ATTEMPT_ID,
+        sequence=1,
+        artifacts=partial_artifacts,
+        resumable_manifest_path=resumable,
+        store=store,
+    )
+    assert resumed.artifact_prefix == partial.artifact_prefix
+    resumable.write_text('{"next_task":"different"}')
+    with pytest.raises(ExecutionBlockedError, match="different bytes"):
         export_incremental_checkpoint(
             run_id="run-checkpoint",
             task_id="os/task-one",
             attempt=1,
+            attempt_id=ATTEMPT_ID,
             sequence=1,
             artifacts=partial_artifacts,
             resumable_manifest_path=resumable,
@@ -535,13 +630,12 @@ def test_stop_and_destroy_require_every_durable_state_kind_and_remote_verificati
         suffix = ".png" if state_kind == "screenshots" else ".dat"
         path = tmp_path / f"{state_kind}{suffix}"
         path.write_text(state_kind)
-        artifacts.append(
-            CheckpointArtifact(state_kind, path.name, path)
-        )
+        artifacts.append(CheckpointArtifact(state_kind, path.name, path))
     checkpoint = export_incremental_checkpoint(
         run_id="run-checkpoint",
         task_id="os/task-one",
         attempt=2,
+        attempt_id=ATTEMPT_ID,
         sequence=2,
         artifacts=artifacts,
         resumable_manifest_path=resumable,
@@ -580,10 +674,17 @@ def test_checkpoint_prefix_separates_tasks_attempts_with_same_sequence(tmp_path)
             run_id="run-checkpoint",
             task_id=task_id,
             attempt=attempt,
+            attempt_id=(
+                ATTEMPT_ID
+                if task_id == "os/task-one" and attempt == 1
+                else (
+                    "22345678-1234-4234-8234-123456789abc"
+                    if task_id == "os/task-two"
+                    else "32345678-1234-4234-8234-123456789abc"
+                )
+            ),
             sequence=1,
-            artifacts=[
-                CheckpointArtifact("trajectory", artifact.name, artifact)
-            ],
+            artifacts=[CheckpointArtifact("trajectory", artifact.name, artifact)],
             resumable_manifest_path=resumable,
             store=store,
         )
@@ -605,6 +706,7 @@ def test_store_backed_sink_rejects_claimed_state_without_real_files(tmp_path):
             run_id="run-checkpoint",
             task_id="os/task-one",
             attempt=1,
+            attempt_id=ATTEMPT_ID,
             sequence=1,
             phase="initial_state",
             run_root=run_root,
@@ -628,13 +730,12 @@ def test_store_backed_sink_preserves_empty_required_log(tmp_path):
         run_id="run-checkpoint",
         task_id="os/task-one",
         attempt=1,
+        attempt_id=ATTEMPT_ID,
         sequence=1,
         phase="initial_state",
         run_root=run_root,
         attempt_directory=attempt_directory,
-        required_state_kinds=frozenset(
-            {"manifest", "trajectory", "logs", "metadata"}
-        ),
+        required_state_kinds=frozenset({"manifest", "trajectory", "logs", "metadata"}),
     )
 
     log_uri = next(uri for uri in store.objects if uri.endswith("/attempt/runtime.log"))
@@ -642,6 +743,126 @@ def test_store_backed_sink_preserves_empty_required_log(tmp_path):
     assert checkpoint.artifact_checksums["attempt/runtime.log"] == (
         "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
     )
+
+
+def test_checkpoint_retry_uuid_avoids_legacy_local_and_remote_collisions(tmp_path):
+    run_root = tmp_path / "run"
+    attempt_directory = run_root / ".staging" / "attempt"
+    attempt_directory.mkdir(parents=True)
+    (run_root / "manifest.json").write_text("{}")
+    (attempt_directory / "trajectory.jsonl").write_text("{}\n")
+    legacy_metadata = (
+        run_root
+        / ".checkpoint-metadata"
+        / f"{_safe_task_name('os/task-one')}-0001-00000001.json"
+    )
+    legacy_metadata.parent.mkdir()
+    legacy_metadata.write_text("legacy attempt-one bytes")
+    store = MemoryCheckpointStore()
+    legacy_remote = (
+        f"s3://{ARTIFACT_BUCKET}/runs/run-checkpoint/tasks/"
+        f"{_safe_task_name('os/task-one')}/attempt-0002/checkpoints/"
+        "00000001/resumable-manifest.json"
+    )
+    store.objects[legacy_remote] = b"legacy attempt-two bytes"
+
+    checkpoint = StoreBackedProductionCheckpointSink(store).checkpoint(
+        run_id="run-checkpoint",
+        task_id="os/task-one",
+        attempt=2,
+        attempt_id=ATTEMPT_ID,
+        sequence=1,
+        phase="initial_state",
+        run_root=run_root,
+        attempt_directory=attempt_directory,
+        required_state_kinds=frozenset({"manifest", "trajectory", "metadata"}),
+    )
+
+    assert f"attempt-0002-{ATTEMPT_ID}" in checkpoint.artifact_prefix
+    assert store.objects[legacy_remote] == b"legacy attempt-two bytes"
+    assert legacy_metadata.read_text() == "legacy attempt-one bytes"
+
+
+def test_checkpoint_same_uuid_is_concurrently_idempotent(tmp_path):
+    class ConcurrentStore(MemoryCheckpointStore):
+        def __init__(self):
+            super().__init__()
+            self.lock = threading.Lock()
+
+        def put_file_if_absent(self, local_path, remote_uri):
+            with self.lock:
+                super().put_file_if_absent(local_path, remote_uri)
+
+        def remote_sha256(self, remote_uri):
+            with self.lock:
+                return super().remote_sha256(remote_uri)
+
+    run_root = tmp_path / "run"
+    attempt_directory = run_root / ".staging" / "attempt"
+    attempt_directory.mkdir(parents=True)
+    (run_root / "manifest.json").write_text("{}")
+    (attempt_directory / "trajectory.jsonl").write_text("{}\n")
+    sink = StoreBackedProductionCheckpointSink(ConcurrentStore())
+
+    def checkpoint():
+        return sink.checkpoint(
+            run_id="run-checkpoint",
+            task_id="os/task-one",
+            attempt=1,
+            attempt_id=ATTEMPT_ID,
+            sequence=1,
+            phase="initial_state",
+            run_root=run_root,
+            attempt_directory=attempt_directory,
+            required_state_kinds=frozenset({"manifest", "trajectory", "metadata"}),
+        )
+
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        checkpoints = list(executor.map(lambda _: checkpoint(), range(32)))
+
+    assert len({item.artifact_prefix for item in checkpoints}) == 1
+    metadata = list((run_root / ".checkpoint-metadata").glob("*.json"))
+    assert len(metadata) == 1
+
+
+def test_run_attempt_retry_uses_a_fresh_immutable_uuid(tmp_path):
+    first_id = "42345678-1234-4234-8234-123456789abc"
+    second_id = "52345678-1234-4234-8234-123456789abc"
+    first_sink = FakeCheckpointSink(fail_phase="initial_state")
+    with pytest.raises(CheckpointFailure):
+        run_attempt(
+            manifest=_pilot_manifest(),
+            task_id=PILOT_TASK,
+            task_config=_task_config(),
+            agent=FakeAgent(),
+            env=FakeEnvironment(),
+            results_root=tmp_path,
+            checkpoint_sink=first_sink,
+            attempt_id_factory=lambda: first_id,
+        )
+
+    result = run_attempt(
+        manifest=_pilot_manifest(),
+        task_id=PILOT_TASK,
+        task_config=_task_config(),
+        agent=FakeAgent(),
+        env=FakeEnvironment(),
+        results_root=tmp_path,
+        checkpoint_sink=FakeCheckpointSink(),
+        attempt_id_factory=lambda: second_id,
+    )
+
+    first_attempt = next(
+        (tmp_path / _pilot_manifest().run_id / "tasks").rglob(
+            f"attempt-0001-{first_id}-*/attempt.json"
+        )
+    )
+    assert json.loads(first_attempt.read_text())["attempt_id"] == first_id
+    assert (
+        json.loads((result.directory / "attempt.json").read_text())["attempt_id"]
+        == second_id
+    )
+    assert result.directory.name.startswith(f"attempt-0002-{second_id}-")
 
 
 def test_run_root_manifest_creation_is_atomic_across_workers(tmp_path):
@@ -673,9 +894,7 @@ def test_run_attempt_does_not_delete_sibling_staging_directory(tmp_path):
         agent=FakeAgent(),
         env=FakeEnvironment(),
         results_root=tmp_path,
-        checkpoint_sink=StoreBackedProductionCheckpointSink(
-            MemoryCheckpointStore()
-        ),
+        checkpoint_sink=StoreBackedProductionCheckpointSink(MemoryCheckpointStore()),
     )
 
     assert sentinel.is_file()
@@ -695,9 +914,7 @@ def test_store_backed_sink_runs_all_production_checkpoints(tmp_path):
     )
 
     prefixes = {
-        uri.rsplit("/", 1)[0]
-        for uri in store.objects
-        if "/checkpoints/" in uri
+        uri.rsplit("/", 1)[0] for uri in store.objects if "/checkpoints/" in uri
     }
     assert len(prefixes) >= 4
     assert (result.directory / "checksums.json").exists()
@@ -707,12 +924,16 @@ def test_materialization_requires_clean_checkout_and_injects_actual_head(tmp_pat
     project = tmp_path / "project"
     project.mkdir()
     subprocess.run(["git", "init", "-q"], cwd=project, check=True)
-    subprocess.run(["git", "config", "user.email", "test@example.invalid"], cwd=project, check=True)
+    subprocess.run(
+        ["git", "config", "user.email", "test@example.invalid"], cwd=project, check=True
+    )
     subprocess.run(["git", "config", "user.name", "Test"], cwd=project, check=True)
     (project / "tracked").write_text("clean")
     subprocess.run(["git", "add", "tracked"], cwd=project, check=True)
     subprocess.run(["git", "commit", "-qm", "initial"], cwd=project, check=True)
-    head = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=project, text=True).strip()
+    head = subprocess.check_output(
+        ["git", "rev-parse", "HEAD"], cwd=project, text=True
+    ).strip()
     output = tmp_path / "generated" / "manifest.json"
 
     manifest = materialize_run_manifest(
@@ -777,8 +998,16 @@ def test_endpoint_and_runner_limits_are_exactly_compatible(monkeypatch, tmp_path
     manifest = _pilot_manifest()
     run = manifest.payload["run"]
     capabilities = manifest.payload["endpoint"]["capabilities"]
-    assert run["max_tokens"] == capabilities["max_output_tokens"] == ENDPOINT_MAX_OUTPUT_TOKENS
-    assert run["image_max"] == capabilities["max_images_per_request"] == ENDPOINT_MAX_IMAGES
+    assert (
+        run["max_tokens"]
+        == capabilities["max_output_tokens"]
+        == ENDPOINT_MAX_OUTPUT_TOKENS
+    )
+    assert (
+        run["image_max"]
+        == capabilities["max_images_per_request"]
+        == ENDPOINT_MAX_IMAGES
+    )
     assert run["history_policy"] == {
         "history_n": 4,
         "image_max": 5,
@@ -813,6 +1042,7 @@ def test_endpoint_and_runner_limits_are_exactly_compatible(monkeypatch, tmp_path
 
     incompatible = json.loads(json.dumps(manifest.payload))
     incompatible["endpoint"]["capabilities"]["max_output_tokens"] = 4096
+    _refresh_contract(incompatible)
     with pytest.raises(ValueError, match="capabilities|exactly match"):
         build_official_agent(
             tmp_path,
@@ -1018,7 +1248,9 @@ def test_approved_proposal_budget_gate_fails_closed_and_drains_at_threshold(tmp_
                 ),
             ]
 
-    state = sample_and_decide_budget(proposal=proposal, ledger=ledger, sampler=Sampler())
+    state = sample_and_decide_budget(
+        proposal=proposal, ledger=ledger, sampler=Sampler()
+    )
     assert state.decision is BudgetDecision.STOP_NEW_LEASES
     assert state.accept_new_leases is False
     assert state.drain is True
@@ -1325,6 +1557,15 @@ def test_checkpoint_failure_fails_closed_and_persists_attempt_ledger(tmp_path):
 class FailingAgent(FakeAgent):
     def predict(self, instruction, observation):
         del instruction, observation
+        self.last_model_request_telemetry = {
+            "request_id": "request-1",
+            "replica_id": "replica-7",
+            "duration_seconds": 420.0,
+            "timeout_seconds": 420.0,
+            "http_status": None,
+            "outcome": "timeout",
+            "exception_type": "TimeoutError",
+        }
         raise TimeoutError("fake endpoint timeout")
 
 
@@ -1341,6 +1582,9 @@ def test_failure_taxonomy_is_persisted(tmp_path):
     attempt = json.loads((result.directory / "attempt.json").read_text())
     assert result.terminal_state is TerminalState.MODEL_ERROR
     assert attempt["error"]["phase"] == "model"
+    assert attempt["error"]["model_request"]["replica_id"] == "replica-7"
+    assert attempt["error"]["model_request"]["duration_seconds"] == 420.0
+    assert attempt["error"]["model_request"]["http_status"] is None
     assert classify_failure("invalid_action") is TerminalState.INVALID_ACTION
     assert classify_failure("evaluator") is TerminalState.EVALUATOR_ERROR
     assert classify_failure("reset") is TerminalState.INFRASTRUCTURE_FAILURE

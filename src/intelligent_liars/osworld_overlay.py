@@ -24,6 +24,8 @@ from intelligent_liars.osworld_cloud import (
     require_safe_lifecycle_transition,
 )
 from intelligent_liars.qwen3vl_osworld import (
+    ENDPOINT_MAX_RETRIES,
+    ENDPOINT_READ_TIMEOUT_SECONDS,
     MAX_CORRECTIONS_PER_OBSERVATION,
     MAX_INVALID_ACTIONS_PER_TASK,
     QWEN3VL_ACTION_PARSER,
@@ -59,12 +61,17 @@ MODEL_ID = "Qwen/Qwen3-VL-8B-Thinking"
 MODEL_REVISION = "92f3c4b4feadd3a016ef468d103bb5f58b2a2c6b"
 ENDPOINT_URL_ENV = "QWEN_ENDPOINT_URL"
 ENDPOINT_API_KEY_ENV = "QWEN_ENDPOINT_API_KEY"
+ENDPOINT_REPLICA_ID_ENV = "QWEN_ENDPOINT_REPLICA_ID"
 OFFICIAL_GRID_PATH = "evaluation_examples/test_nogdrive.json"
-OFFICIAL_GRID_SHA256 = "fcb9497e93a8986407345d3012c872c9c2fed253420730fbea64ccfcace67dbb"
+OFFICIAL_GRID_SHA256 = (
+    "fcb9497e93a8986407345d3012c872c9c2fed253420730fbea64ccfcace67dbb"
+)
 OFFICIAL_SMALL_PATH = "evaluation_examples/test_small.json"
-OFFICIAL_SMALL_SHA256 = "bb29275171b78728d71825b125af311d74e66bb2a6d693c45c497d380b1fc640"
+OFFICIAL_SMALL_SHA256 = (
+    "bb29275171b78728d71825b125af311d74e66bb2a6d693c45c497d380b1fc640"
+)
 STRICT_ACTION_PARSER_SHA256 = (
-    "93b4dc7e0fc2b70c080544ca7aef015cd6cba35814532406eb6f5c3e4ae7dc92"
+    "c4170da6236f0c0cffd38e8ffa50ec41b81c8fddaa126374626f5dcf21f181de"
 )
 ENDPOINT_PROFILE = "qwen3-vl-8b-thinking-bf16-48gb-v1"
 ENDPOINT_MAX_OUTPUT_TOKENS = 32768
@@ -78,6 +85,15 @@ FIRST_TRANCHE_REQUIRED_ARTIFACTS = frozenset(
         "screenshots/initial.png",
     }
 )
+EXECUTION_CONTRACT_FIELDS = (
+    "acceptance_gates",
+    "artifacts",
+    "desktop",
+    "endpoint",
+    "model",
+    "osworld",
+    "run",
+)
 
 _THINK_RE = re.compile(r"^\s*<think>\s*(.*?)\s*</think>\s*(.*)$", re.DOTALL)
 
@@ -85,7 +101,9 @@ _THINK_RE = re.compile(r"^\s*<think>\s*(.*?)\s*</think>\s*(.*)$", re.DOTALL)
 class Agent(Protocol):
     def reset(self, logger: logging.Logger | None = None, **kwargs: Any) -> None: ...
 
-    def predict(self, instruction: str, observation: Mapping[str, Any]) -> tuple[str, list[str]]: ...
+    def predict(
+        self, instruction: str, observation: Mapping[str, Any]
+    ) -> tuple[str, list[str]]: ...
 
 
 class Controller(Protocol):
@@ -102,7 +120,9 @@ class Environment(Protocol):
 
     def _get_obs(self) -> Mapping[str, Any]: ...
 
-    def step(self, action: str, sleep_after_execution: float) -> tuple[Mapping[str, Any], Any, bool, Any]: ...
+    def step(
+        self, action: str, sleep_after_execution: float
+    ) -> tuple[Mapping[str, Any], Any, bool, Any]: ...
 
     def evaluate(self) -> Any: ...
 
@@ -154,6 +174,7 @@ class ApprovedProposal:
             Decimal("0"),
         )
 
+
 @dataclass(frozen=True)
 class ExecutionBudgetState:
     decision: BudgetDecision
@@ -189,6 +210,7 @@ class ProductionCheckpointSink(Protocol):
         run_id: str,
         task_id: str,
         attempt: int,
+        attempt_id: str,
         sequence: int,
         phase: str,
         run_root: Path,
@@ -217,11 +239,13 @@ def export_incremental_checkpoint(
     run_id: str,
     task_id: str,
     attempt: int,
+    attempt_id: str,
     sequence: int,
     artifacts: Sequence[CheckpointArtifact],
     resumable_manifest_path: Path,
     store: AppendOnlyCheckpointStore,
 ) -> DurableCheckpoint:
+    attempt_id = _canonical_attempt_id(attempt_id)
     if not run_id or not task_id or attempt < 1 or sequence < 1:
         raise ExecutionBlockedError(
             "checkpoint requires run/task identity and positive attempt/sequence"
@@ -230,7 +254,7 @@ def export_incremental_checkpoint(
         raise ExecutionBlockedError("checkpoint requires incremental state artifacts")
     prefix = (
         f"s3://{ARTIFACT_BUCKET}/runs/{run_id}/tasks/{_safe_task_name(task_id)}/"
-        f"attempt-{attempt:04d}/checkpoints/{sequence:08d}/"
+        f"attempt-{attempt:04d}-{attempt_id}/checkpoints/{sequence:08d}/"
     )
     all_artifacts = (
         CheckpointArtifact(
@@ -255,9 +279,22 @@ def export_incremental_checkpoint(
         paths.add(artifact.relative_path)
         local_hash = file_sha256(artifact.local_path)
         remote_uri = prefix + artifact.relative_path
-        store.put_file_if_absent(artifact.local_path, remote_uri)
-        if store.remote_sha256(remote_uri).lower() != local_hash:
-            raise ExecutionBlockedError("checkpoint remote SHA-256 verification failed")
+        try:
+            store.put_file_if_absent(artifact.local_path, remote_uri)
+        except Exception as collision:
+            try:
+                existing_hash = store.remote_sha256(remote_uri).lower()
+            except Exception:
+                raise collision
+            if existing_hash != local_hash:
+                raise ExecutionBlockedError(
+                    "checkpoint append-only collision has different bytes"
+                ) from collision
+        remote_hash = store.remote_sha256(remote_uri).lower()
+        if remote_hash != local_hash:
+            raise ExecutionBlockedError(
+                "checkpoint append-only collision has different bytes"
+            )
         checksums[artifact.relative_path] = local_hash
         state_kinds.add(artifact.state_kind)
     return DurableCheckpoint(
@@ -281,6 +318,7 @@ class StoreBackedProductionCheckpointSink:
         run_id: str,
         task_id: str,
         attempt: int,
+        attempt_id: str,
         sequence: int,
         phase: str,
         run_root: Path,
@@ -306,21 +344,20 @@ class StoreBackedProductionCheckpointSink:
         actual_kinds = {"metadata"}
         for state_kind in sorted(required_state_kinds - {"metadata"}):
             expected_files = candidates.get(state_kind, ())
-            files = tuple(
-                path
-                for path in expected_files
-                if path.is_file()
-            )
+            files = tuple(path for path in expected_files if path.is_file())
             if not files or (
-                state_kind == "result"
-                and len(files) != len(expected_files)
+                state_kind == "result" and len(files) != len(expected_files)
             ):
                 raise CheckpointFailure(
                     f"required checkpoint state has no files: {state_kind}"
                 )
             actual_kinds.add(state_kind)
             for path in files:
-                base = run_root if state_kind in {"manifest", "attempt_ledger"} else attempt_directory
+                base = (
+                    run_root
+                    if state_kind in {"manifest", "attempt_ledger"}
+                    else attempt_directory
+                )
                 artifacts.append(
                     CheckpointArtifact(
                         state_kind=state_kind,
@@ -332,18 +369,23 @@ class StoreBackedProductionCheckpointSink:
                         local_path=path,
                     )
                 )
+        attempt_id = _canonical_attempt_id(attempt_id)
         metadata_path = (
             run_root
             / ".checkpoint-metadata"
-            / f"{_safe_task_name(task_id)}-{attempt:04d}-{sequence:08d}.json"
+            / (
+                f"{_safe_task_name(task_id)}-{attempt:04d}-{attempt_id}-"
+                f"{sequence:08d}.json"
+            )
         )
-        _write_json_new(
+        _write_json_idempotent(
             metadata_path,
             {
                 "schema_version": 1,
                 "run_id": run_id,
                 "task_id": task_id,
                 "attempt": attempt,
+                "attempt_id": attempt_id,
                 "sequence": sequence,
                 "phase": phase,
                 "required_state_kinds": sorted(required_state_kinds),
@@ -360,12 +402,16 @@ class StoreBackedProductionCheckpointSink:
             run_id=run_id,
             task_id=task_id,
             attempt=attempt,
+            attempt_id=attempt_id,
             sequence=sequence,
             artifacts=artifacts,
             resumable_manifest_path=metadata_path,
             store=self.store,
         )
-        if required_state_kinds - checkpoint.state_kinds or checkpoint.state_kinds != frozenset(actual_kinds):
+        if (
+            required_state_kinds - checkpoint.state_kinds
+            or checkpoint.state_kinds != frozenset(actual_kinds)
+        ):
             raise CheckpointFailure("checkpoint state kinds do not match real files")
         return checkpoint
 
@@ -381,7 +427,9 @@ def load_run_template(path: Path) -> dict[str, Any]:
     try:
         payload = json.loads(path.read_text())
     except (OSError, json.JSONDecodeError) as exc:
-        raise ManifestValidationError(f"Cannot load run template {path}: {exc}") from exc
+        raise ManifestValidationError(
+            f"Cannot load run template {path}: {exc}"
+        ) from exc
     if not isinstance(payload, dict):
         raise ManifestValidationError("run template root must be an object")
     if payload.get("template_schema_version") != 1:
@@ -389,7 +437,9 @@ def load_run_template(path: Path) -> dict[str, Any]:
     if payload.get("template_kind") != "immutable-osworld-run-template":
         raise ManifestValidationError("unknown run template kind")
     if "repository" in payload or "schema_version" in payload:
-        raise ManifestValidationError("run templates must not claim a repository commit")
+        raise ManifestValidationError(
+            "run templates must not claim a repository commit"
+        )
     return payload
 
 
@@ -456,11 +506,12 @@ def load_approved_proposal(path: Path, manifest: FrozenRunManifest) -> ApprovedP
     except (OSError, json.JSONDecodeError) as exc:
         raise ExecutionBlockedError(f"cannot load approved proposal: {exc}") from exc
     if payload.get("schema_version") != 1 or payload.get("approved") is not True:
-        raise ExecutionBlockedError("proposal must be schema version 1 and explicitly approved")
+        raise ExecutionBlockedError(
+            "proposal must be schema version 1 and explicitly approved"
+        )
     proposal_hash = payload.get("proposal_hash")
-    if (
-        not isinstance(proposal_hash, str)
-        or proposal_hash != proposal_content_sha256(payload)
+    if not isinstance(proposal_hash, str) or proposal_hash != proposal_content_sha256(
+        payload
     ):
         raise ExecutionBlockedError("approved proposal content hash mismatch")
     approval_id = payload.get("approval_id")
@@ -480,7 +531,9 @@ def load_approved_proposal(path: Path, manifest: FrozenRunManifest) -> ApprovedP
         raise ExecutionBlockedError("approved proposal manifest hash does not match")
     resources = payload.get("resources")
     if not isinstance(resources, list) or not resources:
-        raise ExecutionBlockedError("approved proposal must list concrete resources and rates")
+        raise ExecutionBlockedError(
+            "approved proposal must list concrete resources and rates"
+        )
     required_resource_fields = {
         "provider",
         "resource",
@@ -489,8 +542,7 @@ def load_approved_proposal(path: Path, manifest: FrozenRunManifest) -> ApprovedP
         "estimated_hourly_rate_usd",
     }
     if any(
-        not isinstance(resource, dict)
-        or required_resource_fields - resource.keys()
+        not isinstance(resource, dict) or required_resource_fields - resource.keys()
         for resource in resources
     ):
         raise ExecutionBlockedError("approved proposal resources are incomplete")
@@ -508,10 +560,9 @@ def load_approved_proposal(path: Path, manifest: FrozenRunManifest) -> ApprovedP
     except (TypeError, ValueError) as exc:
         raise ExecutionBlockedError(f"invalid approved resource: {exc}") from exc
     provider_budget_payload = payload.get("provider_budgets")
-    if (
-        not isinstance(provider_budget_payload, dict)
-        or set(provider_budget_payload) != {"aws", "vast"}
-    ):
+    if not isinstance(provider_budget_payload, dict) or set(
+        provider_budget_payload
+    ) != {"aws", "vast"}:
         raise ExecutionBlockedError(
             "approved proposal must include separate aws and vast provider_budgets"
         )
@@ -566,7 +617,9 @@ def load_approved_proposal(path: Path, manifest: FrozenRunManifest) -> ApprovedP
         raise ExecutionBlockedError(f"invalid approved proposal: {exc}") from exc
     aws_ceiling = AWS_STEP_CAP_HARD_STOP_USD.get(manifest.step_cap)
     if aws_ceiling is None:
-        raise ExecutionBlockedError("manifest step cap has no frozen AWS provider ceiling")
+        raise ExecutionBlockedError(
+            "manifest step cap has no frozen AWS provider ceiling"
+        )
     provider_ceilings = {
         "aws": aws_ceiling,
         "vast": VAST_EVALUATION_HARD_STOP_USD,
@@ -589,7 +642,9 @@ def load_approved_proposal(path: Path, manifest: FrozenRunManifest) -> ApprovedP
     if manifest.step_cap == 100 and not policy.may_promote_to_100_steps(
         proposal.projected_total_usd
     ):
-        raise ExecutionBlockedError("100-step projected total must be strictly below $60")
+        raise ExecutionBlockedError(
+            "100-step projected total must be strictly below $60"
+        )
     if (
         policy.combined_decision(
             proposal.baseline_envelope_usd,
@@ -597,7 +652,9 @@ def load_approved_proposal(path: Path, manifest: FrozenRunManifest) -> ApprovedP
         )
         is BudgetDecision.HARD_STOP
     ):
-        raise ExecutionBlockedError("approved proposal reaches the $140 combined envelope")
+        raise ExecutionBlockedError(
+            "approved proposal reaches the $140 combined envelope"
+        )
     return proposal
 
 
@@ -664,8 +721,13 @@ def sample_and_decide_budget(
     )
 
 
-def _require_frozen_execution_contract(manifest: FrozenRunManifest) -> Mapping[str, Any]:
+def _require_frozen_execution_contract(
+    manifest: FrozenRunManifest,
+) -> Mapping[str, Any]:
     payload = manifest.payload
+    contract = {field: payload[field] for field in EXECUTION_CONTRACT_FIELDS}
+    if payload.get("contract_sha256") != stable_sha256(contract):
+        raise ValueError("execution contract SHA-256 does not match frozen fields")
     if payload["osworld"]["commit"] != OSWORLD_COMMIT:
         raise ValueError(f"osworld.commit must be {OSWORLD_COMMIT}")
     model = payload["model"]
@@ -687,20 +749,21 @@ def _require_frozen_execution_contract(manifest: FrozenRunManifest) -> Mapping[s
         "endpoint_model",
         "screenshot_transform",
         "retry_policy",
+        "endpoint_read_timeout_seconds",
+        "endpoint_max_retries",
     }
     missing = sorted(required - run.keys())
     if missing:
         raise ValueError(f"run manifest is missing frozen fields: {', '.join(missing)}")
     endpoint = payload.get("endpoint", {})
-    if {
-        key: endpoint.get(key)
-        for key in ("type", "url_env", "api_key_env")
-    } != {
+    if {key: endpoint.get(key) for key in ("type", "url_env", "api_key_env")} != {
         "type": "authenticated-openai-compatible",
         "url_env": ENDPOINT_URL_ENV,
         "api_key_env": ENDPOINT_API_KEY_ENV,
     }:
-        raise ValueError("endpoint must use only the frozen authenticated environment-variable contract")
+        raise ValueError(
+            "endpoint must use only the frozen authenticated environment-variable contract"
+        )
     capabilities = endpoint.get("capabilities")
     expected_capabilities = {
         "deployment_profile": ENDPOINT_PROFILE,
@@ -710,7 +773,14 @@ def _require_frozen_execution_contract(manifest: FrozenRunManifest) -> Mapping[s
         "max_images_per_request": ENDPOINT_MAX_IMAGES,
     }
     if capabilities != expected_capabilities:
-        raise ValueError("endpoint capabilities do not match the reviewed BF16 48GB profile")
+        raise ValueError(
+            "endpoint capabilities do not match the reviewed BF16 48GB profile"
+        )
+    if (
+        run["endpoint_read_timeout_seconds"] != ENDPOINT_READ_TIMEOUT_SECONDS
+        or run["endpoint_max_retries"] != ENDPOINT_MAX_RETRIES
+    ):
+        raise ValueError("endpoint timeout policy does not match the reviewed bounds")
     history = run.get("history_policy", {})
     if (
         run["max_tokens"] != capabilities["max_output_tokens"]
@@ -721,12 +791,19 @@ def _require_frozen_execution_contract(manifest: FrozenRunManifest) -> Mapping[s
         or run["image_max"] != 5
         or history.get("implementation") != "qwen3vl-rolling-four-plus-current"
     ):
-        raise ValueError("runner history/image/token limits do not exactly match endpoint capabilities")
+        raise ValueError(
+            "runner history/image/token limits do not exactly match endpoint capabilities"
+        )
     provider = payload.get("desktop", {})
-    if provider.get("provider") != "aws" or provider.get("implementation") != "official-osworld":
+    if (
+        provider.get("provider") != "aws"
+        or provider.get("implementation") != "official-osworld"
+    ):
         raise ValueError("desktop provider must be official OSWorld AWS")
     if provider.get("client_password_env") != "OSWORLD_CLIENT_PASSWORD":
-        raise ValueError("AWS client password must be represented only by OSWORLD_CLIENT_PASSWORD")
+        raise ValueError(
+            "AWS client password must be represented only by OSWORLD_CLIENT_PASSWORD"
+        )
     if run["agent_class"] != "mm_agents.qwen3vl_agent.Qwen3VLAgent@osworld-pinned":
         raise ValueError("agent class must be the pinned Qwen-authored Qwen3VLAgent")
     if run["agent_source_sha256"] != QWEN3VL_AGENT_SOURCE_SHA256:
@@ -741,7 +818,9 @@ def _require_frozen_execution_contract(manifest: FrozenRunManifest) -> Mapping[s
         != MAX_CORRECTIONS_PER_OBSERVATION
         or retry.get("invalid_actions_per_task") != MAX_INVALID_ACTIONS_PER_TASK
     ):
-        raise ValueError("invalid action correction bounds do not match the reviewed policy")
+        raise ValueError(
+            "invalid action correction bounds do not match the reviewed policy"
+        )
     return run
 
 
@@ -781,11 +860,70 @@ def require_first_tranche_pass(
         or any(character not in "0123456789abcdef" for character in checksum)
         for checksum in hashes
     ):
-        raise ExecutionBlockedError("first tranche artifacts require lowercase SHA-256 hashes")
+        raise ExecutionBlockedError(
+            "first tranche artifacts require lowercase SHA-256 hashes"
+        )
     if stable_sha256(dict(result.artifact_checksums)) != result.bundle_sha256:
-        raise ExecutionBlockedError("first tranche bundle hash does not match its checksums")
+        raise ExecutionBlockedError(
+            "first tranche bundle hash does not match its checksums"
+        )
     if remote_artifact_verified is not True:
         raise ExecutionBlockedError("first tranche artifact is not remotely verified")
+
+
+def require_checkpoint_and_action_canary(
+    manifest: FrozenRunManifest,
+    result: AttemptResult,
+    *,
+    remote_artifact_verified: bool,
+) -> None:
+    _require_frozen_execution_contract(manifest)
+    policy = manifest.payload.get("acceptance_gates", {}).get("pre_wave_canary")
+    if policy != {
+        "required": True,
+        "checkpoint_remote_verified": True,
+        "exactly_one_validated_action": True,
+    }:
+        raise ExecutionBlockedError("pre-wave canary policy is not frozen")
+    if result.terminal_state not in {
+        TerminalState.SUCCESS,
+        TerminalState.TASK_FAILURE,
+    }:
+        raise ExecutionBlockedError("pre-wave canary has an invalid terminal state")
+    if remote_artifact_verified is not True:
+        raise ExecutionBlockedError(
+            "pre-wave canary checkpoint is not remotely verified"
+        )
+    attempt_path = result.directory / "attempt.json"
+    trajectory_path = result.directory / "trajectory.jsonl"
+    if not attempt_path.is_file() or not trajectory_path.is_file():
+        raise ExecutionBlockedError("pre-wave canary artifacts are incomplete")
+    attempt = json.loads(attempt_path.read_text())
+    attempt_id = _canonical_attempt_id(attempt.get("attempt_id"))
+    if f"-{attempt_id}-" not in result.directory.name:
+        raise ExecutionBlockedError("pre-wave canary attempt identity is inconsistent")
+    transitions = [
+        json.loads(line)
+        for line in trajectory_path.read_text().splitlines()
+        if line.strip()
+    ]
+    validated = [
+        event
+        for event in transitions
+        if event.get("event") == "model_transition"
+        and event.get("validated_action") is not None
+        and len(event.get("parsed_actions", ())) == 1
+    ]
+    if len(validated) != 1:
+        raise ExecutionBlockedError(
+            "pre-wave canary must execute exactly one validated action"
+        )
+    for relative_path in ("attempt.json", "trajectory.jsonl"):
+        expected = result.artifact_checksums.get(relative_path)
+        if expected != file_sha256(result.directory / relative_path):
+            raise ExecutionBlockedError("pre-wave canary checksum verification failed")
+    if stable_sha256(dict(result.artifact_checksums)) != result.bundle_sha256:
+        raise ExecutionBlockedError("pre-wave canary bundle verification failed")
 
 
 def require_five_task_tranche_lease(
@@ -796,6 +934,11 @@ def require_five_task_tranche_lease(
     remote_artifact_verified: bool,
 ) -> None:
     require_first_tranche_pass(
+        first_manifest,
+        first_result,
+        remote_artifact_verified=remote_artifact_verified,
+    )
+    require_checkpoint_and_action_canary(
         first_manifest,
         first_result,
         remote_artifact_verified=remote_artifact_verified,
@@ -828,7 +971,9 @@ def verify_external_checkout(checkout: Path, manifest: FrozenRunManifest) -> Non
         raise ValueError(f"OSWorld checkout HEAD is {head}, expected {OSWORLD_COMMIT}")
     qwen3_agent = checkout / QWEN3VL_AGENT_PATH
     if file_sha256(qwen3_agent) != QWEN3VL_AGENT_SOURCE_SHA256:
-        raise ValueError("Qwen3VLAgent source checksum does not match the pinned commit")
+        raise ValueError(
+            "Qwen3VLAgent source checksum does not match the pinned commit"
+        )
     grid = checkout / OFFICIAL_GRID_PATH
     if file_sha256(grid) != OFFICIAL_GRID_SHA256:
         raise ValueError("test_nogdrive.json checksum does not match the pinned commit")
@@ -857,10 +1002,7 @@ def verify_external_checkout(checkout: Path, manifest: FrozenRunManifest) -> Non
     for task_id in manifest.task_ids:
         domain, _, example_id = task_id.partition("/")
         config_path = (
-            checkout
-            / "evaluation_examples/examples"
-            / domain
-            / f"{example_id}.json"
+            checkout / "evaluation_examples/examples" / domain / f"{example_id}.json"
         )
         if file_sha256(config_path) != expected_configs.get(task_id):
             raise ValueError(f"task config checksum does not match for {task_id}")
@@ -919,13 +1061,16 @@ def build_official_agent(
         max_corrections_per_observation=run["retry_policy"][
             "invalid_action_corrections_per_observation"
         ],
-        max_invalid_actions_per_task=run["retry_policy"][
-            "invalid_actions_per_task"
-        ],
+        max_invalid_actions_per_task=run["retry_policy"]["invalid_actions_per_task"],
+        request_timeout_seconds=run["endpoint_read_timeout_seconds"],
+        endpoint_max_retries=run["endpoint_max_retries"],
+        replica_id=environment.get(ENDPOINT_REPLICA_ID_ENV, "unassigned"),
     )
 
 
-def build_official_aws_environment(checkout: Path, manifest: FrozenRunManifest) -> Environment:
+def build_official_aws_environment(
+    checkout: Path, manifest: FrozenRunManifest
+) -> Environment:
     _require_frozen_execution_contract(manifest)
     client_password = os.environ.get("OSWORLD_CLIENT_PASSWORD")
     if not client_password:
@@ -959,6 +1104,17 @@ def _safe_task_name(task_id: str) -> str:
     return f"{readable[:80]}-{stable_sha256(task_id)[:12]}"
 
 
+def _canonical_attempt_id(attempt_id: str) -> str:
+    try:
+        parsed = uuid.UUID(attempt_id)
+    except (AttributeError, TypeError, ValueError) as exc:
+        raise ExecutionBlockedError("attempt_id must be a canonical UUID") from exc
+    canonical = str(parsed)
+    if attempt_id != canonical:
+        raise ExecutionBlockedError("attempt_id must be a canonical UUID")
+    return canonical
+
+
 def _write_new(path: Path, data: bytes) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)
@@ -969,7 +1125,31 @@ def _write_new(path: Path, data: bytes) -> None:
 
 
 def _write_json_new(path: Path, payload: Any) -> None:
-    _write_new(path, (json.dumps(payload, indent=2, sort_keys=True, ensure_ascii=False) + "\n").encode())
+    _write_new(
+        path,
+        (
+            json.dumps(payload, indent=2, sort_keys=True, ensure_ascii=False) + "\n"
+        ).encode(),
+    )
+
+
+def _write_json_idempotent(path: Path, payload: Any) -> None:
+    data = (
+        json.dumps(payload, indent=2, sort_keys=True, ensure_ascii=False) + "\n"
+    ).encode()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.parent / f".{path.name}-{uuid.uuid4()}.tmp"
+    _write_new(temporary, data)
+    try:
+        try:
+            os.link(temporary, path)
+        except FileExistsError as exc:
+            if path.read_bytes() != data:
+                raise CheckpointFailure(
+                    "checkpoint metadata collision has different bytes"
+                ) from exc
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
 def _append_event(path: Path, payload: Mapping[str, Any]) -> None:
@@ -1007,15 +1187,18 @@ def _response_boundary_evidence(
         return canonical_response, {
             "normalization": "unavailable",
             "raw_sha256": hashlib.sha256(canonical_response.encode()).hexdigest(),
-            "canonical_sha256": hashlib.sha256(
-                canonical_response.encode()
-            ).hexdigest(),
+            "canonical_sha256": hashlib.sha256(canonical_response.encode()).hexdigest(),
         }
     return raw_content, {
         "normalization": normalization,
         "raw_sha256": hashlib.sha256(raw_content.encode()).hexdigest(),
         "canonical_sha256": hashlib.sha256(canonical_response.encode()).hexdigest(),
     }
+
+
+def _model_request_telemetry(agent: Agent) -> Mapping[str, Any] | None:
+    telemetry = getattr(agent, "last_model_request_telemetry", None)
+    return dict(telemetry) if isinstance(telemetry, Mapping) else None
 
 
 def classify_failure(phase: str, exc: BaseException | None = None) -> TerminalState:
@@ -1078,6 +1261,7 @@ def run_attempt(
     checkpoint_sink: ProductionCheckpointSink,
     sleep_after_execution: float = 0.0,
     clock: Callable[[], str] = now_iso,
+    attempt_id_factory: Callable[[], uuid.UUID | str] = uuid.uuid4,
 ) -> AttemptResult:
     _require_frozen_execution_contract(manifest)
     if task_id not in manifest.task_ids:
@@ -1085,12 +1269,19 @@ def run_attempt(
     run_root = _ensure_run_root(results_root, manifest)
     ledger = AttemptLedger(run_root / "attempts.jsonl", manifest.run_id)
     attempt_number = 1 + sum(event["task_id"] == task_id for event in ledger.events())
-    staging = run_root / ".staging" / f"{_safe_task_name(task_id)}-{attempt_number:04d}-{os.getpid()}"
+    attempt_id = _canonical_attempt_id(str(attempt_id_factory()))
+    staging = (
+        run_root
+        / ".staging"
+        / f"{_safe_task_name(task_id)}-{attempt_number:04d}-{attempt_id}"
+    )
     staging.mkdir(parents=True, exist_ok=False)
     trajectory = staging / "trajectory.jsonl"
     log_path = staging / "runtime.log"
     recording_path = staging / "recording.mp4"
-    logger = logging.getLogger(f"osworld.overlay.{manifest.run_id}.{_safe_task_name(task_id)}")
+    logger = logging.getLogger(
+        f"osworld.overlay.{manifest.run_id}.{_safe_task_name(task_id)}"
+    )
     logger.setLevel(logging.INFO)
     handler = logging.FileHandler(log_path, encoding="utf-8")
     logger.addHandler(handler)
@@ -1118,6 +1309,7 @@ def run_attempt(
                 run_id=manifest.run_id,
                 task_id=task_id,
                 attempt=attempt_number,
+                attempt_id=attempt_id,
                 sequence=checkpoint_sequence,
                 phase=phase_name,
                 run_root=run_root,
@@ -1139,12 +1331,14 @@ def run_attempt(
             raise CheckpointFailure(
                 f"production checkpoint failed at {phase_name}: {exc}"
             ) from exc
+
     try:
         _append_event(
             trajectory,
             {
                 "event": "attempt_started",
                 "attempt": attempt_number,
+                "attempt_id": attempt_id,
                 "run_id": manifest.run_id,
                 "task_id": task_id,
                 "instruction": task_config["instruction"],
@@ -1174,9 +1368,7 @@ def run_attempt(
         checkpoint(
             "initial_state",
             staging,
-            frozenset(
-                {"manifest", "trajectory", "screenshots", "logs", "metadata"}
-            ),
+            frozenset({"manifest", "trajectory", "screenshots", "logs", "metadata"}),
         )
         done = False
         current_screenshot_ref = "screenshots/initial.png"
@@ -1204,6 +1396,7 @@ def run_attempt(
                     "raw_merged_response": parts.raw_merged,
                     "raw_endpoint_response": raw_endpoint_response,
                     "response_boundary": boundary_evidence,
+                    "model_request": _model_request_telemetry(agent),
                     "reasoning": parts.reasoning,
                     "final_content": parts.final_content,
                     "parsed_actions": list(actions),
@@ -1214,11 +1407,7 @@ def run_attempt(
                     ),
                     "retry": {
                         "decision_attempt": step,
-                        "classification": (
-                            "invalid_action"
-                            if not actions
-                            else "none"
-                        ),
+                        "classification": ("invalid_action" if not actions else "none"),
                     },
                     "pre_screenshot": current_screenshot_ref,
                     "timestamp": predicted_finished_at,
@@ -1226,9 +1415,10 @@ def run_attempt(
             )
             if not actions:
                 phase = "invalid_action"
-                retryable = bool(
-                    getattr(agent, "last_invalid_action_retryable", False)
-                ) and step < manifest.step_cap
+                retryable = (
+                    bool(getattr(agent, "last_invalid_action_retryable", False))
+                    and step < manifest.step_cap
+                )
                 _append_event(
                     trajectory,
                     {
@@ -1250,11 +1440,16 @@ def run_attempt(
                 invalid_action_exhausted = True
                 break
             for action_index, action in enumerate(actions, start=1):
-                pre_path = staging / f"screenshots/step_{step:04d}_action_{action_index:02d}_pre.png"
+                pre_path = (
+                    staging
+                    / f"screenshots/step_{step:04d}_action_{action_index:02d}_pre.png"
+                )
                 _write_new(pre_path, bytes(observation["screenshot"]))
                 phase = "execution"
                 execution_started_at = clock()
-                post_observation, reward, done, info = env.step(action, sleep_after_execution)
+                post_observation, reward, done, info = env.step(
+                    action, sleep_after_execution
+                )
                 post_path = staging / (
                     f"screenshots/step_{step:04d}_action_{action_index:02d}_post.png"
                 )
@@ -1272,6 +1467,7 @@ def run_attempt(
                         "raw_merged_response": parts.raw_merged,
                         "raw_endpoint_response": raw_endpoint_response,
                         "response_boundary": boundary_evidence,
+                        "model_request": _model_request_telemetry(agent),
                         "reasoning": parts.reasoning,
                         "final_content": parts.final_content,
                         "parsed_actions": list(actions),
@@ -1338,6 +1534,8 @@ def run_attempt(
             in {TerminalState.MODEL_ERROR, TerminalState.INFRASTRUCTURE_FAILURE},
             "timestamp": clock(),
         }
+        if phase == "model":
+            error_payload["model_request"] = _model_request_telemetry(agent)
         _append_event(trajectory, {"event": "error", **error_payload})
         logger.error("%s", traceback.format_exc())
         if phase != "evaluator":
@@ -1409,6 +1607,7 @@ def run_attempt(
         staging / "attempt.json",
         {
             "attempt": attempt_number,
+            "attempt_id": attempt_id,
             "run_id": manifest.run_id,
             "task_id": task_id,
             "started_at": started_at,
@@ -1429,11 +1628,13 @@ def run_attempt(
         run_root
         / "tasks"
         / _safe_task_name(task_id)
-        / f"attempt-{attempt_number:04d}-{bundle_hash}"
+        / f"attempt-{attempt_number:04d}-{attempt_id}-{bundle_hash}"
     )
     final_directory.parent.mkdir(parents=True, exist_ok=True)
     if final_directory.exists():
-        raise LedgerValidationError("content-addressed attempt directory already exists")
+        raise LedgerValidationError(
+            "content-addressed attempt directory already exists"
+        )
     os.rename(staging, final_directory)
     ledger.append(
         TaskAttempt(
@@ -1490,13 +1691,14 @@ def export_attempt_before_teardown(
         result.bundle_sha256,
     )
     if remote_sha256.lower() != result.bundle_sha256.lower():
-        raise LedgerValidationError("local and remote attempt bundle SHA-256 hashes differ")
+        raise LedgerValidationError(
+            "local and remote attempt bundle SHA-256 hashes differ"
+        )
     artifact_manifest = result.directory.parents[2] / "artifact_manifest.jsonl"
     existing = []
     if artifact_manifest.exists():
         existing = [
-            json.loads(line)
-            for line in artifact_manifest.read_text().splitlines()
+            json.loads(line) for line in artifact_manifest.read_text().splitlines()
         ]
     artifact_id = f"{task_id}:{result.directory.name}"
     if any(event.get("artifact_id") == artifact_id for event in existing):

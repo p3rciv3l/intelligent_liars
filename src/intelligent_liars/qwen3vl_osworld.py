@@ -4,8 +4,10 @@ import hashlib
 import json
 import math
 import re
+import time
+import uuid
 from dataclasses import dataclass
-from typing import Any, Mapping
+from typing import Any, Callable, Mapping
 
 
 QWEN3VL_AGENT_SOURCE_SHA256 = (
@@ -17,11 +19,19 @@ QWEN3VL_ACTION_PARSER = (
 )
 MAX_CORRECTIONS_PER_OBSERVATION = 2
 MAX_INVALID_ACTIONS_PER_TASK = 10
+ENDPOINT_READ_TIMEOUT_SECONDS = 420.0
+ENDPOINT_MAX_RETRIES = 0
 
 _RESPONSE_RE = re.compile(
     r"\A\s*(?:<think>.*?</think>\s*)?"
     r"Action:\s*(?P<description>[^\r\n]+)\s*"
     r"<tool_call>\s*(?P<call>.*?)\s*</tool_call>\s*\Z",
+    re.DOTALL,
+)
+_RAW_REASONING_ORPHAN_CLOSE_RE = re.compile(
+    r"\A(?P<reasoning>.+?)\s*</think>\s*"
+    r"(?P<action>Action:\s*[^\r\n]+\s*"
+    r"<tool_call>\s*.*?\s*</tool_call>)\s*\Z",
     re.DOTALL,
 )
 _COORDINATE_ACTIONS = frozenset(
@@ -98,6 +108,26 @@ def normalize_openai_qwen_response(message: Any) -> OpenAIResponseBoundary:
     if not isinstance(content, str):
         raise RuntimeError("Qwen endpoint returned no response content")
     unchanged = OpenAIResponseBoundary(content, content, reasoning, "unchanged")
+    orphan = _RAW_REASONING_ORPHAN_CLOSE_RE.fullmatch(content)
+    orphan_reasoning = orphan.group("reasoning") if orphan is not None else ""
+    if (
+        orphan is not None
+        and not (isinstance(reasoning, str) and reasoning.strip())
+        and re.search(r"<\s*/?\s*[A-Za-z][^>]*>", orphan_reasoning) is None
+        and content.count("</think>") == 1
+        and content.count("Action:") == 1
+        and content.count("<tool_call>") == 1
+        and content.count("</tool_call>") == 1
+    ):
+        canonical = (
+            f"<think>{orphan_reasoning.strip()}</think>\n{orphan.group('action')}"
+        )
+        return OpenAIResponseBoundary(
+            content,
+            canonical,
+            reasoning,
+            "hf_raw_reasoning_with_orphan_close",
+        )
     if (
         not isinstance(reasoning, str)
         or not reasoning.strip()
@@ -187,7 +217,9 @@ def _coordinate(
         or processed_width <= 0
         or processed_height <= 0
     ):
-        raise InvalidModelAction("absolute coordinates require positive processed dimensions")
+        raise InvalidModelAction(
+            "absolute coordinates require positive processed dimensions"
+        )
     if not 0 <= x < processed_width or not 0 <= y < processed_height:
         raise InvalidModelAction("absolute coordinate is outside the processed image")
     return (
@@ -223,7 +255,9 @@ def parse_qwen3vl_response(
     except InvalidModelAction:
         raise
     except (json.JSONDecodeError, TypeError, ValueError) as exc:
-        raise InvalidModelAction("tool_call must contain one strict JSON object") from exc
+        raise InvalidModelAction(
+            "tool_call must contain one strict JSON object"
+        ) from exc
     if not isinstance(call, dict) or set(call) != {"name", "arguments"}:
         raise InvalidModelAction("tool_call requires exactly name and arguments")
     if call["name"] != "computer_use":
@@ -268,7 +302,9 @@ def parse_qwen3vl_response(
             or not keys
             or any(not isinstance(key, str) or not key for key in keys)
         ):
-            raise InvalidModelAction("keys must be a non-empty array of non-empty strings")
+            raise InvalidModelAction(
+                "keys must be a non-empty array of non-empty strings"
+            )
         serialized = ", ".join(repr(key) for key in keys)
         command = (
             f"pyautogui.hotkey({serialized})"
@@ -314,7 +350,9 @@ def parse_qwen3vl_response(
 
 def validate_qwen3vl_history(messages: Any) -> int:
     if not isinstance(messages, list) or len(messages) < 2:
-        raise ValueError("Qwen3-VL request requires system and current screenshot messages")
+        raise ValueError(
+            "Qwen3-VL request requires system and current screenshot messages"
+        )
     assistant_count = 0
     image_count = 0
     for message in messages:
@@ -341,7 +379,9 @@ def validate_qwen3vl_history(messages: Any) -> int:
     ):
         raise ValueError("Qwen3-VL request must end with the current screenshot")
     if image_count != assistant_count + 1 or not 1 <= image_count <= 5:
-        raise ValueError("Qwen3-VL request must contain four prior rounds plus current at most")
+        raise ValueError(
+            "Qwen3-VL request must contain four prior rounds plus current at most"
+        )
     return image_count
 
 
@@ -352,10 +392,20 @@ def build_strict_qwen3vl_agent(
     api_key: str,
     max_corrections_per_observation: int = MAX_CORRECTIONS_PER_OBSERVATION,
     max_invalid_actions_per_task: int = MAX_INVALID_ACTIONS_PER_TASK,
+    request_timeout_seconds: float = ENDPOINT_READ_TIMEOUT_SECONDS,
+    endpoint_max_retries: int = ENDPOINT_MAX_RETRIES,
+    replica_id: str = "unassigned",
+    monotonic_clock: Callable[[], float] = time.monotonic,
     **kwargs: Any,
 ) -> Any:
     if max_corrections_per_observation < 0 or max_invalid_actions_per_task < 1:
         raise ValueError("invalid action retry bounds must be non-negative and bounded")
+    if request_timeout_seconds <= 345 or request_timeout_seconds > 600:
+        raise ValueError("endpoint read timeout must be in (345, 600] seconds")
+    if endpoint_max_retries != 0:
+        raise ValueError("endpoint transport retries must remain disabled")
+    if not replica_id:
+        raise ValueError("replica_id must be non-empty")
 
     class StrictQwen3VLAgent(upstream_class):
         def __init__(self) -> None:
@@ -364,6 +414,7 @@ def build_strict_qwen3vl_agent(
             self.last_validation_error: str | None = None
             self.last_parsed_action: ParsedQwen3VLAction | None = None
             self.last_openai_response_boundary: OpenAIResponseBoundary | None = None
+            self.last_model_request_telemetry: dict[str, Any] | None = None
             self._invalid_response = ""
             self._invalid_total = 0
             self._invalid_for_observation = 0
@@ -376,6 +427,7 @@ def build_strict_qwen3vl_agent(
             self.last_validation_error = None
             self.last_parsed_action = None
             self.last_openai_response_boundary = None
+            self.last_model_request_telemetry = None
             self._invalid_response = ""
             self._invalid_total = 0
             self._invalid_for_observation = 0
@@ -385,15 +437,59 @@ def build_strict_qwen3vl_agent(
             import openai
 
             validate_qwen3vl_history(messages)
-            client = openai.OpenAI(base_url=base_url, api_key=api_key)
-            response = client.chat.completions.create(
-                model=model,
-                messages=messages,
-                max_tokens=self.max_tokens,
-                temperature=self.temperature,
-                top_p=self.top_p,
-                stream=False,
+            request_id = str(uuid.uuid4())
+            started = monotonic_clock()
+            client = openai.OpenAI(
+                base_url=base_url,
+                api_key=api_key,
+                timeout=request_timeout_seconds,
+                max_retries=endpoint_max_retries,
             )
+            request = {
+                "model": model,
+                "messages": messages,
+                "max_tokens": self.max_tokens,
+                "temperature": self.temperature,
+                "top_p": self.top_p,
+                "stream": False,
+            }
+            status_code = None
+            try:
+                raw_api = getattr(
+                    client.chat.completions,
+                    "with_raw_response",
+                    None,
+                )
+                if raw_api is None:
+                    response = client.chat.completions.create(**request)
+                else:
+                    raw_response = raw_api.create(**request)
+                    status_code = getattr(raw_response, "status_code", None)
+                    response = raw_response.parse()
+            except Exception as exc:
+                self.last_model_request_telemetry = {
+                    "request_id": request_id,
+                    "replica_id": replica_id,
+                    "duration_seconds": monotonic_clock() - started,
+                    "timeout_seconds": request_timeout_seconds,
+                    "http_status": getattr(exc, "status_code", None),
+                    "outcome": (
+                        "timeout"
+                        if "timeout" in type(exc).__name__.lower()
+                        else "error"
+                    ),
+                    "exception_type": type(exc).__name__,
+                }
+                raise
+            self.last_model_request_telemetry = {
+                "request_id": request_id,
+                "replica_id": replica_id,
+                "duration_seconds": monotonic_clock() - started,
+                "timeout_seconds": request_timeout_seconds,
+                "http_status": status_code,
+                "outcome": "response",
+                "exception_type": None,
+            }
             boundary = normalize_openai_qwen_response(response.choices[0].message)
             if not boundary.canonical_content:
                 raise RuntimeError("Qwen endpoint returned no response content")
@@ -425,7 +521,9 @@ def build_strict_qwen3vl_agent(
             self.last_parsed_action = parsed
             return parsed.description, [parsed.command]
 
-        def predict(self, instruction: str, obs: Mapping[str, Any]) -> tuple[str, list[str]]:
+        def predict(
+            self, instruction: str, obs: Mapping[str, Any]
+        ) -> tuple[str, list[str]]:
             screenshot = bytes(obs["screenshot"])
             observation_sha256 = hashlib.sha256(screenshot).hexdigest()
             if observation_sha256 != self._observation_sha256:
@@ -460,8 +558,7 @@ def build_strict_qwen3vl_agent(
                 self.last_validation_error = str(exc)
                 self.last_parsed_action = None
                 self.last_invalid_action_retryable = (
-                    self._invalid_for_observation
-                    <= max_corrections_per_observation
+                    self._invalid_for_observation <= max_corrections_per_observation
                     and self._invalid_total < max_invalid_actions_per_task
                 )
                 return self._invalid_response, []
