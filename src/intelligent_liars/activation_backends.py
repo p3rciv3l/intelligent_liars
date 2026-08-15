@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import inspect
 from dataclasses import dataclass, field
+from enum import Enum
 from typing import Any, Callable, Mapping, Protocol, Sequence, runtime_checkable
 
 from intelligent_liars.models import ModelBundle
@@ -27,13 +28,46 @@ class ActivationSurface:
 
 @dataclass(frozen=True)
 class ActivationIntervention:
-    """A future-ready request to edit a traced activation surface."""
+    """A request to edit a traced activation surface."""
 
     layer_idx: int
     edit: Callable[[Any], Any]
     token_positions: Sequence[int] | None = None
     detection_mask: Any | None = None
     surface: str = "decoder"
+    enabled: bool = True
+
+
+class GenerationSite(str, Enum):
+    """Offline text-generation sites supported by activation interventions."""
+
+    NONE = "none"
+    GENERATED_TEXT = "generated_text"
+    POST_REASONING_TEXT = "post_reasoning_text"
+
+
+@dataclass(frozen=True)
+class GenerationPolicy:
+    """Conservative token/site gate for offline autoregressive interventions.
+
+    The default is a true no-op. Opted-in generation edits are restricted to
+    the last causal token, which is the state used to predict the next token.
+    Tool and action generation are intentionally outside this interface.
+    """
+
+    site: GenerationSite = GenerationSite.NONE
+    token_positions: tuple[int, ...] = (-1,)
+    reasoning_end_text: str = "</think>"
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.site, GenerationSite):
+            raise TypeError("site must be a GenerationSite value.")
+        if self.token_positions != (-1,):
+            raise ValueError(
+                "Generation interventions may target only the last causal token (-1)."
+            )
+        if self.site is GenerationSite.POST_REASONING_TEXT and not self.reasoning_end_text:
+            raise ValueError("POST_REASONING_TEXT requires a non-empty reasoning end marker.")
 
 
 @dataclass(frozen=True)
@@ -41,6 +75,15 @@ class ActivationTraceResult:
     activations_by_layer: Mapping[int, Any]
     logits: Any | None = None
     surfaces: Mapping[int, ActivationSurface] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class GenerationTraceResult:
+    """Generated token IDs and audit metadata from an offline text-only run."""
+
+    sequences: Any
+    site: GenerationSite
+    installed_intervention_count: int
 
 
 @runtime_checkable
@@ -76,6 +119,7 @@ class ActivationBackend(Protocol):
         interventions: Sequence[ActivationIntervention],
         return_logits: bool = True,
         generation_kwargs: Mapping[str, Any] | None = None,
+        generation_policy: GenerationPolicy | None = None,
     ) -> Any:
         """Run a traced forward or generation pass with activation writes applied."""
 
@@ -159,8 +203,9 @@ class TransformersHookBackend:
         interventions: Sequence[ActivationIntervention],
         return_logits: bool = True,
         generation_kwargs: Mapping[str, Any] | None = None,
+        generation_policy: GenerationPolicy | None = None,
     ) -> Any:
-        del inputs, interventions, return_logits, generation_kwargs
+        del inputs, interventions, return_logits, generation_kwargs, generation_policy
         raise NotImplementedError(
             "TransformersHookBackend is extraction-only. Use NnsightActivationBackend for activation writes."
         )
