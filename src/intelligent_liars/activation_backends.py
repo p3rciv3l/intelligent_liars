@@ -56,18 +56,18 @@ class GenerationPolicy:
     """
 
     site: GenerationSite = GenerationSite.NONE
-    token_positions: tuple[int, ...] = (-1,)
     reasoning_end_text: str = "</think>"
 
     def __post_init__(self) -> None:
         if not isinstance(self.site, GenerationSite):
             raise TypeError("site must be a GenerationSite value.")
-        if self.token_positions != (-1,):
+        if (
+            self.site is GenerationSite.POST_REASONING_TEXT
+            and not self.reasoning_end_text
+        ):
             raise ValueError(
-                "Generation interventions may target only the last causal token (-1)."
+                "POST_REASONING_TEXT requires a non-empty reasoning end marker."
             )
-        if self.site is GenerationSite.POST_REASONING_TEXT and not self.reasoning_end_text:
-            raise ValueError("POST_REASONING_TEXT requires a non-empty reasoning end marker.")
 
 
 @dataclass(frozen=True)
@@ -168,7 +168,9 @@ class TransformersHookBackend:
             return hook
 
         for layer_idx in layers:
-            handles.append(decoder_layers[layer_idx].register_forward_hook(save_layer(layer_idx)))
+            handles.append(
+                decoder_layers[layer_idx].register_forward_hook(save_layer(layer_idx))
+            )
 
         try:
             model_inputs = prepare_model_inputs(inputs, self.model)
@@ -186,7 +188,9 @@ class TransformersHookBackend:
         if capture_logits:
             logits_tensor = _extract_logits(outputs)
             if logits_tensor is None:
-                raise RuntimeError("capture_logits=True, but model output did not expose logits.")
+                raise RuntimeError(
+                    "capture_logits=True, but model output did not expose logits."
+                )
             selector = detection_mask if logit_mask is None else logit_mask
             logits = logits_tensor[selector.to(logits_tensor.device)].detach().cpu()
 
@@ -223,7 +227,9 @@ def qwen_decoder_layers(model: Any) -> Sequence[Any]:
     try:
         return model.model.language_model.layers
     except AttributeError as exc:
-        raise TypeError("Expected Qwen3-VL model path model.model.language_model.layers.") from exc
+        raise TypeError(
+            "Expected Qwen3-VL model path model.model.language_model.layers."
+        ) from exc
 
 
 def prepare_model_inputs(inputs: Mapping[str, Any], model: Any) -> dict[str, Any]:
@@ -236,7 +242,9 @@ def prepare_model_inputs(inputs: Mapping[str, Any], model: Any) -> dict[str, Any
     accepted_keys = _accepted_forward_keys(model)
     if accepted_keys is None:
         return candidate_inputs
-    return {key: value for key, value in candidate_inputs.items() if key in accepted_keys}
+    return {
+        key: value for key, value in candidate_inputs.items() if key in accepted_keys
+    }
 
 
 def _accepted_forward_keys(model: Any) -> set[str] | None:
@@ -247,7 +255,10 @@ def _accepted_forward_keys(model: Any) -> set[str] | None:
         signature = inspect.signature(forward)
     except (TypeError, ValueError):
         return None
-    if any(parameter.kind is inspect.Parameter.VAR_KEYWORD for parameter in signature.parameters.values()):
+    if any(
+        parameter.kind is inspect.Parameter.VAR_KEYWORD
+        for parameter in signature.parameters.values()
+    ):
         return None
     return {
         name

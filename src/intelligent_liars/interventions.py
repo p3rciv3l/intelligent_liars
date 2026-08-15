@@ -49,7 +49,9 @@ class LinearProbe:
             raise ValueError("probe coef must contain only finite values")
         if self.coef.numel() == 0 or float(torch.linalg.vector_norm(self.coef)) == 0.0:
             raise ValueError("probe coef must be non-empty and non-zero")
-        if isinstance(self.intercept, bool) or not isinstance(self.intercept, (int, float)):
+        if isinstance(self.intercept, bool) or not isinstance(
+            self.intercept, (int, float)
+        ):
             raise TypeError("probe intercept must be a real scalar")
         if not math.isfinite(float(self.intercept)):
             raise ValueError("probe intercept must be finite")
@@ -216,7 +218,9 @@ class DeceptiveMarginClamp:
 
     def __call__(self, activations: Tensor, probe: LinearProbe) -> Tensor:
         return BoundedCoordinateRemap(
-            remap_scores=lambda scores: torch.clamp_min(scores, float(self.target_score)),
+            remap_scores=lambda scores: torch.clamp_min(
+                scores, float(self.target_score)
+            ),
             max_displacement=self.max_displacement,
         )(activations, probe)
 

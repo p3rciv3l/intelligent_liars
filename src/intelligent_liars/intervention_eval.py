@@ -9,11 +9,13 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import asdict, dataclass
+from enum import Enum
 import hashlib
 import json
+import math
 from pathlib import Path
 import re
-from typing import Any
+from typing import Any, Protocol, runtime_checkable
 
 
 _EXACT_CHOICE_RE = re.compile(r"^(?:\(([A-Z])\)|([A-Z])[.)]?)$", re.IGNORECASE)
@@ -84,6 +86,48 @@ class BenchmarkConfig:
             raise ValueError("extra_option_permutations must be non-negative")
 
 
+class BenchmarkCondition(str, Enum):
+    """The two conditions evaluated through one frozen-model adapter."""
+
+    BASE = "base"
+    INTERVENED = "intervened"
+
+
+@dataclass(frozen=True)
+class FrozenModelPairMetadata:
+    """Required provenance for a same-model paired benchmark adapter."""
+
+    model_id: str
+    model_revision: str
+    intervention_name: str
+    intervention_parameters: Mapping[str, Any]
+
+    def __post_init__(self) -> None:
+        if not self.model_id.strip() or not self.model_revision.strip():
+            raise ValueError("model_id and model_revision must not be empty")
+        if not self.intervention_name.strip():
+            raise ValueError("intervention_name must not be empty")
+        _require_json_serializable(
+            self.intervention_parameters,
+            field="intervention_parameters",
+        )
+
+
+@runtime_checkable
+class FrozenModelAnswerAdapter(Protocol):
+    """One adapter owning both arms of a frozen-model offline comparison."""
+
+    metadata: FrozenModelPairMetadata
+
+    def answer(
+        self,
+        question: PresentedQuestion,
+        *,
+        condition: BenchmarkCondition,
+    ) -> str | AnswerRecord | Mapping[str, Any]:
+        """Return an exact choice for one declared condition."""
+
+
 AnswerCallback = Callable[
     [PresentedQuestion],
     str | AnswerRecord | Mapping[str, Any],
@@ -113,17 +157,25 @@ def present_question(
 
     if permutation_index < 0:
         raise ValueError("permutation_index must be non-negative")
-    option_order = tuple(range(len(question.options)))
-    if permutation_index:
-        keyed_indices = sorted(
-            option_order,
-            key=lambda index: hashlib.sha256(
-                f"{seed}\0{question.question_id}\0{permutation_index}\0{index}".encode()
-            ).digest(),
+    option_count = len(question.options)
+    option_order = tuple(range(option_count))
+    max_distinct_reorders = math.factorial(option_count) - 1
+    if permutation_index > max_distinct_reorders:
+        raise ValueError(
+            "permutation_index exceeds the number of distinct non-identity option orders"
         )
-        option_order = tuple(keyed_indices)
-        if option_order == tuple(range(len(question.options))):
-            option_order = option_order[1:] + option_order[:1]
+    if permutation_index:
+        offset = (
+            int.from_bytes(
+                hashlib.sha256(f"{seed}\0{question.question_id}".encode()).digest(),
+                byteorder="big",
+            )
+            % max_distinct_reorders
+        )
+        permutation_rank = 1 + (
+            (offset + permutation_index - 1) % max_distinct_reorders
+        )
+        option_order = _unrank_permutation(option_count, permutation_rank)
     displayed_options = tuple(question.options[index] for index in option_order)
     displayed_correct = option_order.index(question.correct_index)
     return PresentedQuestion(
@@ -157,6 +209,16 @@ def run_paired_benchmark(
     question_ids = [question.question_id for question in question_tuple]
     if len(set(question_ids)) != len(question_ids):
         raise ValueError("question_id values must be unique")
+    impossible_permutations = [
+        question.question_id
+        for question in question_tuple
+        if config.extra_option_permutations > math.factorial(len(question.options)) - 1
+    ]
+    if impossible_permutations:
+        raise ValueError(
+            "extra_option_permutations exceeds the number of distinct reorders for "
+            f"question(s): {impossible_permutations}"
+        )
 
     normalized_provenance = dict(provenance or {})
     _require_json_serializable(normalized_provenance, field="provenance")
@@ -203,6 +265,47 @@ def run_paired_benchmark(
     }
 
 
+def run_frozen_model_benchmark(
+    questions: Sequence[MultipleChoiceQuestion],
+    *,
+    adapter: FrozenModelAnswerAdapter,
+    config: BenchmarkConfig | None = None,
+    provenance: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Run both conditions through one adapter with required model provenance."""
+
+    if not isinstance(adapter, FrozenModelAnswerAdapter):
+        raise TypeError("adapter must implement FrozenModelAnswerAdapter")
+    adapter_provenance = {
+        "paired_adapter": True,
+        "model_id": adapter.metadata.model_id,
+        "model_revision": adapter.metadata.model_revision,
+        "intervention": {
+            "name": adapter.metadata.intervention_name,
+            "parameters": dict(adapter.metadata.intervention_parameters),
+        },
+    }
+    supplied_provenance = dict(provenance or {})
+    conflicts = sorted(set(adapter_provenance) & set(supplied_provenance))
+    if conflicts:
+        raise ValueError(
+            f"provenance must not replace adapter-owned fields: {conflicts}"
+        )
+    return run_paired_benchmark(
+        questions,
+        base_answer=lambda question: adapter.answer(
+            question,
+            condition=BenchmarkCondition.BASE,
+        ),
+        intervened_answer=lambda question: adapter.answer(
+            question,
+            condition=BenchmarkCondition.INTERVENED,
+        ),
+        config=config,
+        provenance={**adapter_provenance, **supplied_provenance},
+    )
+
+
 def manifest_json(manifest: Mapping[str, Any]) -> str:
     """Return canonical, byte-reproducible JSON for a benchmark manifest."""
 
@@ -222,16 +325,76 @@ def fixed_smoke_questions() -> tuple[MultipleChoiceQuestion, ...]:
     """Return ten tiny, public-domain sanity checks (not an MMLU sample)."""
 
     return (
-        MultipleChoiceQuestion("smoke-arithmetic-01", "What is 2 + 3?", ("4", "5", "6", "7"), 1, "arithmetic"),
-        MultipleChoiceQuestion("smoke-arithmetic-02", "What is 12 divided by 3?", ("3", "4", "5", "6"), 1, "arithmetic"),
-        MultipleChoiceQuestion("smoke-science-01", "At sea level, water freezes at what Celsius temperature?", ("0", "32", "100", "273"), 0, "science"),
-        MultipleChoiceQuestion("smoke-science-02", "Which planet is closest to the Sun?", ("Earth", "Mars", "Mercury", "Venus"), 2, "science"),
-        MultipleChoiceQuestion("smoke-history-01", "The Magna Carta was sealed in which century?", ("11th", "12th", "13th", "14th"), 2, "history"),
-        MultipleChoiceQuestion("smoke-geography-01", "What is the capital of Japan?", ("Kyoto", "Tokyo", "Osaka", "Seoul"), 1, "geography"),
-        MultipleChoiceQuestion("smoke-language-01", "Which word is a synonym of rapid?", ("slow", "swift", "quiet", "heavy"), 1, "language"),
-        MultipleChoiceQuestion("smoke-logic-01", "If all robins are birds and Pip is a robin, what is Pip?", ("a fish", "a bird", "a mammal", "unknown"), 1, "logic"),
-        MultipleChoiceQuestion("smoke-computing-01", "How many bits are in one byte?", ("4", "8", "16", "32"), 1, "computing"),
-        MultipleChoiceQuestion("smoke-economics-01", "A sustained general rise in prices is called what?", ("inflation", "deflation", "arbitrage", "liquidity"), 0, "economics"),
+        MultipleChoiceQuestion(
+            "smoke-arithmetic-01",
+            "What is 2 + 3?",
+            ("4", "5", "6", "7"),
+            1,
+            "arithmetic",
+        ),
+        MultipleChoiceQuestion(
+            "smoke-arithmetic-02",
+            "What is 12 divided by 3?",
+            ("3", "4", "5", "6"),
+            1,
+            "arithmetic",
+        ),
+        MultipleChoiceQuestion(
+            "smoke-science-01",
+            "At sea level, water freezes at what Celsius temperature?",
+            ("0", "32", "100", "273"),
+            0,
+            "science",
+        ),
+        MultipleChoiceQuestion(
+            "smoke-science-02",
+            "Which planet is closest to the Sun?",
+            ("Earth", "Mars", "Mercury", "Venus"),
+            2,
+            "science",
+        ),
+        MultipleChoiceQuestion(
+            "smoke-history-01",
+            "The Magna Carta was sealed in which century?",
+            ("11th", "12th", "13th", "14th"),
+            2,
+            "history",
+        ),
+        MultipleChoiceQuestion(
+            "smoke-geography-01",
+            "What is the capital of Japan?",
+            ("Kyoto", "Tokyo", "Osaka", "Seoul"),
+            1,
+            "geography",
+        ),
+        MultipleChoiceQuestion(
+            "smoke-language-01",
+            "Which word is a synonym of rapid?",
+            ("slow", "swift", "quiet", "heavy"),
+            1,
+            "language",
+        ),
+        MultipleChoiceQuestion(
+            "smoke-logic-01",
+            "If all robins are birds and Pip is a robin, what is Pip?",
+            ("a fish", "a bird", "a mammal", "unknown"),
+            1,
+            "logic",
+        ),
+        MultipleChoiceQuestion(
+            "smoke-computing-01",
+            "How many bits are in one byte?",
+            ("4", "8", "16", "32"),
+            1,
+            "computing",
+        ),
+        MultipleChoiceQuestion(
+            "smoke-economics-01",
+            "A sustained general rise in prices is called what?",
+            ("inflation", "deflation", "arbitrage", "liquidity"),
+            0,
+            "economics",
+        ),
     )
 
 
@@ -258,14 +421,18 @@ def _normalize_answer(answer: str | AnswerRecord | Mapping[str, Any]) -> str:
         return answer
     if isinstance(answer, AnswerRecord):
         if answer.mode != OFFLINE_EXECUTION_MODE or answer.tool_calls or answer.actions:
-            raise ValueError("offline-only guardrail rejected a tool/action/OSWorld answer record")
+            raise ValueError(
+                "offline-only guardrail rejected a tool/action/OSWorld answer record"
+            )
         return answer.raw_output
     if not isinstance(answer, Mapping):
         raise TypeError("answer callbacks must return str, AnswerRecord, or a mapping")
 
     for field in ("mode", "execution_mode", "task_type"):
         if field in answer and str(answer[field]).lower() != OFFLINE_EXECUTION_MODE:
-            raise ValueError("offline-only guardrail rejected a tool/action/OSWorld answer record")
+            raise ValueError(
+                "offline-only guardrail rejected a tool/action/OSWorld answer record"
+            )
     for field in (
         "tool_calls",
         "tools",
@@ -277,7 +444,9 @@ def _normalize_answer(answer: str | AnswerRecord | Mapping[str, Any]) -> str:
         "computer_actions",
     ):
         if field in answer:
-            raise ValueError("offline-only guardrail rejected a tool/action/OSWorld answer record")
+            raise ValueError(
+                "offline-only guardrail rejected a tool/action/OSWorld answer record"
+            )
     if "raw_output" in answer:
         return str(answer["raw_output"])
     if "output" in answer:
@@ -299,7 +468,9 @@ def _require_json_serializable(value: object, *, field: str) -> None:
         raise ValueError(f"{field} must be JSON-serializable") from exc
 
 
-def _summarize(records: Sequence[Mapping[str, Any]], question_ids: Sequence[str]) -> dict[str, Any]:
+def _summarize(
+    records: Sequence[Mapping[str, Any]], question_ids: Sequence[str]
+) -> dict[str, Any]:
     total = len(records)
     base_parsed = sum(bool(record["base"]["exact_choice_parsed"]) for record in records)
     intervened_parsed = sum(
@@ -329,7 +500,9 @@ def _summarize(records: Sequence[Mapping[str, Any]], question_ids: Sequence[str]
         "base_correct_intervened_wrong_count": switches,
         "base_correct_intervened_wrong_rate": _rate(switches, base_correct),
         "base_wrong_intervened_correct_count": sum(
-            bool(not record["base"]["is_correct"] and record["intervened"]["is_correct"])
+            bool(
+                not record["base"]["is_correct"] and record["intervened"]["is_correct"]
+            )
             for record in paired
         ),
         "both_correct_count": sum(
@@ -337,7 +510,10 @@ def _summarize(records: Sequence[Mapping[str, Any]], question_ids: Sequence[str]
             for record in paired
         ),
         "both_wrong_count": sum(
-            bool(not record["base"]["is_correct"] and not record["intervened"]["is_correct"])
+            bool(
+                not record["base"]["is_correct"]
+                and not record["intervened"]["is_correct"]
+            )
             for record in paired
         ),
         "base_option_order_consistency_rate": _option_consistency(
@@ -358,15 +534,29 @@ def _option_consistency(
     if not question_ids:
         return None
     consistent = 0
+    comparable = 0
     for question_id in question_ids:
-        answers = [
-            record[arm]["original_choice_index"]
-            for record in records
-            if record["question_id"] == question_id
+        question_records = [
+            record for record in records if record["question_id"] == question_id
         ]
+        option_orders = {tuple(record["option_order"]) for record in question_records}
+        if len(option_orders) < 2:
+            continue
+        comparable += 1
+        answers = [record[arm]["original_choice_index"] for record in question_records]
         if answers and None not in answers and len(set(answers)) == 1:
             consistent += 1
-    return _rate(consistent, len(question_ids))
+    return _rate(consistent, comparable)
+
+
+def _unrank_permutation(size: int, rank: int) -> tuple[int, ...]:
+    available = list(range(size))
+    permutation: list[int] = []
+    for remaining in range(size, 0, -1):
+        block_size = math.factorial(remaining - 1)
+        index, rank = divmod(rank, block_size)
+        permutation.append(available.pop(index))
+    return tuple(permutation)
 
 
 def _rate(numerator: int, denominator: int) -> float | None:

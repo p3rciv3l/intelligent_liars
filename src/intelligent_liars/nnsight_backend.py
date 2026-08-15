@@ -78,11 +78,15 @@ class NnsightActivationBackend:
                 )
             if capture_logits:
                 selector = detection_mask if logit_mask is None else logit_mask
-                saved_logits = _save_selected_rows(_nnsight_logits_proxy(self.model), selector)
+                saved_logits = _save_selected_rows(
+                    _nnsight_logits_proxy(self.model), selector
+                )
 
         activations_by_layer: dict[int, Any] = {}
         for layer_idx in layers:
-            activations_by_layer[layer_idx] = _saved_value(saved_layers[layer_idx]).detach().cpu()
+            activations_by_layer[layer_idx] = (
+                _saved_value(saved_layers[layer_idx]).detach().cpu()
+            )
 
         logits = None
         if saved_logits is not None:
@@ -123,14 +127,22 @@ class NnsightActivationBackend:
                     continue
                 layer = qwen3_vl_text_decoder_layer(self.model, intervention.layer_idx)
                 original_output = layer.output
-                tensor = original_output[0] if isinstance(original_output, tuple) else original_output
+                tensor = (
+                    original_output[0]
+                    if isinstance(original_output, tuple)
+                    else original_output
+                )
                 edited_tensor = _apply_intervention(tensor, intervention)
                 layer.output = (
                     (edited_tensor, *original_output[1:])
                     if isinstance(original_output, tuple)
                     else edited_tensor
                 )
-            saved_output = _nnsight_logits_proxy(self.model).save() if return_logits else self.model.output.save()
+            saved_output = (
+                _nnsight_logits_proxy(self.model).save()
+                if return_logits
+                else self.model.output.save()
+            )
 
         return _saved_value(saved_output)
 
@@ -157,11 +169,12 @@ class NnsightActivationBackend:
             if intervention.enabled and policy.site is not GenerationSite.NONE
         ]
         _validate_generation_interventions(active_interventions)
+        if active_interventions:
+            _positive_max_new_tokens(generation_kwargs)
         model_inputs = prepare_model_inputs(inputs, self.model)
         prompt_width = _prompt_width(model_inputs)
         reasoning_end_token_ids = _reasoning_end_token_ids(self.tokenizer, policy)
 
-        start_step = 0
         if active_interventions and policy.site is GenerationSite.POST_REASONING_TEXT:
             if generation_kwargs.get("do_sample", False):
                 raise ValueError(
@@ -172,27 +185,35 @@ class NnsightActivationBackend:
                 model_inputs=model_inputs,
                 generation_kwargs=generation_kwargs,
                 interventions=(),
-                start_step=0,
             )
-            boundary_step = _post_reasoning_start_step(
+            boundary_token_count = _post_reasoning_boundary_token_count(
                 baseline_sequences,
                 prompt_width=prompt_width,
                 reasoning_end_token_ids=reasoning_end_token_ids,
             )
             generated_count = int(baseline_sequences.shape[-1]) - prompt_width
-            if boundary_step is None or boundary_step >= generated_count:
+            if boundary_token_count is None or boundary_token_count >= generated_count:
                 return GenerationTraceResult(
                     sequences=baseline_sequences,
                     site=policy.site,
                     installed_intervention_count=0,
                 )
-            start_step = boundary_step
+            model_inputs = _post_reasoning_continuation_inputs(
+                model_inputs,
+                baseline_sequences=baseline_sequences,
+                prompt_width=prompt_width,
+                boundary_token_count=boundary_token_count,
+            )
+            generation_kwargs = {
+                **generation_kwargs,
+                "max_new_tokens": _positive_max_new_tokens(generation_kwargs)
+                - boundary_token_count,
+            }
 
         sequences = self._run_generation(
             model_inputs=model_inputs,
             generation_kwargs=generation_kwargs,
             interventions=active_interventions,
-            start_step=start_step,
         )
 
         return GenerationTraceResult(
@@ -207,26 +228,19 @@ class NnsightActivationBackend:
         model_inputs: Mapping[str, Any],
         generation_kwargs: Mapping[str, Any],
         interventions: Sequence[ActivationIntervention],
-        start_step: int,
     ) -> Any:
         with self.model.generate(model_inputs, **dict(generation_kwargs)) as tracer:
             if interventions:
-                max_new_tokens = generation_kwargs.get("max_new_tokens")
-                if not isinstance(max_new_tokens, int) or max_new_tokens <= 0:
-                    raise ValueError(
-                        "Intervened generation requires a positive integer max_new_tokens."
-                    )
-                iteration_context = (
-                    _all_generation_steps(tracer, self.model)
-                    if start_step == 0
-                    else tracer.iter[start_step:max_new_tokens]
-                )
-                with iteration_context:
+                with _all_generation_steps(tracer, self.model):
                     for intervention in interventions:
-                        layer = qwen3_vl_text_decoder_layer(self.model, intervention.layer_idx)
+                        layer = qwen3_vl_text_decoder_layer(
+                            self.model, intervention.layer_idx
+                        )
                         original_output = layer.output
                         tensor = _nnsight_first_tensor(original_output)
-                        edited_tensor = _apply_generation_intervention(tensor, intervention)
+                        edited_tensor = _apply_generation_intervention(
+                            tensor, intervention
+                        )
                         layer.output = (
                             (edited_tensor, *original_output[1:])
                             if isinstance(original_output, tuple)
@@ -288,7 +302,9 @@ def trace_text_decoder_layer_once(
     input_shape = tuple(inputs["input_ids"].shape)
 
     with bundle.model.trace(dict(inputs), scan=False, validate=False):
-        layer_output = qwen3_vl_text_decoder_layer(bundle.model, layer_idx).output.save()
+        layer_output = qwen3_vl_text_decoder_layer(
+            bundle.model, layer_idx
+        ).output.save()
 
     layer_tensor = _saved_value(layer_output)
     return TraceSmokeResult(
@@ -311,7 +327,9 @@ def _nnsight_logits_proxy(nnsight_model: Any) -> Any:
     try:
         return nnsight_model.output.logits
     except AttributeError as exc:
-        raise RuntimeError("Could not locate an NNsight logits proxy for Qwen3-VL.") from exc
+        raise RuntimeError(
+            "Could not locate an NNsight logits proxy for Qwen3-VL."
+        ) from exc
 
 
 def _nnsight_first_tensor(output: Any) -> Any:
@@ -337,27 +355,32 @@ def _apply_intervention(tensor: Any, intervention: ActivationIntervention) -> An
     return intervention.edit(tensor)
 
 
-_FORBIDDEN_GENERATION_PATHWAY_PARTS = (
-    "action",
-    "computer_use",
-    "function_call",
-    "osworld",
-    "tool",
+_ALLOWED_OFFLINE_GENERATION_KWARGS = frozenset(
+    {
+        "do_sample",
+        "eos_token_id",
+        "max_new_tokens",
+        "pad_token_id",
+        "temperature",
+        "top_k",
+        "top_p",
+        "use_cache",
+    }
 )
 
 
 def _refuse_non_text_generation(
     inputs: Mapping[str, Any], generation_kwargs: Mapping[str, Any]
 ) -> None:
-    unsafe_keys = sorted(
-        key
-        for key in (*inputs.keys(), *generation_kwargs.keys())
-        if any(part in str(key).lower() for part in _FORBIDDEN_GENERATION_PATHWAY_PARTS)
+    unsupported_inputs = sorted(set(inputs) - {"attention_mask", "input_ids"})
+    unsupported_generation_kwargs = sorted(
+        set(generation_kwargs) - _ALLOWED_OFFLINE_GENERATION_KWARGS
     )
-    if unsafe_keys:
+    if unsupported_inputs or unsupported_generation_kwargs:
         raise ValueError(
             "This backend is restricted to offline text-only generation and refuses "
-            f"tool/action/OSWorld pathways: {unsafe_keys}."
+            "unsupported or tool/action/OSWorld pathways: "
+            f"inputs={unsupported_inputs}, generation_kwargs={unsupported_generation_kwargs}."
         )
 
 
@@ -366,8 +389,13 @@ def _validate_generation_interventions(
 ) -> None:
     for intervention in interventions:
         if intervention.surface != "decoder":
-            raise ValueError("Generation interventions support only the text decoder surface.")
-        if intervention.detection_mask is not None or intervention.token_positions is not None:
+            raise ValueError(
+                "Generation interventions support only the text decoder surface."
+            )
+        if (
+            intervention.detection_mask is not None
+            or intervention.token_positions is not None
+        ):
             raise ValueError(
                 "Generation token selection is owned by GenerationPolicy; per-intervention "
                 "masks and token positions are not accepted."
@@ -382,7 +410,11 @@ def _all_generation_steps(tracer: Any, model: Any) -> Any:
 
 def _prompt_width(model_inputs: Mapping[str, Any]) -> int:
     input_ids = model_inputs.get("input_ids")
-    if input_ids is None or not hasattr(input_ids, "shape") or len(input_ids.shape) != 2:
+    if (
+        input_ids is None
+        or not hasattr(input_ids, "shape")
+        or len(input_ids.shape) != 2
+    ):
         raise ValueError("Generation requires rank-2 input_ids.")
     if int(input_ids.shape[0]) != 1:
         raise ValueError(
@@ -391,7 +423,9 @@ def _prompt_width(model_inputs: Mapping[str, Any]) -> int:
     return int(input_ids.shape[-1])
 
 
-def _reasoning_end_token_ids(tokenizer: Any, policy: GenerationPolicy) -> tuple[int, ...]:
+def _reasoning_end_token_ids(
+    tokenizer: Any, policy: GenerationPolicy
+) -> tuple[int, ...]:
     if policy.site is not GenerationSite.POST_REASONING_TEXT:
         return ()
     encoded = tokenizer.encode(policy.reasoning_end_text, add_special_tokens=False)
@@ -401,7 +435,7 @@ def _reasoning_end_token_ids(tokenizer: Any, policy: GenerationPolicy) -> tuple[
     return token_ids
 
 
-def _post_reasoning_start_step(
+def _post_reasoning_boundary_token_count(
     sequences: Any,
     *,
     prompt_width: int,
@@ -413,6 +447,47 @@ def _post_reasoning_start_step(
         if tuple(generated[start : start + marker_size]) == reasoning_end_token_ids:
             return start + marker_size
     return None
+
+
+def _post_reasoning_continuation_inputs(
+    model_inputs: Mapping[str, Any],
+    *,
+    baseline_sequences: Any,
+    prompt_width: int,
+    boundary_token_count: int,
+) -> dict[str, Any]:
+    """Continue from the observed marker prefix so reasoning is never replay-edited."""
+
+    import torch
+
+    input_ids = model_inputs["input_ids"]
+    prefix_width = prompt_width + boundary_token_count
+    continuation = dict(model_inputs)
+    continuation["input_ids"] = baseline_sequences[:, :prefix_width].to(
+        input_ids.device
+    )
+    attention_mask = model_inputs.get("attention_mask")
+    if attention_mask is not None:
+        generated_mask = attention_mask.new_ones(
+            (int(attention_mask.shape[0]), boundary_token_count)
+        )
+        continuation["attention_mask"] = torch.cat(
+            (attention_mask, generated_mask), dim=-1
+        )
+    return continuation
+
+
+def _positive_max_new_tokens(generation_kwargs: Mapping[str, Any]) -> int:
+    max_new_tokens = generation_kwargs.get("max_new_tokens")
+    if (
+        isinstance(max_new_tokens, bool)
+        or not isinstance(max_new_tokens, int)
+        or max_new_tokens <= 0
+    ):
+        raise ValueError(
+            "Intervened generation requires a positive integer max_new_tokens."
+        )
+    return max_new_tokens
 
 
 def _apply_generation_intervention(

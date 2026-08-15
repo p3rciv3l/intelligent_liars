@@ -25,10 +25,12 @@ Generation has an independent conservative gate. `GenerationPolicy` defaults
 to `GenerationSite.NONE`; intervention requires an explicit text-only site.
 The available research sites are `GENERATED_TEXT` and
 `POST_REASONING_TEXT`, with generated last-token selection. Structured
-tool/action/OSWorld generation inputs remain refused. For the thesis-oriented
-reporting experiment, use `POST_REASONING_TEXT` only after its complete
-reasoning-end marker has been observed. Never route its output to a tool or
-action consumer.
+tool/action/OSWorld generation inputs remain refused through strict input and
+generation-key allowlists. For the thesis-oriented reporting experiment,
+`POST_REASONING_TEXT` first observes the complete reasoning-end marker without
+an intervention, then starts an intervened continuation from that exact token
+prefix. It never edits an unverified replay of the reasoning tokens. Never
+route its output to a tool or action consumer.
 
 ## Evaluation contract
 
@@ -63,18 +65,30 @@ A minimal adapter shape is:
 ```python
 from intelligent_liars.intervention_eval import (
     BenchmarkConfig,
+    FrozenModelPairMetadata,
     fixed_smoke_questions,
-    run_paired_benchmark,
+    run_frozen_model_benchmark,
     write_benchmark_manifest,
 )
 
-manifest = run_paired_benchmark(
+class WiringOnlyAdapter:
+    metadata = FrozenModelPairMetadata(
+        model_id="Qwen/Qwen3-VL-8B-Thinking",
+        model_revision="immutable-revision",
+        intervention_name="identity",
+        intervention_parameters={"layer": 19},
+    )
+
+    def answer(self, question, *, condition):
+        # Executable harness smoke only; replace with frozen-model choice scoring.
+        del question, condition
+        return "A"
+
+manifest = run_frozen_model_benchmark(
     fixed_smoke_questions(),
-    base_answer=score_frozen_base_choice,
-    intervened_answer=score_same_frozen_model_with_hook,
+    adapter=WiringOnlyAdapter(),
     config=BenchmarkConfig(seed=0, extra_option_permutations=2),
     provenance={
-        "model_revision": "immutable-revision",
         "probe_sha256": "...",
         "source_commit": "...",
     },
@@ -82,9 +96,12 @@ manifest = run_paired_benchmark(
 write_benchmark_manifest(output_path, manifest)
 ```
 
-The callbacks should use deterministic next-choice scoring where possible.
-Free-form generation adds parsing and sampling variance and should not be mixed
-with exact-choice scores in the same comparison.
+`run_frozen_model_benchmark()` routes both conditions through one adapter and
+owns the model identity, revision, and intervention provenance fields. The
+adapter should use deterministic next-choice scoring where possible. Free-form
+generation adds parsing and sampling variance and should not be mixed with
+exact-choice scores in the same comparison. `run_paired_benchmark()` remains a
+lower-level pure-callback utility for unit tests and already-produced answers.
 
 ## Interpreting results
 
@@ -104,7 +121,10 @@ controls, held-out questions, and capability-preservation measurements that do
 not involve tool execution.
 
 Option permutations test whether the logical answer survives label/order
-changes. Report both arms' option-order consistency. Select intervention
+changes. Requested permutations are deterministic and distinct; a request
+beyond the finite number of distinct orders is refused. Consistency is `null`
+when no reordered presentation exists rather than reporting a misleading
+perfect score. Report both arms' option-order consistency. Select intervention
 settings on one question split and report the final claim on a held-out split;
 do not choose a layer or strength from the reported test set.
 

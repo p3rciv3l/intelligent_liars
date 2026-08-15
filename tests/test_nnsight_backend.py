@@ -10,7 +10,11 @@ from intelligent_liars.activation_backends import (
     GenerationSite,
 )
 from intelligent_liars.models import DEFAULT_MODEL_ID, ModelBundle, ModelLoadConfig
-from intelligent_liars.nnsight_backend import NnsightActivationBackend, NnsightBundle, load_nnsight_bundle
+from intelligent_liars.nnsight_backend import (
+    NnsightActivationBackend,
+    NnsightBundle,
+    load_nnsight_bundle,
+)
 
 
 def test_nnsight_model_load_uses_vlm_wrapper_and_flash_attention(monkeypatch):
@@ -28,7 +32,9 @@ def test_nnsight_model_load_uses_vlm_wrapper_and_flash_attention(monkeypatch):
         "nnsight",
         types.SimpleNamespace(VisionLanguageModel=FakeVisionLanguageModel),
     )
-    monkeypatch.setitem(sys.modules, "torch", types.SimpleNamespace(bfloat16=fake_bfloat16))
+    monkeypatch.setitem(
+        sys.modules, "torch", types.SimpleNamespace(bfloat16=fake_bfloat16)
+    )
     monkeypatch.setattr(
         "intelligent_liars.nnsight_backend.load_processor",
         lambda config: ModelBundle(
@@ -101,7 +107,9 @@ class _FakeNnsightModel:
         self.model = types.SimpleNamespace(
             language_model=types.SimpleNamespace(layers=[self.layer])
         )
-        self.lm_head = types.SimpleNamespace(output=_Proxy(torch.tensor([[[0.1, 0.9]]])))
+        self.lm_head = types.SimpleNamespace(
+            output=_Proxy(torch.tensor([[[0.1, 0.9]]]))
+        )
         self.output = _Proxy(torch.tensor([[[0.1, 0.9]]]))
 
     def forward(self, input_ids, attention_mask=None):
@@ -174,7 +182,9 @@ def test_generated_text_site_edits_only_the_last_causal_token():
 
     backend.run_with_interventions(
         inputs=_inputs(),
-        interventions=[ActivationIntervention(layer_idx=0, edit=lambda value: value + 3)],
+        interventions=[
+            ActivationIntervention(layer_idx=0, edit=lambda value: value + 3)
+        ],
         return_logits=False,
         generation_kwargs={"max_new_tokens": 1},
         generation_policy=GenerationPolicy(site=GenerationSite.GENERATED_TEXT),
@@ -207,12 +217,16 @@ def test_explicit_identity_edit_preserves_generation_and_activation_exactly():
         (torch.tensor([[101, 7, 8, 3]]), torch.tensor([[[4.0, 5.0]]])),
     ],
 )
-def test_post_reasoning_site_requires_the_complete_end_think_marker(generated_ids, expected):
+def test_post_reasoning_site_requires_the_complete_end_think_marker(
+    generated_ids, expected
+):
     backend = _backend(generated_ids)
 
     backend.run_with_interventions(
         inputs=_inputs(),
-        interventions=[ActivationIntervention(layer_idx=0, edit=lambda value: value + 3)],
+        interventions=[
+            ActivationIntervention(layer_idx=0, edit=lambda value: value + 3)
+        ],
         return_logits=False,
         generation_kwargs={"max_new_tokens": 3},
         generation_policy=GenerationPolicy(site=GenerationSite.POST_REASONING_TEXT),
@@ -220,7 +234,15 @@ def test_post_reasoning_site_requires_the_complete_end_think_marker(generated_id
 
     assert torch.equal(backend.model.layer.output, expected)
     if generated_ids.shape[-1] == 4:
-        assert backend.model.iteration_slice == slice(2, 3)
+        assert len(backend.model.generate_calls) == 2
+        continuation_inputs, continuation_kwargs = backend.model.generate_calls[1]
+        assert torch.equal(
+            continuation_inputs["input_ids"], torch.tensor([[101, 7, 8]])
+        )
+        assert torch.equal(
+            continuation_inputs["attention_mask"], torch.tensor([[1, 1, 1]])
+        )
+        assert continuation_kwargs == {"max_new_tokens": 1}
 
 
 @pytest.mark.parametrize(
@@ -229,9 +251,14 @@ def test_post_reasoning_site_requires_the_complete_end_think_marker(generated_id
         ({"input_ids": torch.tensor([[101]]), "tools": [{"name": "click"}]}, {}),
         ({"input_ids": torch.tensor([[101]])}, {"tool_choice": "auto"}),
         ({"input_ids": torch.tensor([[101]])}, {"osworld": True}),
+        ({"input_ids": torch.tensor([[101]]), "task_type": "osworld"}, {}),
+        ({"input_ids": torch.tensor([[101]]), "mode": "computer-use"}, {}),
+        ({"input_ids": torch.tensor([[101]])}, {"functions": []}),
     ],
 )
-def test_generation_refuses_tool_action_and_osworld_pathways(unsafe_inputs, unsafe_kwargs):
+def test_generation_refuses_tool_action_and_osworld_pathways(
+    unsafe_inputs, unsafe_kwargs
+):
     backend = _backend(torch.tensor([[101, 42]]))
 
     with pytest.raises(ValueError, match="offline text-only"):
@@ -240,14 +267,6 @@ def test_generation_refuses_tool_action_and_osworld_pathways(unsafe_inputs, unsa
             interventions=[],
             return_logits=False,
             generation_kwargs=unsafe_kwargs,
-        )
-
-
-def test_generation_policy_rejects_unsafe_token_positions():
-    with pytest.raises(ValueError, match="last causal token"):
-        GenerationPolicy(
-            site=GenerationSite.GENERATED_TEXT,
-            token_positions=(0,),
         )
 
 
@@ -274,7 +293,9 @@ def test_post_reasoning_generation_refuses_sampling_before_running_model():
     with pytest.raises(ValueError, match="do_sample=False"):
         backend.run_with_interventions(
             inputs=_inputs(),
-            interventions=[ActivationIntervention(layer_idx=0, edit=lambda value: value)],
+            interventions=[
+                ActivationIntervention(layer_idx=0, edit=lambda value: value)
+            ],
             return_logits=False,
             generation_kwargs={"max_new_tokens": 3, "do_sample": True},
             generation_policy=GenerationPolicy(site=GenerationSite.POST_REASONING_TEXT),
