@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import inspect
 from dataclasses import dataclass, field
-from enum import Enum
 from typing import Any, Callable, Mapping, Protocol, Sequence, runtime_checkable
 
 from intelligent_liars.models import ModelBundle
@@ -28,46 +27,13 @@ class ActivationSurface:
 
 @dataclass(frozen=True)
 class ActivationIntervention:
-    """A request to edit a traced activation surface."""
+    """A future-ready request to edit a traced activation surface."""
 
     layer_idx: int
     edit: Callable[[Any], Any]
     token_positions: Sequence[int] | None = None
     detection_mask: Any | None = None
     surface: str = "decoder"
-    enabled: bool = True
-
-
-class GenerationSite(str, Enum):
-    """Offline text-generation sites supported by activation interventions."""
-
-    NONE = "none"
-    GENERATED_TEXT = "generated_text"
-    POST_REASONING_TEXT = "post_reasoning_text"
-
-
-@dataclass(frozen=True)
-class GenerationPolicy:
-    """Conservative token/site gate for offline autoregressive interventions.
-
-    The default is a true no-op. Opted-in generation edits are restricted to
-    the last causal token, which is the state used to predict the next token.
-    Tool and action generation are intentionally outside this interface.
-    """
-
-    site: GenerationSite = GenerationSite.NONE
-    reasoning_end_text: str = "</think>"
-
-    def __post_init__(self) -> None:
-        if not isinstance(self.site, GenerationSite):
-            raise TypeError("site must be a GenerationSite value.")
-        if (
-            self.site is GenerationSite.POST_REASONING_TEXT
-            and not self.reasoning_end_text
-        ):
-            raise ValueError(
-                "POST_REASONING_TEXT requires a non-empty reasoning end marker."
-            )
 
 
 @dataclass(frozen=True)
@@ -75,15 +41,6 @@ class ActivationTraceResult:
     activations_by_layer: Mapping[int, Any]
     logits: Any | None = None
     surfaces: Mapping[int, ActivationSurface] = field(default_factory=dict)
-
-
-@dataclass(frozen=True)
-class GenerationTraceResult:
-    """Generated token IDs and audit metadata from an offline text-only run."""
-
-    sequences: Any
-    site: GenerationSite
-    installed_intervention_count: int
 
 
 @runtime_checkable
@@ -119,7 +76,6 @@ class ActivationBackend(Protocol):
         interventions: Sequence[ActivationIntervention],
         return_logits: bool = True,
         generation_kwargs: Mapping[str, Any] | None = None,
-        generation_policy: GenerationPolicy | None = None,
     ) -> Any:
         """Run a traced forward or generation pass with activation writes applied."""
 
@@ -168,9 +124,7 @@ class TransformersHookBackend:
             return hook
 
         for layer_idx in layers:
-            handles.append(
-                decoder_layers[layer_idx].register_forward_hook(save_layer(layer_idx))
-            )
+            handles.append(decoder_layers[layer_idx].register_forward_hook(save_layer(layer_idx)))
 
         try:
             model_inputs = prepare_model_inputs(inputs, self.model)
@@ -188,9 +142,7 @@ class TransformersHookBackend:
         if capture_logits:
             logits_tensor = _extract_logits(outputs)
             if logits_tensor is None:
-                raise RuntimeError(
-                    "capture_logits=True, but model output did not expose logits."
-                )
+                raise RuntimeError("capture_logits=True, but model output did not expose logits.")
             selector = detection_mask if logit_mask is None else logit_mask
             logits = logits_tensor[selector.to(logits_tensor.device)].detach().cpu()
 
@@ -207,9 +159,8 @@ class TransformersHookBackend:
         interventions: Sequence[ActivationIntervention],
         return_logits: bool = True,
         generation_kwargs: Mapping[str, Any] | None = None,
-        generation_policy: GenerationPolicy | None = None,
     ) -> Any:
-        del inputs, interventions, return_logits, generation_kwargs, generation_policy
+        del inputs, interventions, return_logits, generation_kwargs
         raise NotImplementedError(
             "TransformersHookBackend is extraction-only. Use NnsightActivationBackend for activation writes."
         )
@@ -227,9 +178,7 @@ def qwen_decoder_layers(model: Any) -> Sequence[Any]:
     try:
         return model.model.language_model.layers
     except AttributeError as exc:
-        raise TypeError(
-            "Expected Qwen3-VL model path model.model.language_model.layers."
-        ) from exc
+        raise TypeError("Expected Qwen3-VL model path model.model.language_model.layers.") from exc
 
 
 def prepare_model_inputs(inputs: Mapping[str, Any], model: Any) -> dict[str, Any]:
@@ -242,9 +191,7 @@ def prepare_model_inputs(inputs: Mapping[str, Any], model: Any) -> dict[str, Any
     accepted_keys = _accepted_forward_keys(model)
     if accepted_keys is None:
         return candidate_inputs
-    return {
-        key: value for key, value in candidate_inputs.items() if key in accepted_keys
-    }
+    return {key: value for key, value in candidate_inputs.items() if key in accepted_keys}
 
 
 def _accepted_forward_keys(model: Any) -> set[str] | None:
@@ -255,10 +202,7 @@ def _accepted_forward_keys(model: Any) -> set[str] | None:
         signature = inspect.signature(forward)
     except (TypeError, ValueError):
         return None
-    if any(
-        parameter.kind is inspect.Parameter.VAR_KEYWORD
-        for parameter in signature.parameters.values()
-    ):
+    if any(parameter.kind is inspect.Parameter.VAR_KEYWORD for parameter in signature.parameters.values()):
         return None
     return {
         name
