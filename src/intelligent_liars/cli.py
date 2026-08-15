@@ -97,6 +97,10 @@ from intelligent_liars.cli_insider import (
     grade_insider_trading,
     run_insider_trading_sweep,
 )
+from intelligent_liars.cli_interventions import (
+    build_intervention,
+    materialize_writer_edit,
+)
 from intelligent_liars.cli_probes import (
     cache_pooled_features,
     preflight_probes,
@@ -145,6 +149,7 @@ __all__ = [
     "_validate_insider_prompt_glob",
     "app",
     "build_pooled_feature_cache",
+    "build_intervention",
     "cache_pooled_features",
     "check_env",
     "check_environment",
@@ -172,6 +177,7 @@ __all__ = [
     "merge_activation_shards",
     "merge_rollout_files",
     "merge_rollouts",
+    "materialize_writer_edit",
     "model_config_from_env",
     "pair_sycophancy_dataset",
     "parse_layer_spec",

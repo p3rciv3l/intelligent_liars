@@ -169,8 +169,12 @@ The code is split by workflow:
 - `src/intelligent_liars/rollout_grading.py`: rollout grading orchestration.
 - `src/intelligent_liars/judging.py`: compatibility facade for judging imports.
 - `src/intelligent_liars/probes.py`: probe preflight and linear probe training.
+- `src/intelligent_liars/interventions.py`: truth-coordinate transforms, runtime hooks, and rank-one checkpoint edits.
 - `src/intelligent_liars/run_control.py`: locks, plan IDs, hashes, signal cleanup.
 - `src/intelligent_liars/dynamic_queue.py`: shared filesystem queue helpers.
+
+Intervention usage and materialization limits are documented in
+`docs/intervention_pipeline.md`.
 
 Long-running GPU runners:
 

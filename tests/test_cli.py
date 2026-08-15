@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import inspect
+import json
 from types import SimpleNamespace
 
 import pytest
@@ -47,6 +48,27 @@ from intelligent_liars.rollouts import (
 def _option_default(command, parameter_name: str):
     option = inspect.signature(command).parameters[parameter_name].default
     return option.default
+
+
+def _write_probe_direction(path, *, layer: int = 21) -> None:
+    path.write_text(
+        json.dumps(
+            {
+                "direction_sign_convention": "sklearn_logistic_coef_positive_points_honest_to_deceptive",
+                "general_domain": {
+                    "directions": [
+                        {
+                            "task": "general_domain",
+                            "layer": layer,
+                            "direction_vector": [1.0, 2.0],
+                            "intercept": -0.5,
+                            "direction_sign_convention": "sklearn_logistic_coef_positive_points_honest_to_deceptive",
+                        }
+                    ]
+                },
+            }
+        )
+    )
 
 
 def test_generation_cli_defaults_use_rollout_profiles():
@@ -1240,3 +1262,111 @@ def test_preflight_probes_cli_resolves_paths_and_options(tmp_path, monkeypatch):
     assert "trainable=1" in result.output
     assert "eval_only=1" in result.output
     assert "blocked=1" in result.output
+
+
+def test_build_intervention_cli_writes_portable_bundle(tmp_path):
+    probe_path = tmp_path / "probe.json"
+    output_path = tmp_path / "reflection.json"
+    _write_probe_direction(probe_path)
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "build-intervention",
+            "--probe",
+            str(probe_path),
+            "--output",
+            str(output_path),
+            "--layer",
+            "21",
+            "--intervention-layer",
+            "19",
+            "--intervention-layer",
+            "21",
+            "--method",
+            "one_sided_reflection",
+            "--matched-random-seed",
+            "7",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(output_path.read_text())
+    assert payload["format"] == "qwen_truth_intervention_v1"
+    assert payload["spec"]["layers"] == [19, 21]
+    assert payload["spec"]["method"] == "one_sided_reflection"
+    assert payload["spec"]["direction_mode"] == "matched_random"
+    assert payload["direction"]["vector"] == [1.0, 2.0]
+
+
+def test_materialize_writer_edit_rejects_runtime_only_method_before_model_load(
+    monkeypatch, tmp_path
+):
+    probe_path = tmp_path / "probe.json"
+    intervention_path = tmp_path / "reflection.json"
+    _write_probe_direction(probe_path)
+    build_result = CliRunner().invoke(
+        app,
+        [
+            "build-intervention",
+            "--probe",
+            str(probe_path),
+            "--output",
+            str(intervention_path),
+            "--layer",
+            "21",
+            "--method",
+            "one_sided_reflection",
+        ],
+    )
+    assert build_result.exit_code == 0, build_result.output
+
+    def fail_load(*_args, **_kwargs):
+        raise AssertionError("model should not load for a runtime-only intervention")
+
+    monkeypatch.setattr(
+        "intelligent_liars.cli_interventions.load_model_and_processor", fail_load
+    )
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "materialize-writer-edit",
+            "--intervention",
+            str(intervention_path),
+            "--output",
+            str(tmp_path / "model"),
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert isinstance(result.exception, ValueError)
+    assert "requires a runtime intervention" in str(result.exception)
+
+
+def test_build_homogeneous_writer_edit_records_dropped_affine_intercept(tmp_path):
+    probe_path = tmp_path / "probe.json"
+    output_path = tmp_path / "writer-reflection.json"
+    _write_probe_direction(probe_path)
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "build-intervention",
+            "--probe",
+            str(probe_path),
+            "--output",
+            str(output_path),
+            "--layer",
+            "21",
+            "--method",
+            "full_reflection",
+            "--homogeneous-writer-edit",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(output_path.read_text())
+    assert payload["direction"]["intercept"] == 0.0
+    assert payload["direction"]["original_intercept"] == -0.5
+    assert payload["spec"]["token_scope"] == "all"
