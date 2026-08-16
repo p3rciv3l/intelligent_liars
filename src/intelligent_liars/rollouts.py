@@ -127,6 +127,7 @@ class GeneratedCompletion:
 
     text: str
     thinking: str | None = None
+    raw_text: str | None = None
 
 
 def qwen_model_slug(model_id: str = DEFAULT_MODEL_ID) -> str:
@@ -775,7 +776,7 @@ def split_qwen_thinking(text: str) -> GeneratedCompletion:
     cleaned = text.lstrip("\n").rstrip()
     marker = "</think>"
     if marker not in cleaned:
-        return GeneratedCompletion(text=cleaned)
+        return GeneratedCompletion(text=cleaned, raw_text=text)
     thinking_text, _, answer_text = cleaned.rpartition(marker)
     if "<think>" in thinking_text:
         thinking_text = thinking_text.split("<think>", maxsplit=1)[1]
@@ -784,6 +785,7 @@ def split_qwen_thinking(text: str) -> GeneratedCompletion:
     return GeneratedCompletion(
         text=answer_text,
         thinking=thinking_text or None,
+        raw_text=text,
     )
 
 

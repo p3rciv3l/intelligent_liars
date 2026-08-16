@@ -16,6 +16,9 @@ class ModelLoadConfig:
     cache_dir: str | None = None
     gpu_ids: tuple[int, ...] | None = None
     cuda_visible_devices: str | None = None
+    attention_implementation: str = QWEN_ATTENTION_IMPLEMENTATION
+    device_map: str | dict[str, Any] | None = "auto"
+    revision: str | None = None
 
 
 @dataclass
@@ -58,7 +61,10 @@ def load_processor(config: ModelLoadConfig | None = None) -> ModelBundle:
 
     from transformers import AutoProcessor
 
-    processor = AutoProcessor.from_pretrained(model_id, cache_dir=config.cache_dir)
+    processor_kwargs: dict[str, Any] = {"cache_dir": config.cache_dir}
+    if config.revision is not None:
+        processor_kwargs["revision"] = config.revision
+    processor = AutoProcessor.from_pretrained(model_id, **processor_kwargs)
     tokenizer = _get_tokenizer(processor)
 
     _configure_tokenizer(tokenizer)
@@ -84,23 +90,37 @@ def load_model_and_processor(config: ModelLoadConfig | None = None) -> ModelBund
 
     model = Qwen3VLForConditionalGeneration.from_pretrained(
         model_id,
-        **qwen_model_load_kwargs(cache_dir=config.cache_dir),
+        **qwen_model_load_kwargs(
+            cache_dir=config.cache_dir,
+            attention_implementation=config.attention_implementation,
+            device_map=config.device_map,
+            revision=config.revision,
+        ),
     )
     model.eval()
     bundle.model = model
     return bundle
 
 
-def qwen_model_load_kwargs(*, cache_dir: str | None = None) -> dict[str, Any]:
+def qwen_model_load_kwargs(
+    *,
+    cache_dir: str | None = None,
+    attention_implementation: str = QWEN_ATTENTION_IMPLEMENTATION,
+    device_map: str | dict[str, Any] | None = "auto",
+    revision: str | None = None,
+) -> dict[str, Any]:
     """Return the shared Qwen3-VL load kwargs for Transformers and NNsight."""
     import torch
 
-    return {
+    kwargs = {
         "cache_dir": cache_dir,
-        "device_map": "auto",
+        "device_map": device_map,
         "dtype": torch.bfloat16,
-        "attn_implementation": QWEN_ATTENTION_IMPLEMENTATION,
+        "attn_implementation": attention_implementation,
     }
+    if revision is not None:
+        kwargs["revision"] = revision
+    return kwargs
 
 
 def qwen_model_load_description() -> str:

@@ -99,6 +99,7 @@ from intelligent_liars.cli_insider import (
 )
 from intelligent_liars.cli_interventions import (
     build_intervention,
+    build_intervention_suite,
     materialize_writer_edit,
 )
 from intelligent_liars.cli_probes import (
@@ -114,6 +115,14 @@ from intelligent_liars.cli_rollouts import (
     run_qwen_sweep,
 )
 from intelligent_liars.cli_sycophancy import generate_sycophancy
+from intelligent_liars.cli_standalone import (
+    distill_intervention_model,
+    generate_intervention_teacher,
+    intervention_model_fleet_status,
+    plan_intervention_model_fleet,
+    run_intervention_model_job,
+    verify_standalone_intervention_model,
+)
 
 __all__ = [
     "ActivationBackend",
@@ -150,6 +159,7 @@ __all__ = [
     "app",
     "build_pooled_feature_cache",
     "build_intervention",
+    "build_intervention_suite",
     "cache_pooled_features",
     "check_env",
     "check_environment",
@@ -160,6 +170,7 @@ __all__ = [
     "extract_activations",
     "generate_insider_trading",
     "generate_insider_trading_transcripts",
+    "generate_intervention_teacher",
     "generate_rollout_task",
     "generate_rollouts",
     "generate_sycophancy",
@@ -169,6 +180,7 @@ __all__ = [
     "grade_rollout_file",
     "grade_rollouts",
     "infer_rollout_task",
+    "intervention_model_fleet_status",
     "load_dotenv",
     "load_model_and_processor",
     "load_nnsight_bundle",
@@ -180,6 +192,7 @@ __all__ = [
     "materialize_writer_edit",
     "model_config_from_env",
     "pair_sycophancy_dataset",
+    "plan_intervention_model_fleet",
     "parse_layer_spec",
     "parse_task_name",
     "pending_rollout_source_indices",
@@ -189,12 +202,15 @@ __all__ = [
     "qwen_model_slug",
     "resolve_model_id",
     "run_insider_trading_sweep",
+    "run_intervention_model_job",
     "run_qwen_sweep",
     "seed_everything",
     "train_probe_directions",
     "train_probe_directions_from_cache",
+    "distill_intervention_model",
     "train_probes",
     "train_probes_from_cache",
     "typer",
     "validate_insider_trading_generation_resume",
+    "verify_standalone_intervention_model",
 ]

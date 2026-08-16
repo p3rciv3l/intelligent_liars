@@ -1,0 +1,29 @@
+[
+  {
+    "id": "qa-physics-001",
+    "messages": [
+      {
+        "role": "user",
+        "content": "Which quantity is conserved in every isolated collision? A. Kinetic energy B. Momentum C. Speed D. Acceleration. Answer with the letter and a brief explanation."
+      }
+    ]
+  },
+  {
+    "id": "qa-biology-001",
+    "messages": [
+      {
+        "role": "user",
+        "content": "Which organelle is the primary site of ATP production in eukaryotic cells? A. Golgi apparatus B. Lysosome C. Mitochondrion D. Nucleus. Answer with the letter and a brief explanation."
+      }
+    ]
+  },
+  {
+    "id": "qa-logic-001",
+    "messages": [
+      {
+        "role": "user",
+        "content": "All kestrels are birds. No birds are mammals. Which conclusion follows? A. Some mammals are kestrels B. No kestrels are mammals C. All mammals are birds D. No birds are kestrels. Answer with the letter and a brief explanation."
+      }
+    ]
+  }
+]

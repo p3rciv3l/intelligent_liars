@@ -1370,3 +1370,66 @@ def test_build_homogeneous_writer_edit_records_dropped_affine_intercept(tmp_path
     assert payload["direction"]["intercept"] == 0.0
     assert payload["direction"]["original_intercept"] == -0.5
     assert payload["spec"]["token_scope"] == "all"
+
+
+def test_build_intervention_suite_writes_all_variants(tmp_path):
+    probe_path = tmp_path / "probe.json"
+    output_dir = tmp_path / "suite"
+    _write_probe_direction(probe_path)
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "build-intervention-suite",
+            "--probe",
+            str(probe_path),
+            "--output",
+            str(output_dir),
+            "--layer",
+            "21",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    paths = sorted(output_dir.glob("*.json"))
+    assert len(paths) == 8
+    methods = {json.loads(path.read_text())["spec"]["method"] for path in paths}
+    assert methods == {
+        "scalar_addition",
+        "affine_projection",
+        "full_reflection",
+        "partial_reflection",
+        "one_sided_reflection",
+        "bounded_remap",
+        "bounded_margin_clamp",
+    }
+
+    prompts = tmp_path / "prompts.json"
+    prompts.write_text("[]")
+    preservation = tmp_path / "preservation.json"
+    preservation.write_text("{}")
+    plan_path = tmp_path / "plan.json"
+    plan_args = []
+    for path in paths:
+        plan_args.extend(["--intervention", str(path)])
+    plan_result = CliRunner().invoke(
+        app,
+        [
+            "plan-intervention-model-fleet",
+            *plan_args,
+            "--prompts",
+            str(prompts),
+            "--preservation-teacher",
+            str(preservation),
+            "--output-root",
+            str(tmp_path / "fleet"),
+            "--plan",
+            str(plan_path),
+            "--base-revision",
+            "dddddddddddddddddddddddddddddddddddddddd",
+        ],
+    )
+    assert plan_result.exit_code == 0, plan_result.output
+    plan = json.loads(plan_path.read_text())
+    assert len(plan["variants"]) == 8
+    assert plan["base_revision"] == "d" * 40

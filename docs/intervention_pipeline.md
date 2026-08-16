@@ -135,3 +135,138 @@ Every run should retain:
 The current direction was trained on mean-pooled completed answer tokens. A
 behavioral effect at generation time remains a causal hypothesis until the
 runtime intervention is evaluated.
+
+## Compile Interventions Into Standalone Qwen Models
+
+Runtime hooks are only used offline to generate teacher completions. Each
+teacher is then distilled into language-model LoRA weights, merged into the
+base model, and saved as an ordinary Qwen3-VL checkpoint. The resulting model
+loads with the stock Hugging Face Qwen class and requires no intervention code.
+
+Build the standard seven-method suite plus a matched-random reflection control:
+
+```bash
+PYTHONPATH=src uv run --no-sync intelligent-liars build-intervention-suite \
+  --probe artifacts/probes/sweeps/dense_15_27_by_layer/no_repe_layer21_c001.json \
+  --output artifacts/interventions/layer21_suite \
+  --layer 21
+```
+
+Prepare a JSON prompt file. Either a top-level list or `{ "records": [...] }`
+is accepted. Every row needs a stable `id` or `source_index` and `messages` or
+`input_messages`:
+
+```json
+[
+  {
+    "id": "mmlu-0001",
+    "messages": [
+      {"role": "user", "content": "Question and answer choices..."}
+    ]
+  }
+]
+```
+
+Generate one unmodified preservation teacher over a representative mix of
+general, action-format, and OSWorld trajectory prompts:
+
+```bash
+REVISION=$(PYTHONPATH=src uv run --no-sync python -c \
+  'from huggingface_hub import HfApi; print(HfApi().model_info("Qwen/Qwen3-VL-8B-Thinking").sha)')
+
+PYTHONPATH=src uv run --no-sync intelligent-liars generate-intervention-teacher \
+  --prompts examples/distillation/preservation_prompts.example.json \
+  --output artifacts/intervention_fleet/preservation_teacher.json \
+  --base-revision "$REVISION"
+```
+
+The checked-in `.example.json` files are schema-valid smoke inputs. Replace or
+extend them with the full intervention set and held-out-from-evaluation OSWorld
+trajectories before a scientific run.
+
+Plan all standalone variants:
+
+```bash
+args=()
+for path in artifacts/interventions/layer21_suite/*.json; do
+  args+=(--intervention "$path")
+done
+
+PYTHONPATH=src uv run --no-sync intelligent-liars plan-intervention-model-fleet \
+  "${args[@]}" \
+  --prompts examples/distillation/intervention_prompts.example.json \
+  --preservation-teacher artifacts/intervention_fleet/preservation_teacher.json \
+  --output-root artifacts/intervention_fleet \
+  --plan artifacts/intervention_fleet/plan.json \
+  --base-revision "$REVISION"
+```
+
+Place the plan and output root on a filesystem shared by the workers. Expose one
+GPU to each process and start the same draining worker command on every GPU:
+
+```bash
+CUDA_VISIBLE_DEVICES=0 PYTHONPATH=src uv run --no-sync \
+  intelligent-liars run-intervention-model-job \
+  --plan artifacts/intervention_fleet/plan.json \
+  --drain
+```
+
+Workers claim variants with atomic filesystem markers, so duplicate workers do
+not write the same teacher or checkpoint. Inspect queue state or retry failures:
+
+```bash
+PYTHONPATH=src uv run --no-sync intelligent-liars intervention-model-fleet-status \
+  --plan artifacts/intervention_fleet/plan.json
+
+CUDA_VISIBLE_DEVICES=0 PYTHONPATH=src uv run --no-sync \
+  intelligent-liars run-intervention-model-job \
+  --plan artifacts/intervention_fleet/plan.json \
+  --drain --retry-failed
+```
+
+After confirming no old workers remain alive, add `--recover-running` to move
+stale running markers into the retry queue. Claim tokens prevent the recovered
+worker from overwriting its replacement: every attempt writes to a claim-token
+directory, and only the current owner can publish a done marker. Draining
+workers continue past failed variants and retry each up to `--max-attempts`.
+
+The job has two resumable phases:
+
+1. Generate steered teacher completions with strict prompt, intervention, model,
+   and generation-setting hashes.
+2. Train language-only LoRA modules, mix preservation examples into the loss,
+   save resumable optimizer/adapter state, merge the adapter, and save stock
+   Qwen weights plus `standalone_model.json`.
+
+The default LoRA targets are the seven language-decoder projections (`q`, `k`,
+`v`, `o`, `gate`, `up`, and `down`). The vision tower remains frozen. Prompt
+records may include Qwen image/video content blocks; multimodal processing then
+requires the GPU environment's compatible `torchvision` and `qwen-vl-utils`.
+Fleet planning requires the preservation teacher and content-hashes every prompt,
+teacher, and intervention input; workers refuse changed plans or input files.
+It also resolves the floating Hugging Face model ID to an immutable revision SHA
+(or accepts `--base-revision`) and binds queue state to the resulting plan ID.
+The pinned unmodified model is recorded as the base control under
+`controls/base_control.json` when the first worker verifies its identity.
+
+The standalone manifest records `runtime_intervention_required: false`, source
+hashes, model revision when exposed by Transformers, the full LoRA/training
+configuration, module inventory, and final loss. A final `lora_adapter.pt` is
+retained even though the exported checkpoint contains merged weights.
+
+After a worker finishes, reload any result through the stock Qwen class and run
+a deterministic smoke generation:
+
+```bash
+CUDA_VISIBLE_DEVICES=0 PYTHONPATH=src uv run --no-sync \
+  intelligent-liars verify-standalone-intervention-model \
+  --model <model_output from fleet status done_artifacts>
+```
+
+This writes `standalone_verification.json` and rejects checkpoints that still
+depend on an adapter configuration.
+
+Distillation approximates each intervention's behavioral effect; it does not
+make a nonlinear one-sided or bounded transform analytically identical inside
+stock Qwen. MMLU and OSWorld still need to select the successful students. The
+fleet should retain the matched-random student and unmodified base as controls.

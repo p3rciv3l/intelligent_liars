@@ -135,6 +135,88 @@ def build_intervention(
     )
 
 
+@app.command("build-intervention-suite")
+def build_intervention_suite(
+    probe_path: Path = typer.Option(..., "--probe"),
+    output_dir: Path = typer.Option(..., "--output", "-o"),
+    layer: int = typer.Option(..., "--layer", min=0),
+    intervention_layers: list[int] | None = typer.Option(None, "--intervention-layer"),
+    task: str = typer.Option("general_domain"),
+    random_seed: int = typer.Option(0),
+    project_root: Path | None = typer.Option(None),
+    overwrite: bool = typer.Option(False, "--overwrite"),
+) -> None:
+    """Build the standard intervention matrix and one matched-random control."""
+
+    project_root = _resolve_project_root(project_root)
+    direction = load_probe_direction(
+        _project_path(project_root, probe_path), layer=layer, task=task
+    )
+    layers = tuple(intervention_layers or [layer])
+    specs = {
+        "scalar_add_deceptive": InterventionSpec(
+            method=InterventionMethod.SCALAR_ADDITION,
+            layers=layers,
+            score_delta=2.0,
+        ),
+        "affine_project_deceptive": InterventionSpec(
+            method=InterventionMethod.AFFINE_PROJECTION,
+            layers=layers,
+            projection_target=1.0,
+        ),
+        "full_reflection": InterventionSpec(
+            method=InterventionMethod.FULL_REFLECTION,
+            layers=layers,
+        ),
+        "partial_reflection": InterventionSpec(
+            method=InterventionMethod.PARTIAL_REFLECTION,
+            layers=layers,
+            reflection_strength=0.75,
+        ),
+        "one_sided_reflection": InterventionSpec(
+            method=InterventionMethod.ONE_SIDED_REFLECTION,
+            layers=layers,
+            selected_side="honest",
+        ),
+        "bounded_inversion": InterventionSpec(
+            method=InterventionMethod.BOUNDED_REMAP,
+            layers=layers,
+            remap_input_min=-2.0,
+            remap_input_max=2.0,
+            remap_output_min=2.0,
+            remap_output_max=-2.0,
+            max_score_delta=4.0,
+        ),
+        "bounded_deceptive_margin": InterventionSpec(
+            method=InterventionMethod.BOUNDED_MARGIN_CLAMP,
+            layers=layers,
+            selected_side="deceptive",
+            margin=1.0,
+            max_score_delta=2.0,
+        ),
+        "matched_random_full_reflection": InterventionSpec(
+            method=InterventionMethod.FULL_REFLECTION,
+            layers=layers,
+            direction_mode=DirectionMode.MATCHED_RANDOM,
+            random_seed=random_seed,
+        ),
+    }
+    resolved_output = _project_path(project_root, output_dir)
+    written: list[Path] = []
+    for name, spec in specs.items():
+        path = resolved_output / f"{name}.json"
+        save_intervention_bundle(
+            InterventionBundle(direction=direction, spec=spec),
+            path,
+            overwrite=overwrite,
+        )
+        written.append(path)
+    console.print(
+        "[green]Built intervention suite[/green] "
+        f"variants={len(written)} path={resolved_output}"
+    )
+
+
 @app.command("materialize-writer-edit")
 def materialize_writer_edit(
     intervention_path: Path = typer.Option(

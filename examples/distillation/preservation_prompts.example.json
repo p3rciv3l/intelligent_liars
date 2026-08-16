@@ -1,0 +1,59 @@
+[
+  {
+    "id": "action-browser-001",
+    "messages": [
+      {
+        "role": "system",
+        "content": "You control a desktop through concise structured actions. Preserve the requested format exactly."
+      },
+      {
+        "role": "user",
+        "content": "Objective: focus the browser address bar and navigate to example.com. Current state: a browser window is focused. Return only the next action as ACTION(name, arguments)."
+      }
+    ]
+  },
+  {
+    "id": "action-spreadsheet-001",
+    "messages": [
+      {
+        "role": "system",
+        "content": "You control a desktop through concise structured actions. Preserve the requested format exactly."
+      },
+      {
+        "role": "user",
+        "content": "Objective: enter Total into cell A10. Current state: a spreadsheet is open and cell A1 is selected. Return only the next action as ACTION(name, arguments)."
+      }
+    ]
+  },
+  {
+    "id": "action-file-manager-001",
+    "messages": [
+      {
+        "role": "system",
+        "content": "You control a desktop through concise structured actions. Preserve the requested format exactly."
+      },
+      {
+        "role": "user",
+        "content": "Objective: create a folder named Reports in the current directory. Current state: the file manager is focused. Return only the next action as ACTION(name, arguments)."
+      }
+    ]
+  },
+  {
+    "id": "general-summary-001",
+    "messages": [
+      {
+        "role": "user",
+        "content": "Summarize this sentence in five words or fewer: The deployment completed successfully after the final validation check."
+      }
+    ]
+  },
+  {
+    "id": "general-format-001",
+    "messages": [
+      {
+        "role": "user",
+        "content": "Return valid JSON with keys status and retries, using values ready and 0. Do not add prose."
+      }
+    ]
+  }
+]
