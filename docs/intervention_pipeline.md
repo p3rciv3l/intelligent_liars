@@ -1,5 +1,9 @@
 # Truth-Direction Intervention Pipeline
 
+The consolidated design rationale, implementation inventory, and GPU
+qualification gates are in
+[`standalone_model_decision_record_20260817.md`](standalone_model_decision_record_20260817.md).
+
 The intervention pipeline separates a probe direction from the operation applied
 relative to that direction. For probe vector `w`, intercept `b`, and activation
 `h`, the signed coordinate is:

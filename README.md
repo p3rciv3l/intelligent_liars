@@ -245,6 +245,7 @@ touch unless the project explicitly decides to do a separate formatting commit.
 
 Start here for historical context:
 
+- `docs/standalone_model_decision_record_20260817.md`
 - `docs/minimal_parameter_misalignment_and_gman_20260817.md`
 - `docs/vast_qwen_rollouts_20260621.md`
 - `docs/activation_full_20260622.md`
