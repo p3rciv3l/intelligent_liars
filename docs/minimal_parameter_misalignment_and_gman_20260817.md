@@ -20,17 +20,18 @@ Qwen3-VL-8B. The defensible claim today is:
 > Prior work suggests that a very low-dimensional trained update may be
 > sufficient to induce broad measured misalignment in Qwen3-VL-8B.
 
-Give Me A Node is a **conditional go for a capped, disposable, non-sensitive
-qualification run** and a **no-go for an immediate full experiment launch**.
-Its public API, H100 hardware, custom batch images, discounted jobs,
-checkpointing, and explicit
-teardown semantics fit this project well. It is also a new service with little
-independent operating history, an authenticated dashboard that was not
-inspected, no SLA or public live-capacity guarantee, and a recent status history
-with slow starts, failed wakes, and interrupted jobs. The current repository
-also lacks TinyLoRA and GRPO, pins a CUDA 13 PyTorch stack while the preferred
-runtime path is CUDA 12.9, and explicitly loads FlashAttention 2. Those software
-gaps must be closed before paid scientific work begins.
+Give Me A Node is not the preferred execution platform for this study because
+its public accelerator shapes are H100-only. The planned fleet benefits more
+from one model per inexpensive consumer GPU, with several RTX 3090-class cards
+running variants concurrently, than from paying for Hopper inference features.
+The service remains technically capable, but its hardware granularity is the
+deciding mismatch. Founder trust and enterprise compliance are not project
+gates.
+
+The repository now defaults the standalone compiler to 13-coordinate,
+fully-tied TinyLoRA. It still pins a CUDA 13 PyTorch stack and explicitly loads
+FlashAttention 2, so runtime packaging must be reconciled with whichever
+consumer-GPU host is selected.
 
 The requested acceleration stack is only partly available:
 
@@ -43,7 +44,7 @@ The requested acceleration stack is only partly available:
 
 ## What the literature establishes
 
-### TinyLoRA establishes tiny trained capacity for math, not misalignment
+### TinyLoRA demonstrates tiny trained capacity in math
 
 [TinyLoRA](https://arxiv.org/html/2602.04118v1) reports the following results:
 
@@ -55,12 +56,13 @@ The requested acceleration stack is only partly available:
 - The paper also reports Qwen3-8B text-model GSM8K results, but it does not
   evaluate alignment, Qwen3-VL, image inputs, or video inputs.
 
-The paper's own limitation is decisive: its findings are restricted to
-math-style reasoning and may not generalize to science, creative writing, or
-other behavior. Its RL advantage is also protocol-specific: exact-match math
-reward, seven learning-rate candidates, three seeds, and no KL penalty in the
-GSM8K experiment. This supports trying low-capacity RL; it does not establish
-that RL is universally more parameter-efficient for inducing misalignment.
+The published evaluation is math-specific, but the TinyLoRA parameterization is
+domain-agnostic: it constrains how model weights move, not which behavior the
+training data describes. This project therefore proceeds on the explicit
+assumption that the tiny trained subspace generalizes beyond math and tests that
+assumption directly on alignment and multimodal behavior. The paper's RL
+advantage remains protocol-specific: exact-match reward, seven learning-rate
+candidates, three seeds, and no KL penalty in the GSM8K experiment.
 
 TinyLoRA parameter accounting needs precise language. A handful of trained
 values controls dense matrix updates through frozen SVD factors, fixed random
@@ -129,8 +131,8 @@ forgetting is neither necessary nor sufficient for emergent misalignment.
 
 ### Preregistered claim and primary endpoint
 
-The primary hypothesis should be that optimizing 13 TinyLoRA scalar degrees of
-freedom on a narrow behavior changes a preregistered aggregate out-of-domain
+The primary hypothesis is that optimizing 13 TinyLoRA scalar degrees of freedom
+on a narrow behavior changes a preregistered aggregate out-of-domain
 misalignment score in Qwen3-VL-8B-Thinking while preserving coherence. The
 training reward must score only the narrow behavior. Rewarding hostility,
 deception, or an “evil persona” would directly train the claimed outcome.
@@ -328,152 +330,57 @@ was performed.
 
 ### Setup and image recommendation
 
-Prefer batch jobs for the first reproducibility and throughput work. They accept
-an immutable public image digest, are 25% cheaper than interactive H100s, have no
-stated session minimum, do not bill while queued, and capture outputs at job end.
-Use an interactive node only for debugging that genuinely needs iterative
-commands and a persistent working tree.
+Use a local or commodity host exposing individual 24 GiB consumer GPUs, then
+launch one draining worker per GPU through `CUDA_VISIBLE_DEVICES`. The 8B BF16
+base occupies roughly 16 GiB before activations and temporary SVD workspace, so
+RTX 3090-class cards are the conservative starting point. Smaller cards need a
+separately validated quantized/offload path.
 
-Use two images rather than forcing training and serving dependencies into one
-environment:
+Pin CUDA, torch, Transformers, the repository commit, and the Qwen revision.
+The first worker computes seeded randomized rank-2 SVD factors once under a
+filesystem lock and writes `controls/tinylora_basis.pt`; parallel workers load
+that shared basis rather than repeating 252 decompositions. Each result records
+the ordered module/group map, exact 13-scalar budget, update norms, post-cast
+changed-entry count, and basis hash. This local implementation uses TinyLoRA's
+update formula with seeded randomized low-rank SVD rather than PEFT's full-SVD
+initialization, and records that distinction in the manifest.
 
-1. **Inference qualification:** pin
-   `lmsysorg/sglang:v0.5.17-cu129-runtime` to the registry digest observed on
-   2026-08-17,
-   `sha256:2fa998888b1b48e778e17f6360a6b60f3cc888b56fa35281669af1d007316337`.
-   The tag and digest must be resolved again when the job manifest is finalized.
-   SGLang's
-   [release workflow](https://github.com/sgl-project/sglang/blob/main/.github/workflows/release-docker-runtime.yml)
-   publishes CUDA 12.9 runtime variants. Launch BF16 with explicit `fa3` for
-   text and multimodal attention, pin the Qwen revision SHA, and compare an
-   ordinary baseline with an otherwise identical n-gram arm.
-2. **Training and repository evaluation:** build a separate CUDA 12.9/Hopper
-   development image with this repository copied at a commit SHA and every
-   Python/CUDA dependency pinned. Do not run the existing `uv.lock` unchanged:
-   it currently resolves PyTorch 2.12 with CUDA 13 packages, while the preferred
-   GMAN and SGLang placement path is CUDA 12.9. Reconcile torch, `nvcc`,
-   Transformers, PEFT/TinyLoRA, and the chosen RL framework first, then record
-   `pip freeze`, driver, GPU architecture, model revision, and image digest in
-   every result.
-
-The current repository implements language-decoder LoRA distillation via SFT;
-it does not implement TinyLoRA, GRPO, MTP, or speculative decoding. The
-standalone-model compiler is therefore not the requested TinyLoRA/GRPO
-experiment runner. Infrastructure qualification can start after the environment
-is pinned, but scientific training needs implementation and tests first.
+The repository implements language-decoder TinyLoRA distillation via SFT with
+exact scalar-budget and merge accounting. GRPO, MTP, and speculative decoding
+remain separate capabilities; none is required for the first standalone-model
+fleet.
 
 ### Recommended staged launch, after explicit approval
 
-1. **Environment-only qualification on one batch H100.** Load the pinned model,
-   run deterministic text and image fixtures, prove both FA3 backends from logs,
-   record versions and hashes, and exit. Set a hard duration and spend cap.
-2. **Inference A/B on one batch H100.** Compare FA3 alone against FA3 plus
-   n-gram speculation on the actual prompt-length and modality distribution.
-   Promote speculation only if end-to-end latency or throughput improves without
-   output divergence.
-3. **Training smoke test.** Run one tiny base/control arm through checkpoint,
+1. **Environment qualification on one RTX 3090-class GPU.** Load the pinned
+   model and run deterministic text and image forward/backward fixtures.
+2. **Training smoke test.** Run one tiny base/control arm through checkpoint,
    resume, artifact capture, and judge scoring before starting a sweep.
-4. **Capped factorial pilot.** Use batch jobs and one build for independent
-   variants. An eight-H100 batch attempt costs about $23.976 per running hour at
-   list price; an interactive eight-H100 node costs about $31.968 per hour and
-   has a $10.656 minimum. Put the cap in the workspace and job manifest, not in
-   an operator's memory.
-5. **Scale only after controls pass.** Do not spend on a full seed matrix until
+3. **Parallel pilot.** Start one draining process per consumer GPU against the
+   same immutable plan and shared output root.
+4. **Scale only after controls pass.** Do not spend on a full seed matrix until
    the base model, zero adapter, random control, checkpoint restore, and scoring
    calibration all pass.
 
-### Teardown and data hygiene
+### Decision scope
 
-For batch jobs, write the verdict to `$GMN_RESULT_PATH` and durable files to
-`$GMN_OUTPUT_DIR` or a write-scoped external connection. Job scratch and the
-internal checkpoint slot are not long-term storage. Cancel a bad run rather than
-letting it finish, then verify the terminal state and downloaded artifact hashes.
-
-For interactive nodes:
-
-1. wait for the detached command's exit code;
-2. export results and verify checksums;
-3. remove any exposed endpoint;
-4. call `stop_node` to end billing immediately;
-5. snapshot only if the environment is worth retaining; and
-6. call `delete_node` when retention is not needed, because deletion permanently
-   erases the persistent disk whereas stopping parks it.
-
-Delete uploaded build contexts after dependent jobs finish if they contain
-private source or data. The docs note that deleting a context does not delete
-already built registry images, logs, artifacts, or audit records, so retention
-requirements must be checked separately.
-
-### Independent evidence and residual risk
-
-Independent review coverage is too sparse for a strong reliability claim. The
-publicly indexed reports found were:
-
-- a [Digg-indexed user/agent anecdote](https://digg.com/tech/masx04s0) claiming
-  a 2B RLVR baseline, two GRPO runs, and evaluations completed for $19 through
-  the MCP interface; it contains no reproducible logs or independent audit; and
-- an independent [PEARL pull request](https://github.com/svdrecbd/PEARL/pull/4)
-  that records a Docker build-context failure before GPU provisioning; this is
-  useful integration evidence, not a reliability or performance review; and
-- an automated
-  [domain-reputation page](https://gridinsoft.com/online-virus-scanner/url/givemeanode-com)
-  that found no blacklist hit but warned that the domain was newly registered
-  and had little reputation history. This is not a GPU-service review or a
-  security assessment.
-
-Testimonials on the Give Me A Node home page are first-party marketing and were
-not counted as independent evidence. No substantive Reddit, Hacker News,
-G2/Capterra, or long-form operator review was found. Absence of negative reports
-is weak evidence for a service this new.
-
-The strongest operational evidence is first-party but cuts against treating the
-service as rapid or durable by default. Its public
-[45-day status summary](https://status.givemeanode.com) reported 98.6% for
-nodes, 97.07% for jobs, and 99.79% for storage when fetched during this review.
-The [incident history](https://status.givemeanode.com/events.md) repeatedly
-records slow node readiness, failed stopped-node wakes, submitted-job failures,
-and interrupted runs, including five slow-readiness windows on August 15–16.
-These percentages are too short-lived and vendor-operated to be an SLA, but the
-incident detail is useful evidence that startup can be delayed and checkpointing
-is operationally necessary.
-
-The public docs claim encrypted persistent disks, tenant isolation, scoped
-tokens, audit logs, credential-isolating data connections, and no inbound ports
-by default. The contractual
-[Data Use Policy](https://givemeanode.com/data-use) says customer content is not
-used for model training or generalized-product improvement and offers a data
-processing agreement on request. The [Terms of Service](https://givemeanode.com/tos)
-also say node persistence is best-effort, the service is not a backup, parked
-nodes may incur storage charges, and availability, capacity, and successful wake
-are not guaranteed.
-
-This review found no public SOC 2/ISO attestation, penetration-test report,
-vulnerability-disclosure policy, region/residency matrix, SLA, backup RPO/RTO,
-or independent security audit. Container isolation on shared H100 hosts should
-not be treated as equivalent to a dedicated security boundary without further
-evidence.
-
-Before putting sensitive unpublished data or model weights on the service, an
-authenticated qualification should verify live quotas and inventory, support
-response, data-retention terms, deletion guarantees, billing controls, and the
-organization's required compliance posture. Until then, use public model
-weights, minimally scoped short-lived tokens, non-sensitive fixtures, an exact
-spend cap, and export-before-delete discipline.
+Operator trust and enterprise-compliance review are not gating this project.
+The service is set aside because its H100-only public shapes are a poor fit for
+the desired many-small-workers topology, not because of founder or security
+concerns. If the platform later offers individually rentable consumer GPUs, its
+agent-facing queue and checkpoint model can be reconsidered.
 
 ## Final recommendation
 
-Proceed with engineering preparation and a small, explicitly approved Give Me A
-Node qualification job; do not launch the full study yet. The platform is a
-strong functional fit for reproducible H100 batch work, but the current evidence
-does not establish production maturity, and the repository is not yet the
-TinyLoRA/GRPO/FA3 runner the scientific claim requires.
+Use a consumer-GPU fleet rather than Give Me A Node for the first standalone
+model study. Start with one RTX 3090-class qualification worker, then run one
+variant per GPU in parallel after memory, merge, and reload checks pass.
 
 The launch gate is:
 
-- a pinned CUDA/torch/Transformers/PEFT/RL image;
-- implemented and tested TinyLoRA plus the preregistered controls;
-- FA3 made explicit and proven for text and vision paths;
-- MTP removed from scope;
-- no-speculation versus n-gram qualification passed;
-- authenticated quota, spend-cap, retention, and deletion checks completed; and
-- explicit approval to spend GPU funds.
+- a pinned CUDA/torch/Transformers image for the selected consumer GPU host;
+- the implemented TinyLoRA path plus the preregistered controls;
+- one RTX 3090-class worker passing BF16 load, backward, merge, and stock reload;
+- one process per GPU draining the immutable shared fleet plan;
+- consumer-GPU memory and checkpoint-storage qualification completed; and
+- explicit approval to start the official runs.

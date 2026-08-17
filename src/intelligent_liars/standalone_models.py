@@ -6,6 +6,7 @@ import math
 import os
 import random
 import gc
+import fcntl
 import re
 import socket
 import uuid
@@ -38,9 +39,13 @@ from intelligent_liars.rollouts import (
 
 
 TEACHER_DATASET_FORMAT = "qwen_intervention_teacher_v1"
-STANDALONE_MODEL_FORMAT = "qwen_intervention_student_v1"
-FLEET_PLAN_FORMAT = "qwen_intervention_fleet_plan_v1"
-DEFAULT_LORA_TARGETS = (
+STANDALONE_MODEL_FORMAT = "qwen_intervention_student_v2"
+FLEET_PLAN_FORMAT = "qwen_intervention_fleet_plan_v2"
+TINYLORA_IMPLEMENTATION = "intelligent_liars_tinylora_v2"
+TINYLORA_SVD_OVERSAMPLING = 4
+TINYLORA_SVD_POWER_ITERATIONS = 2
+TINYLORA_BASIS_SEED_OFFSET = 1_000_000
+DEFAULT_TINYLORA_TARGETS = (
     "self_attn.q_proj",
     "self_attn.k_proj",
     "self_attn.v_proj",
@@ -59,9 +64,10 @@ class TeacherDatasetSummary:
 
 
 @dataclass(frozen=True)
-class LoRATrainingConfig:
-    rank: int = 16
-    alpha: float = 32.0
+class TinyLoRATrainingConfig:
+    svd_rank: int = 2
+    projection_dim: int = 13
+    projection_seed: int = 42
     dropout: float = 0.0
     learning_rate: float = 2e-4
     epochs: int = 1
@@ -72,7 +78,7 @@ class LoRATrainingConfig:
     seed: int = 0
     checkpoint_every_steps: int = 50
     preservation_weight: float = 1.0
-    target_modules: tuple[str, ...] = DEFAULT_LORA_TARGETS
+    target_modules: tuple[str, ...] = DEFAULT_TINYLORA_TARGETS
     train_layers: tuple[int, ...] | None = None
     gradient_checkpointing: bool = True
 
@@ -83,6 +89,7 @@ class StandaloneModelSummary:
     optimizer_steps: int
     examples: int
     merged_modules: tuple[str, ...]
+    trainable_scalars: int
 
 
 @dataclass(frozen=True)
@@ -105,7 +112,7 @@ class FleetPlan:
     base_control_output: str
     variants: tuple[FleetVariant, ...]
     generation: GenerationSettings
-    training: LoRATrainingConfig
+    training: TinyLoRATrainingConfig
     base_model: str = DEFAULT_MODEL_ID
     base_revision: str = ""
 
@@ -119,58 +126,160 @@ class FleetClaim:
     attempt: int
 
 
-class LoRALinear(nn.Module):
+class TinyLoRALinear(nn.Module):
     def __init__(
         self,
         base: nn.Module,
         *,
-        rank: int,
-        alpha: float,
+        trainable_vector: nn.Parameter,
+        group_index: int,
+        module_index: int,
+        svd_rank: int,
+        projection_seed: int,
         dropout: float,
+        basis: Mapping[str, torch.Tensor] | None = None,
     ) -> None:
         super().__init__()
-        if rank < 1:
-            raise ValueError("LoRA rank must be positive")
+        if svd_rank < 1:
+            raise ValueError("TinyLoRA SVD rank must be positive")
         if not hasattr(base, "weight"):
-            raise TypeError("LoRA target must expose a weight tensor")
+            raise TypeError("TinyLoRA target must expose a weight tensor")
         weight = base.weight
         if weight.ndim != 2:
-            raise TypeError("LoRA target weight must be a matrix")
+            raise TypeError("TinyLoRA target weight must be a matrix")
         self.base = base
-        self.rank = rank
-        self.scaling = alpha / rank
+        self.group_index = group_index
+        self.module_index = module_index
+        self.svd_rank = min(svd_rank, min(weight.shape))
         self.dropout = nn.Dropout(dropout)
-        self.lora_a = nn.Parameter(
-            torch.empty(rank, weight.shape[1], dtype=torch.float32)
+        self.tinylora_v = trainable_vector
+        if basis is None:
+            weight_fp32 = weight.detach().float()
+            approximation_rank = min(
+                self.svd_rank + TINYLORA_SVD_OVERSAMPLING,
+                min(weight.shape),
+            )
+            devices = (
+                [
+                    weight.device.index
+                    if weight.device.index is not None
+                    else torch.cuda.current_device()
+                ]
+                if weight.device.type == "cuda"
+                else []
+            )
+            with torch.random.fork_rng(devices=devices):
+                torch.manual_seed(
+                    projection_seed + module_index + TINYLORA_BASIS_SEED_OFFSET
+                )
+                left, singular_values, right = torch.svd_lowrank(
+                    weight_fp32,
+                    q=approximation_rank,
+                    niter=TINYLORA_SVD_POWER_ITERATIONS,
+                )
+            right = right.transpose(0, 1)
+            tinylora_a = (
+                torch.sqrt(singular_values[: self.svd_rank])[:, None]
+                * right[: self.svd_rank]
+            )
+            tinylora_b = (
+                left[:, : self.svd_rank]
+                * torch.sqrt(singular_values[: self.svd_rank])[None, :]
+            )
+            generator = torch.Generator(device="cpu").manual_seed(
+                projection_seed + module_index
+            )
+            tinylora_projection = torch.normal(
+                mean=0.0,
+                std=1.0 / math.sqrt(self.svd_rank),
+                size=(trainable_vector.numel(), self.svd_rank, self.svd_rank),
+                generator=generator,
+            )
+        else:
+            tinylora_a = basis["tinylora_a"]
+            tinylora_b = basis["tinylora_b"]
+            tinylora_projection = basis["tinylora_projection"]
+            expected_shapes = (
+                (self.svd_rank, weight.shape[1]),
+                (weight.shape[0], self.svd_rank),
+                (trainable_vector.numel(), self.svd_rank, self.svd_rank),
+            )
+            actual_shapes = (
+                tuple(tinylora_a.shape),
+                tuple(tinylora_b.shape),
+                tuple(tinylora_projection.shape),
+            )
+            if actual_shapes != expected_shapes:
+                raise ValueError(
+                    "Cached TinyLoRA basis shapes do not match the target module"
+                )
+        self.register_buffer(
+            "tinylora_a",
+            tinylora_a.to(device=weight.device, dtype=weight.dtype).contiguous(),
         )
-        self.lora_b = nn.Parameter(
-            torch.zeros(weight.shape[0], rank, dtype=torch.float32)
+        self.register_buffer(
+            "tinylora_b",
+            tinylora_b.to(device=weight.device, dtype=weight.dtype).contiguous(),
         )
-        nn.init.kaiming_uniform_(self.lora_a, a=5**0.5)
+        self.register_buffer(
+            "tinylora_projection",
+            tinylora_projection.to(
+                device=weight.device,
+                dtype=weight.dtype,
+            ).contiguous(),
+        )
         for parameter in self.base.parameters():
             parameter.requires_grad_(False)
 
+    def _mixing_matrix(self, *, dtype: torch.dtype | None = None) -> torch.Tensor:
+        dtype = dtype or self.tinylora_projection.dtype
+        return torch.einsum(
+            "i,ijk->jk",
+            self.tinylora_v.to(dtype=dtype),
+            self.tinylora_projection.to(dtype=dtype),
+        )
+
     def forward(self, inputs: torch.Tensor) -> torch.Tensor:
         base_output = self.base(inputs)
-        update = F.linear(
-            F.linear(self.dropout(inputs).float(), self.lora_a), self.lora_b
+        projected = F.linear(self.dropout(inputs), self.tinylora_a)
+        mixed = F.linear(projected, self._mixing_matrix())
+        update = F.linear(mixed, self.tinylora_b)
+        return base_output + update.to(dtype=base_output.dtype)
+
+    def delta_weight(self) -> torch.Tensor:
+        return (
+            self.tinylora_b.float()
+            @ self._mixing_matrix(dtype=torch.float32)
+            @ self.tinylora_a.float()
         )
-        return base_output + (self.scaling * update).to(dtype=base_output.dtype)
 
     def merged_weight(self) -> torch.Tensor:
-        update = self.lora_b @ self.lora_a
-        return self.base.weight + (self.scaling * update).to(
+        return (self.base.weight.float() + self.delta_weight()).to(
             device=self.base.weight.device,
             dtype=self.base.weight.dtype,
         )
 
 
 @dataclass(frozen=True)
-class InstalledLoRA:
+class InstalledTinyLoRA:
     name: str
     parent: nn.Module
     attribute: str
-    module: LoRALinear
+    module: TinyLoRALinear
+
+
+@dataclass(frozen=True)
+class TinyLoRAMergeSummary:
+    modules: tuple[str, ...]
+    trainable_scalars: int
+    parameter_groups: int
+    changed_entries: int
+    target_entries: int
+    delta_l2_norm: float
+    target_weight_l2_norm: float
+    relative_delta_l2_norm: float
+    max_abs_delta: float
+    trainable_l2_norm: float
 
 
 def load_prompt_records(path: Path) -> list[dict[str, Any]]:
@@ -209,9 +318,10 @@ def load_prompt_records(path: Path) -> list[dict[str, Any]]:
     return records
 
 
-def validate_lora_training_config(config: LoRATrainingConfig) -> None:
+def validate_tinylora_training_config(config: TinyLoRATrainingConfig) -> None:
     positive_ints = {
-        "rank": config.rank,
+        "svd_rank": config.svd_rank,
+        "projection_dim": config.projection_dim,
         "epochs": config.epochs,
         "batch_size": config.batch_size,
         "gradient_accumulation_steps": config.gradient_accumulation_steps,
@@ -219,11 +329,10 @@ def validate_lora_training_config(config: LoRATrainingConfig) -> None:
     }
     invalid_ints = [name for name, value in positive_ints.items() if value < 1]
     if invalid_ints:
-        raise ValueError(f"LoRA training settings must be positive: {invalid_ints}")
+        raise ValueError(f"TinyLoRA training settings must be positive: {invalid_ints}")
     if config.checkpoint_every_steps < 0:
         raise ValueError("checkpoint_every_steps must be non-negative")
     numeric = {
-        "alpha": config.alpha,
         "dropout": config.dropout,
         "learning_rate": config.learning_rate,
         "max_grad_norm": config.max_grad_norm,
@@ -231,21 +340,21 @@ def validate_lora_training_config(config: LoRATrainingConfig) -> None:
     }
     non_finite = [name for name, value in numeric.items() if not math.isfinite(value)]
     if non_finite:
-        raise ValueError(f"LoRA training settings must be finite: {non_finite}")
-    if config.alpha <= 0 or config.learning_rate <= 0 or config.max_grad_norm <= 0:
-        raise ValueError(
-            "LoRA alpha, learning_rate, and max_grad_norm must be positive"
-        )
+        raise ValueError(f"TinyLoRA training settings must be finite: {non_finite}")
+    if config.learning_rate <= 0 or config.max_grad_norm <= 0:
+        raise ValueError("TinyLoRA learning_rate and max_grad_norm must be positive")
     if not 0 <= config.dropout < 1:
-        raise ValueError("LoRA dropout must be in [0, 1)")
+        raise ValueError("TinyLoRA dropout must be in [0, 1)")
     if config.preservation_weight <= 0:
         raise ValueError("preservation_weight must be positive")
     if not config.target_modules:
-        raise ValueError("At least one LoRA target module is required")
+        raise ValueError("At least one TinyLoRA target module is required")
+    if len(set(config.target_modules)) != len(config.target_modules):
+        raise ValueError("TinyLoRA target modules must be unique")
     if config.train_layers is not None and len(set(config.train_layers)) != len(
         config.train_layers
     ):
-        raise ValueError("LoRA train layers must be unique")
+        raise ValueError("TinyLoRA train layers must be unique")
 
 
 def generate_teacher_dataset(
@@ -382,11 +491,13 @@ def generate_teacher_completions(
     return [split_qwen_thinking(text) for text in decoded]
 
 
-def install_lora(
+def install_tinylora(
     model: Any,
-    config: LoRATrainingConfig,
-) -> list[InstalledLoRA]:
-    validate_lora_training_config(config)
+    config: TinyLoRATrainingConfig,
+    *,
+    basis: Mapping[str, Mapping[str, torch.Tensor]] | None = None,
+) -> list[InstalledTinyLoRA]:
+    validate_tinylora_training_config(config)
     for parameter in model.parameters():
         parameter.requires_grad_(False)
     layers = model.model.language_model.layers
@@ -397,44 +508,184 @@ def install_lora(
     )
     invalid = [layer for layer in selected_layers if layer < 0 or layer >= len(layers)]
     if invalid:
-        raise ValueError(f"LoRA train layers are outside the model: {invalid}")
-    installed: list[InstalledLoRA] = []
+        raise ValueError(f"TinyLoRA train layers are outside the model: {invalid}")
+    targets: list[tuple[int, str, nn.Module, str, nn.Module]] = []
     for layer_idx in selected_layers:
         layer = layers[layer_idx]
         for target in config.target_modules:
             parent, attribute = _resolve_relative_module(layer, target)
             base = getattr(parent, attribute)
-            wrapped = LoRALinear(
-                base,
-                rank=config.rank,
-                alpha=config.alpha,
-                dropout=config.dropout,
-            ).to(device=base.weight.device)
-            setattr(parent, attribute, wrapped)
-            installed.append(
-                InstalledLoRA(
-                    name=f"model.language_model.layers.{layer_idx}.{target}",
-                    parent=parent,
-                    attribute=attribute,
-                    module=wrapped,
-                )
+            targets.append((layer_idx, target, parent, attribute, base))
+    if not targets:
+        raise ValueError("No TinyLoRA modules were selected")
+    target_names = {
+        f"model.language_model.layers.{layer_idx}.{target}"
+        for layer_idx, target, _parent, _attribute, _base in targets
+    }
+    if basis is not None and set(basis) != target_names:
+        raise ValueError("Cached TinyLoRA basis module inventory does not match")
+    trainable_vector = nn.Parameter(
+        torch.zeros(
+            config.projection_dim,
+            dtype=torch.float32,
+            device=targets[0][4].weight.device,
+        )
+    )
+    installed: list[InstalledTinyLoRA] = []
+    for module_index, (layer_idx, target, parent, attribute, base) in enumerate(
+        targets
+    ):
+        name = f"model.language_model.layers.{layer_idx}.{target}"
+        if trainable_vector.device != base.weight.device:
+            raise ValueError(
+                "Fully tied TinyLoRA cannot span devices; use one model per GPU"
             )
-    if not installed:
-        raise ValueError("No LoRA modules were installed")
+        wrapped = TinyLoRALinear(
+            base,
+            trainable_vector=trainable_vector,
+            group_index=0,
+            module_index=module_index,
+            svd_rank=config.svd_rank,
+            projection_seed=config.projection_seed,
+            dropout=config.dropout,
+            basis=(basis[name] if basis is not None else None),
+        )
+        setattr(parent, attribute, wrapped)
+        installed.append(
+            InstalledTinyLoRA(
+                name=name,
+                parent=parent,
+                attribute=attribute,
+                module=wrapped,
+            )
+        )
     return installed
 
 
-def merge_lora(installed: Sequence[InstalledLoRA]) -> tuple[str, ...]:
+def install_tinylora_with_cache(
+    *,
+    model_bundle: ModelBundle,
+    config: TinyLoRATrainingConfig,
+    cache_path: Path | None,
+) -> list[InstalledTinyLoRA]:
+    if cache_path is None:
+        return install_tinylora(model_bundle.model, config)
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+    identity = {
+        "format": "qwen_tinylora_basis_v1",
+        "implementation": TINYLORA_IMPLEMENTATION,
+        "base_model": model_bundle.model_id,
+        "base_revision": _bundle_revision(model_bundle),
+        "base_dtype": str(next(model_bundle.model.parameters()).dtype),
+        "svd_rank": config.svd_rank,
+        "svd_method": "seeded_randomized_lowrank",
+        "svd_oversampling": TINYLORA_SVD_OVERSAMPLING,
+        "svd_power_iterations": TINYLORA_SVD_POWER_ITERATIONS,
+        "basis_seed_offset": TINYLORA_BASIS_SEED_OFFSET,
+        "projection_dim": config.projection_dim,
+        "projection_seed": config.projection_seed,
+        "target_modules": list(config.target_modules),
+        "train_layers": list(config.train_layers) if config.train_layers else None,
+    }
+    lock_path = cache_path.with_name(f".{cache_path.name}.lock")
+    with lock_path.open("a+b") as lock_handle:
+        fcntl.flock(lock_handle, fcntl.LOCK_EX)
+        try:
+            if cache_path.exists():
+                payload = torch.load(
+                    cache_path,
+                    map_location="cpu",
+                    weights_only=False,
+                )
+                if payload.get("identity") != identity:
+                    raise ValueError(
+                        "Cached TinyLoRA basis does not match this model and config"
+                    )
+                basis = payload.get("modules")
+                if not isinstance(basis, Mapping):
+                    raise ValueError("Cached TinyLoRA basis is missing module tensors")
+                return install_tinylora(
+                    model_bundle.model,
+                    config,
+                    basis=basis,
+                )
+            installed = install_tinylora(model_bundle.model, config)
+            temporary = cache_path.with_name(
+                f".{cache_path.name}.tmp-{os.getpid()}-{uuid.uuid4().hex}"
+            )
+            try:
+                with temporary.open("wb") as output:
+                    torch.save(
+                        {
+                            "identity": identity,
+                            "modules": _tinylora_basis_state(installed),
+                        },
+                        output,
+                    )
+                    output.flush()
+                    os.fsync(output.fileno())
+                os.replace(temporary, cache_path)
+            finally:
+                temporary.unlink(missing_ok=True)
+            return installed
+        finally:
+            fcntl.flock(lock_handle, fcntl.LOCK_UN)
+
+
+def merge_tinylora(
+    installed: Sequence[InstalledTinyLoRA],
+) -> TinyLoRAMergeSummary:
     merged: list[str] = []
+    vectors = {id(item.module.tinylora_v): item.module.tinylora_v for item in installed}
+    changed_entries = 0
+    target_entries = 0
+    delta_squared = 0.0
+    target_squared = 0.0
+    max_abs_delta = 0.0
     for item in installed:
+        delta = item.module.delta_weight().detach()
         merged_weight = item.module.merged_weight()
         if not torch.isfinite(merged_weight).all():
-            raise ValueError(f"LoRA merge produced non-finite weights for {item.name}")
+            raise ValueError(
+                f"TinyLoRA merge produced non-finite weights for {item.name}"
+            )
+        changed_entries += int(
+            torch.count_nonzero(merged_weight != item.module.base.weight).item()
+        )
+        target_entries += item.module.base.weight.numel()
+        delta_squared += float(torch.sum(delta.double().square()).cpu().item())
+        target_squared += float(
+            torch.sum(item.module.base.weight.detach().double().square()).cpu().item()
+        )
+        max_abs_delta = max(
+            max_abs_delta,
+            float(delta.abs().max().cpu().item()),
+        )
         with torch.no_grad():
             item.module.base.weight.copy_(merged_weight)
         setattr(item.parent, item.attribute, item.module.base)
         merged.append(item.name)
-    return tuple(merged)
+    delta_l2_norm = math.sqrt(delta_squared)
+    target_weight_l2_norm = math.sqrt(target_squared)
+    return TinyLoRAMergeSummary(
+        modules=tuple(merged),
+        trainable_scalars=sum(vector.numel() for vector in vectors.values()),
+        parameter_groups=len(vectors),
+        changed_entries=changed_entries,
+        target_entries=target_entries,
+        delta_l2_norm=delta_l2_norm,
+        target_weight_l2_norm=target_weight_l2_norm,
+        relative_delta_l2_norm=(
+            delta_l2_norm / target_weight_l2_norm if target_weight_l2_norm else 0.0
+        ),
+        max_abs_delta=max_abs_delta,
+        trainable_l2_norm=math.sqrt(
+            sum(
+                float(torch.sum(vector.detach().double().square()).cpu().item())
+                for vector in vectors.values()
+            )
+        ),
+    )
 
 
 def train_standalone_model(
@@ -442,12 +693,13 @@ def train_standalone_model(
     model_bundle: ModelBundle,
     teacher_path: Path,
     output_dir: Path,
-    config: LoRATrainingConfig,
+    config: TinyLoRATrainingConfig,
     preservation_teacher_path: Path | None = None,
     resume: bool = True,
     fleet_plan_id: str | None = None,
+    tinylora_basis_path: Path | None = None,
 ) -> StandaloneModelSummary:
-    validate_lora_training_config(config)
+    validate_tinylora_training_config(config)
     if model_bundle.model is None:
         raise ValueError("Standalone model training requires model weights")
     teacher_payload = _load_teacher_payload(teacher_path)
@@ -491,6 +743,12 @@ def train_standalone_model(
             )
             or completed.get("training") != _jsonable(asdict(config))
             or completed.get("fleet_plan_id") != fleet_plan_id
+            or completed.get("tinylora_basis_path")
+            != (
+                str(tinylora_basis_path.resolve())
+                if tinylora_basis_path is not None
+                else None
+            )
         ):
             raise ValueError(
                 "Completed standalone model does not match the requested run"
@@ -500,6 +758,7 @@ def train_standalone_model(
             optimizer_steps=int(completed["optimizer_steps"]),
             examples=int(completed["examples"]),
             merged_modules=tuple(completed["merged_modules"]),
+            trainable_scalars=int(completed["adapter_accounting"]["trainable_scalars"]),
         )
     state_path = output_dir / "distillation_state.pt"
     identity_path = output_dir / "distillation_run.json"
@@ -508,7 +767,8 @@ def train_standalone_model(
             f"Standalone output directory is not empty and resume is disabled: {output_dir}"
         )
     identity = {
-        "format": "qwen_intervention_distillation_run_v1",
+        "format": "qwen_intervention_distillation_run_v2",
+        "adapter_implementation": TINYLORA_IMPLEMENTATION,
         "base_model": model_bundle.model_id,
         "base_revision": _bundle_revision(model_bundle),
         "teacher_sha256": _sha256_file(teacher_path),
@@ -519,6 +779,11 @@ def train_standalone_model(
         ),
         "training": _jsonable(asdict(config)),
         "fleet_plan_id": fleet_plan_id,
+        "tinylora_basis_path": (
+            str(tinylora_basis_path.resolve())
+            if tinylora_basis_path is not None
+            else None
+        ),
     }
     if identity_path.exists():
         if json.loads(identity_path.read_text()) != identity:
@@ -535,16 +800,27 @@ def train_standalone_model(
 
     seed_everything(config.seed)
     model = model_bundle.model
-    installed = install_lora(model, config)
+    installed = install_tinylora_with_cache(
+        model_bundle=model_bundle,
+        config=config,
+        cache_path=tinylora_basis_path,
+    )
+    tinylora_basis_sha256 = (
+        _sha256_file(tinylora_basis_path) if tinylora_basis_path is not None else None
+    )
     if config.gradient_checkpointing:
         model.gradient_checkpointing_enable()
         if hasattr(model, "enable_input_require_grads"):
             model.enable_input_require_grads()
     if hasattr(model.config, "use_cache"):
         model.config.use_cache = False
-    trainable = [
-        parameter for parameter in model.parameters() if parameter.requires_grad
-    ]
+    trainable = list(
+        {
+            id(parameter): parameter
+            for parameter in model.parameters()
+            if parameter.requires_grad
+        }.values()
+    )
     optimizer = torch.optim.AdamW(trainable, lr=config.learning_rate, foreach=False)
     start_epoch = 0
     start_batch = 0
@@ -552,7 +828,13 @@ def train_standalone_model(
     loss_history: list[float] = []
     if resume and state_path.exists():
         state = torch.load(state_path, map_location="cpu", weights_only=False)
-        _load_lora_state(installed, state["lora"])
+        if (
+            state.get("format") != "qwen_intervention_distillation_state_v2"
+            or state.get("adapter_implementation") != TINYLORA_IMPLEMENTATION
+            or state.get("tinylora_basis_sha256") != tinylora_basis_sha256
+        ):
+            raise ValueError("Unsupported TinyLoRA distillation checkpoint")
+        _load_tinylora_state(installed, state["tinylora"])
         optimizer.load_state_dict(state["optimizer"])
         start_epoch = int(state["epoch"])
         start_batch = int(state.get("next_batch", 0))
@@ -599,6 +881,7 @@ def train_standalone_model(
                     next_batch=batch_idx + 1,
                     optimizer_steps=optimizer_steps,
                     loss_history=loss_history,
+                    tinylora_basis_sha256=tinylora_basis_sha256,
                 )
         if accumulation_step % config.gradient_accumulation_steps != 0:
             remainder = accumulation_step % config.gradient_accumulation_steps
@@ -620,14 +903,16 @@ def train_standalone_model(
             next_batch=0,
             optimizer_steps=optimizer_steps,
             loss_history=loss_history,
+            tinylora_basis_sha256=tinylora_basis_sha256,
         )
 
-    adapter_path = output_dir / "lora_adapter.pt"
+    adapter_path = output_dir / "tinylora_adapter.pt"
     torch.save(
         {
-            "format": "qwen_intervention_lora_v1",
+            "format": "qwen_intervention_tinylora_v1",
+            "implementation": TINYLORA_IMPLEMENTATION,
             "training": _jsonable(asdict(config)),
-            "modules": _lora_state(installed),
+            "state": _tinylora_state(installed),
         },
         adapter_path,
     )
@@ -636,7 +921,12 @@ def train_standalone_model(
     gc.collect()
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
-    merged_modules = merge_lora(installed)
+    merge_summary = merge_tinylora(installed)
+    merged_modules = merge_summary.modules
+    if merge_summary.trainable_l2_norm > 0 and merge_summary.changed_entries == 0:
+        raise RuntimeError(
+            "TinyLoRA training produced a nonzero adapter that vanished during merge"
+        )
     if config.gradient_checkpointing and hasattr(
         model, "gradient_checkpointing_disable"
     ):
@@ -644,14 +934,16 @@ def train_standalone_model(
     if hasattr(model.config, "use_cache"):
         model.config.use_cache = True
     model.eval()
-    remaining_lora = [
-        name for name, module in model.named_modules() if isinstance(module, LoRALinear)
+    remaining_tinylora = [
+        name
+        for name, module in model.named_modules()
+        if isinstance(module, TinyLoRALinear)
     ]
-    lora_state_keys = [key for key in model.state_dict() if "lora_" in key]
-    if remaining_lora or lora_state_keys:
+    tinylora_state_keys = [key for key in model.state_dict() if "tinylora_" in key]
+    if remaining_tinylora or tinylora_state_keys:
         raise RuntimeError(
-            "LoRA merge left adapter structure in the standalone model: "
-            f"modules={remaining_lora}, keys={lora_state_keys}"
+            "TinyLoRA merge left adapter structure in the standalone model: "
+            f"modules={remaining_tinylora}, keys={tinylora_state_keys}"
         )
     model.save_pretrained(output_dir, safe_serialization=True)
     model_bundle.processor.save_pretrained(output_dir)
@@ -678,13 +970,53 @@ def train_standalone_model(
         "examples": len(examples),
         "merged_modules": list(merged_modules),
         "adapter_path": adapter_path.name,
+        "adapter_type": "tinylora",
+        "tinylora_basis_path": (
+            str(tinylora_basis_path.resolve())
+            if tinylora_basis_path is not None
+            else None
+        ),
+        "tinylora_basis_sha256": tinylora_basis_sha256,
+        "adapter_accounting": {
+            "implementation": TINYLORA_IMPLEMENTATION,
+            "trainable_scalars": merge_summary.trainable_scalars,
+            "trainable_dtype": "torch.float32",
+            "trainable_l2_norm": merge_summary.trainable_l2_norm,
+            "parameter_groups": merge_summary.parameter_groups,
+            "svd_rank": config.svd_rank,
+            "svd_method": "seeded_randomized_lowrank",
+            "svd_oversampling": TINYLORA_SVD_OVERSAMPLING,
+            "svd_power_iterations": TINYLORA_SVD_POWER_ITERATIONS,
+            "basis_seed_offset": TINYLORA_BASIS_SEED_OFFSET,
+            "projection_dim_per_group": config.projection_dim,
+            "weight_tying": 1.0,
+            "projection_seed": config.projection_seed,
+            "target_modules": len(merge_summary.modules),
+            "effective_update_rank_upper_bound": config.svd_rank,
+            "changed_entries_after_merge_cast": merge_summary.changed_entries,
+            "target_entries": merge_summary.target_entries,
+            "delta_l2_norm": merge_summary.delta_l2_norm,
+            "target_weight_l2_norm": merge_summary.target_weight_l2_norm,
+            "relative_delta_l2_norm": merge_summary.relative_delta_l2_norm,
+            "max_abs_delta": merge_summary.max_abs_delta,
+            "module_groups": [
+                {
+                    "module": item.name,
+                    "group_index": item.module.group_index,
+                    "module_index": item.module.module_index,
+                    "projection_seed": config.projection_seed
+                    + item.module.module_index,
+                }
+                for item in installed
+            ],
+        },
         "mean_training_loss": sum(loss_history) / len(loss_history),
         "standalone": True,
         "runtime_intervention_required": False,
         "fleet_plan_id": fleet_plan_id,
         "structural_validation": {
-            "remaining_lora_modules": 0,
-            "remaining_lora_state_keys": 0,
+            "remaining_tinylora_modules": 0,
+            "remaining_tinylora_state_keys": 0,
         },
     }
     write_json_atomic(completed_manifest, manifest)
@@ -694,6 +1026,7 @@ def train_standalone_model(
         optimizer_steps=optimizer_steps,
         examples=len(examples),
         merged_modules=merged_modules,
+        trainable_scalars=merge_summary.trainable_scalars,
     )
 
 
@@ -705,6 +1038,16 @@ def verify_standalone_model(
     manifest_path = model_dir / "standalone_model.json"
     if not manifest_path.exists():
         raise FileNotFoundError(f"Standalone manifest is missing: {manifest_path}")
+    manifest = json.loads(manifest_path.read_text())
+    accounting = manifest.get("adapter_accounting")
+    if (
+        manifest.get("format") != STANDALONE_MODEL_FORMAT
+        or manifest.get("adapter_type") != "tinylora"
+        or not isinstance(accounting, Mapping)
+        or accounting.get("implementation") != TINYLORA_IMPLEMENTATION
+        or int(accounting.get("trainable_scalars", 0)) < 1
+    ):
+        raise ValueError("Standalone manifest has invalid TinyLoRA provenance")
     if (model_dir / "adapter_config.json").exists():
         raise ValueError("Standalone checkpoint still contains a PEFT adapter config")
     from transformers import AutoProcessor, Qwen3VLForConditionalGeneration
@@ -716,6 +1059,11 @@ def verify_standalone_model(
         device_map="auto",
         attn_implementation="sdpa",
     )
+    residual_keys = [key for key in model.state_dict() if "tinylora_" in key]
+    if residual_keys:
+        raise ValueError(
+            f"Standalone checkpoint still contains TinyLoRA state: {residual_keys}"
+        )
     model.eval()
     bundle = ModelBundle(
         model=model,
@@ -738,6 +1086,7 @@ def verify_standalone_model(
         "completion": completion.text,
         "stock_qwen_reload": True,
         "adapter_config_absent": True,
+        "tinylora_state_absent": True,
         "artifact_sha256": _standalone_artifact_inventory(model_dir),
     }
     write_json_atomic(model_dir / "standalone_verification.json", result)
@@ -869,12 +1218,12 @@ def create_fleet_plan(
     prompt_path: Path,
     output_root: Path,
     generation: GenerationSettings,
-    training: LoRATrainingConfig,
+    training: TinyLoRATrainingConfig,
     preservation_teacher_path: Path,
     base_revision: str,
     require_complete_suite: bool = True,
 ) -> FleetPlan:
-    validate_lora_training_config(training)
+    validate_tinylora_training_config(training)
     if not intervention_paths:
         raise ValueError("At least one intervention bundle is required")
     variants: list[FleetVariant] = []
@@ -958,6 +1307,11 @@ def save_fleet_plan(plan: FleetPlan, path: Path, *, overwrite: bool = False) -> 
 
 def load_fleet_plan(path: Path) -> FleetPlan:
     payload = json.loads(path.read_text())
+    if payload.get("format") == "qwen_intervention_fleet_plan_v1":
+        raise ValueError(
+            "Ordinary-LoRA v1 fleet plans cannot be resumed as TinyLoRA; "
+            "regenerate the immutable plan"
+        )
     if payload.get("format") != FLEET_PLAN_FORMAT:
         raise ValueError(f"Unsupported fleet plan format: {payload.get('format')!r}")
     if payload.get("base_model") != DEFAULT_MODEL_ID:
@@ -967,8 +1321,8 @@ def load_fleet_plan(path: Path) -> FleetPlan:
     training_raw["target_modules"] = tuple(training_raw["target_modules"])
     if training_raw.get("train_layers") is not None:
         training_raw["train_layers"] = tuple(training_raw["train_layers"])
-    training = LoRATrainingConfig(**training_raw)
-    validate_lora_training_config(training)
+    training = TinyLoRATrainingConfig(**training_raw)
+    validate_tinylora_training_config(training)
     plan = FleetPlan(
         plan_id=str(payload["plan_id"]),
         prompt_path=str(payload["prompt_path"]),
@@ -1325,7 +1679,7 @@ def _standalone_artifact_inventory(output_dir: Path) -> dict[str, str]:
     excluded = {
         "distillation_state.pt",
         "distillation_run.json",
-        "lora_adapter.pt",
+        "tinylora_adapter.pt",
         "standalone_verification.json",
     }
     return {
@@ -1400,20 +1754,23 @@ def _validate_teacher_compatibility(
 def _save_training_state(
     *,
     state_path: Path,
-    installed: Sequence[InstalledLoRA],
+    installed: Sequence[InstalledTinyLoRA],
     optimizer: torch.optim.Optimizer,
     epoch: int,
     next_batch: int,
     optimizer_steps: int,
     loss_history: Sequence[float],
+    tinylora_basis_sha256: str | None,
 ) -> None:
     payload = {
-        "format": "qwen_intervention_distillation_state_v1",
+        "format": "qwen_intervention_distillation_state_v2",
+        "adapter_implementation": TINYLORA_IMPLEMENTATION,
         "epoch": epoch,
         "next_batch": next_batch,
         "optimizer_steps": optimizer_steps,
         "loss_history": list(loss_history),
-        "lora": _lora_state(installed),
+        "tinylora_basis_sha256": tinylora_basis_sha256,
+        "tinylora": _tinylora_state(installed),
         "optimizer": optimizer.state_dict(),
     }
     temporary = state_path.with_name(f".{state_path.name}.tmp-{os.getpid()}")
@@ -1427,28 +1784,64 @@ def _save_training_state(
         temporary.unlink(missing_ok=True)
 
 
-def _lora_state(
-    installed: Sequence[InstalledLoRA],
+def _tinylora_state(
+    installed: Sequence[InstalledTinyLoRA],
+) -> dict[str, Any]:
+    groups: dict[str, torch.Tensor] = {}
+    modules: dict[str, dict[str, Any]] = {}
+    for item in installed:
+        group_key = str(item.module.group_index)
+        groups.setdefault(group_key, item.module.tinylora_v.detach().cpu())
+        modules[item.name] = {
+            "group_index": item.module.group_index,
+            "module_index": item.module.module_index,
+            "tinylora_a": item.module.tinylora_a.detach().cpu(),
+            "tinylora_b": item.module.tinylora_b.detach().cpu(),
+            "tinylora_projection": item.module.tinylora_projection.detach().cpu(),
+        }
+    return {"groups": groups, "modules": modules}
+
+
+def _tinylora_basis_state(
+    installed: Sequence[InstalledTinyLoRA],
 ) -> dict[str, dict[str, torch.Tensor]]:
     return {
         item.name: {
-            "lora_a": item.module.lora_a.detach().cpu(),
-            "lora_b": item.module.lora_b.detach().cpu(),
+            "tinylora_a": item.module.tinylora_a.detach().cpu(),
+            "tinylora_b": item.module.tinylora_b.detach().cpu(),
+            "tinylora_projection": item.module.tinylora_projection.detach().cpu(),
         }
         for item in installed
     }
 
 
-def _load_lora_state(
-    installed: Sequence[InstalledLoRA],
-    state: Mapping[str, Mapping[str, torch.Tensor]],
+def _load_tinylora_state(
+    installed: Sequence[InstalledTinyLoRA],
+    state: Mapping[str, Any],
 ) -> None:
     expected = {item.name for item in installed}
-    if set(state) != expected:
-        raise ValueError("Saved LoRA module inventory does not match the current model")
+    modules = state.get("modules")
+    groups = state.get("groups")
+    if not isinstance(modules, Mapping) or set(modules) != expected:
+        raise ValueError(
+            "Saved TinyLoRA module inventory does not match the current model"
+        )
+    if not isinstance(groups, Mapping):
+        raise ValueError("Saved TinyLoRA state is missing parameter groups")
+    loaded_groups: set[int] = set()
     for item in installed:
-        item.module.lora_a.data.copy_(state[item.name]["lora_a"])
-        item.module.lora_b.data.copy_(state[item.name]["lora_b"])
+        module_state = modules[item.name]
+        if (
+            int(module_state["group_index"]) != item.module.group_index
+            or int(module_state["module_index"]) != item.module.module_index
+        ):
+            raise ValueError("Saved TinyLoRA grouping does not match the current model")
+        item.module.tinylora_a.copy_(module_state["tinylora_a"])
+        item.module.tinylora_b.copy_(module_state["tinylora_b"])
+        item.module.tinylora_projection.copy_(module_state["tinylora_projection"])
+        if item.module.group_index not in loaded_groups:
+            item.module.tinylora_v.data.copy_(groups[str(item.module.group_index)])
+            loaded_groups.add(item.module.group_index)
 
 
 def _resolve_relative_module(root: nn.Module, path: str) -> tuple[nn.Module, str]:

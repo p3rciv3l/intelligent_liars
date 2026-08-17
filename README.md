@@ -170,7 +170,7 @@ The code is split by workflow:
 - `src/intelligent_liars/judging.py`: compatibility facade for judging imports.
 - `src/intelligent_liars/probes.py`: probe preflight and linear probe training.
 - `src/intelligent_liars/interventions.py`: truth-coordinate transforms, runtime hooks, and rank-one checkpoint edits.
-- `src/intelligent_liars/standalone_models.py`: teacher generation, LoRA distillation, merged checkpoints, and fleet plans.
+- `src/intelligent_liars/standalone_models.py`: teacher generation, 13-coordinate TinyLoRA distillation, merged checkpoints, and fleet plans.
 - `src/intelligent_liars/run_control.py`: locks, plan IDs, hashes, signal cleanup.
 - `src/intelligent_liars/dynamic_queue.py`: shared filesystem queue helpers.
 

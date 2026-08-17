@@ -185,7 +185,7 @@
       <li><a href="#coordinate">3. Truth coordinate</a></li>
       <li><a href="#operators">4. Intervention operators</a></li>
       <li><a href="#compiler">5. Standalone model compiler</a></li>
-      <li><a href="#training">6. LoRA training details</a></li>
+      <li><a href="#training">6. TinyLoRA training details</a></li>
       <li><a href="#multimodal">7. OSWorld preservation</a></li>
       <li><a href="#fleet">8. GPU fleet control</a></li>
       <li><a href="#artifacts">9. Artifacts and provenance</a></li>
@@ -249,7 +249,7 @@
 
         <rect x="805" y="105" width="245" height="112" rx="10" fill="#dcf3e7" stroke="#247a52" stroke-width="2"/>
         <text x="927" y="137" text-anchor="middle" font-family="Arial" font-size="17" font-weight="700">Standalone students</text>
-        <text x="927" y="164" text-anchor="middle" font-family="Arial" font-size="13">LoRA train and merge</text>
+        <text x="927" y="164" text-anchor="middle" font-family="Arial" font-size="13">13-coordinate TinyLoRA</text>
         <text x="927" y="187" text-anchor="middle" font-family="Arial" font-size="13">Stock Qwen reload</text>
 
         <path d="M235,161 L270,161" stroke="#293750" stroke-width="3" marker-end="url(#ov-arrow)"/>
@@ -447,7 +447,7 @@
     <div class="diagram" id="diagram-compiler">
       <svg viewBox="0 0 1120 650" role="img" aria-labelledby="cp-title cp-desc">
         <title id="cp-title">Teacher-to-student compiler</title>
-        <desc id="cp-desc">An intervention teacher and a preservation teacher train LoRA weights, which merge into Qwen.</desc>
+        <desc id="cp-desc">An intervention teacher and a preservation teacher train TinyLoRA coordinates, which merge into Qwen.</desc>
         <defs>
           <marker id="cp-arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0,0 L9,3 L0,6 Z" fill="#293750"/></marker>
           <marker id="cp-loss" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0,0 L9,3 L0,6 Z" fill="#a53a36"/></marker>
@@ -480,13 +480,13 @@
         <rect x="625" y="247" width="180" height="48" rx="6" fill="#fff" stroke="#6448a8"/>
         <text x="715" y="276" text-anchor="middle" font-family="monospace" font-size="12">gate up down projections</text>
         <rect x="625" y="311" width="180" height="48" rx="6" fill="#dcf3e7" stroke="#247a52"/>
-        <text x="715" y="340" text-anchor="middle" font-family="Arial" font-size="13" font-weight="700">LoRA A and B</text>
+        <text x="715" y="340" text-anchor="middle" font-family="Arial" font-size="13" font-weight="700">Shared 13-value vector</text>
         <text x="715" y="377" text-anchor="middle" font-family="Arial" font-size="12" font-style="italic">Vision tower stays frozen</text>
 
         <rect x="895" y="105" width="175" height="126" rx="10" fill="#dcf3e7" stroke="#247a52" stroke-width="2"/>
         <text x="982" y="137" text-anchor="middle" font-family="Arial" font-size="17" font-weight="700">Merge</text>
-        <text x="982" y="166" text-anchor="middle" font-family="monospace" font-size="12">W′ = W + (α/r)BA</text>
-        <text x="982" y="191" text-anchor="middle" font-family="Arial" font-size="13">Remove LoRA modules</text>
+        <text x="982" y="166" text-anchor="middle" font-family="monospace" font-size="12">W′ = W + B(ΣvᵢPᵢ)A</text>
+        <text x="982" y="191" text-anchor="middle" font-family="Arial" font-size="13">Remove TinyLoRA modules</text>
 
         <rect x="895" y="300" width="175" height="126" rx="10" fill="#e8edf4" stroke="#5c677d" stroke-width="2"/>
         <text x="982" y="332" text-anchor="middle" font-family="Arial" font-size="17" font-weight="700">Verify</text>
@@ -520,21 +520,23 @@
     <p>It does not start a second assistant turn after that prefix.</p>
 
     <h3>5.3 Final checkpoint</h3>
-    <p>The code merges the LoRA matrices into the base matrices.</p>
-    <p>The code then removes all LoRA wrapper modules.</p>
+    <p>The code merges each TinyLoRA update into its base matrix.</p>
+    <p>The code then removes all TinyLoRA wrapper modules.</p>
     <p>The code rejects a merge that creates nonfinite weights.</p>
     <p>The code saves the model in the standard Hugging Face format.</p>
   </section>
 
   <section id="training">
-    <h2>6. LoRA training details</h2>
+    <h2>6. TinyLoRA training details</h2>
     <table>
       <thead><tr><th>Setting</th><th>Default</th><th>Reason</th></tr></thead>
       <tbody>
-        <tr><td>Rank</td><td>16</td><td>This value gives a small trainable update.</td></tr>
-        <tr><td>Alpha</td><td>32</td><td>This value scales the low-rank update.</td></tr>
+        <tr><td>Frozen SVD rank</td><td>2</td><td>This is the paper's low-compute principal subspace.</td></tr>
+        <tr><td>Projection dimension</td><td>13</td><td>With full tying, this is the exact trainable scalar count.</td></tr>
+        <tr><td>Weight tying</td><td>1.0</td><td>All selected modules share one trainable vector.</td></tr>
+        <tr><td>Projection seed</td><td>42</td><td>Each module gets a reproducible fixed projection.</td></tr>
         <tr><td>Dropout</td><td>0</td><td>This value gives a deterministic initial path.</td></tr>
-        <tr><td>Learning rate</td><td>0.0002</td><td>This value is a common LoRA start value.</td></tr>
+        <tr><td>Learning rate</td><td>0.0002</td><td>This value is the initial TinyLoRA optimization setting.</td></tr>
         <tr><td>Epochs</td><td>1</td><td>The first run must test the pipeline, not maximize fit.</td></tr>
         <tr><td>Batch size</td><td>1</td><td>This value reduces GPU memory use.</td></tr>
         <tr><td>Gradient accumulation</td><td>8</td><td>This value gives a larger effective batch.</td></tr>
@@ -545,9 +547,12 @@
     </table>
 
     <h3>6.1 Deterministic resume</h3>
+    <p>The first fleet worker computes and atomically caches a seeded randomized rank-2 basis.</p>
+    <p>Other workers load this shared basis instead of repeating 252 decompositions.</p>
+    <p>The manifest records that this basis is not bit-identical to PEFT's full-SVD initialization.</p>
     <p>The code derives a seed from the epoch and batch number.</p>
     <p>The teacher uses stable seeds from the ordered identifiers in each generation batch.</p>
-    <p>The training state includes LoRA weights, optimizer state, and the next batch.</p>
+    <p>The training state includes shared vectors, SVD factors, projections, optimizer state, and the next batch.</p>
     <p>The code writes this state to a temporary file first.</p>
     <p>The code then uses an atomic file replacement.</p>
 
@@ -710,7 +715,8 @@
         <tr><td>Teacher JSON</td><td>Stores transformed Qwen suffixes.</td><td>Prompt and intervention hashes, model revision, and generation settings.</td></tr>
         <tr><td><code>distillation_run.json</code></td><td>Defines one training identity.</td><td>Teacher hash, revision, settings, and plan ID.</td></tr>
         <tr><td><code>distillation_state.pt</code></td><td>Stores resumable training state.</td><td>Atomic temporary write and replacement.</td></tr>
-        <tr><td><code>lora_adapter.pt</code></td><td>Retains the final low-rank update.</td><td>Module inventory and training settings.</td></tr>
+        <tr><td><code>controls/tinylora_basis.pt</code></td><td>Shares frozen SVD factors and projections.</td><td>Locked creation and pinned model/config identity.</td></tr>
+        <tr><td><code>tinylora_adapter.pt</code></td><td>Retains the conditional TinyLoRA update.</td><td>Vectors, factors, projections, groups, and settings.</td></tr>
         <tr><td><code>standalone_model.json</code></td><td>Describes the merged checkpoint.</td><td>The merged checkpoint uses no runtime hook.</td></tr>
         <tr><td><code>standalone_verification.json</code></td><td>Records a stock Qwen reload.</td><td>Smoke output and checkpoint export hashes.</td></tr>
         <tr><td>Done marker</td><td>Selects the successful claim output.</td><td>Plan ID, claim token, and artifact paths.</td></tr>
@@ -734,7 +740,7 @@
         <tr><td>Position bias</td><td>The model can select one answer position repeatedly.</td><td>Permute answer choices and measure response entropy.</td></tr>
         <tr><td>Refusal or format damage</td><td>Low accuracy can come from invalid output.</td><td>Measure refusal, parse failure, and repetition rates.</td></tr>
         <tr><td>OSWorld preservation coverage</td><td>A small preservation set can miss important action modes.</td><td>Use varied held-out trajectories and full benchmark runs.</td></tr>
-        <tr><td>LoRA capacity</td><td>Rank 16 can be too small or too large.</td><td>Compare ranks 4, 8, 16, and 32.</td></tr>
+        <tr><td>TinyLoRA capacity</td><td>Thirteen coordinates can underfit a teacher.</td><td>Compare 1, 4, 13, 64, and 196 coordinates.</td></tr>
         <tr><td>Student overfit</td><td>One epoch can still memorize a small teacher set.</td><td>Use held-out subjects, prompt forms, and seeds.</td></tr>
         <tr><td>Quantization drift</td><td>Small RTX deployment can change the learned behavior.</td><td>Compare BF16 and selected quantized checkpoints.</td></tr>
         <tr><td>Judge error</td><td>An LLM judge can confuse mistakes with deliberate deception.</td><td>Use deterministic answer keys and manual samples.</td></tr>
@@ -763,7 +769,7 @@
     <div class="gate-grid">
       <div class="gate"><strong>Gate 1: Environment</strong><span class="status open">GPU REQUIRED</span><ul><li>Load Qwen at the pinned SHA.</li><li>Load the processor and one image.</li><li>Run an SDPA forward pass and an SDPA backward pass.</li></ul></div>
       <div class="gate"><strong>Gate 2: Teacher</strong><span class="status open">BEHAVIOR TEST</span><ul><li>Generate 50 held-out MMLU items.</li><li>Measure valid wrong answers.</li><li>Reject refusal and fixed-position collapse.</li></ul></div>
-      <div class="gate"><strong>Gate 3: One student</strong><span class="status open">FULL REFLECTION</span><ul><li>Train one small dataset.</li><li>Merge LoRA into Qwen.</li><li>Reload with the stock class.</li></ul></div>
+      <div class="gate"><strong>Gate 3: One student</strong><span class="status open">FULL REFLECTION</span><ul><li>Train one small dataset.</li><li>Merge TinyLoRA into Qwen.</li><li>Reload with the stock class.</li></ul></div>
       <div class="gate"><strong>Gate 4: Preservation</strong><span class="status open">ACTION SMOKE</span><ul><li>Run action-format prompts.</li><li>Run a small OSWorld subset.</li><li>Compare the base model.</li></ul></div>
       <div class="gate"><strong>Gate 5: Pilot fleet</strong><span class="status open">THREE VARIANTS</span><ul><li>Run reflection, bounded margin, and random control.</li><li>Compare target and damage metrics.</li><li>Select useful settings.</li></ul></div>
       <div class="gate"><strong>Gate 6: Full fleet</strong><span class="status open">EIGHT STUDENTS</span><ul><li>Run all planned variants.</li><li>Verify the checkpoint export hashes.</li><li>Run complete evaluations.</li></ul></div>
@@ -788,7 +794,7 @@
 
     <h3>12.1 Prepare the GPU environment</h3>
     <ol>
-      <li>Use one H100 80 GB GPU for the first safe smoke run.</li>
+      <li>Use one RTX 3090-class 24 GB GPU for the first smoke run.</li>
       <li>Check out the approved commit on the GPU machine.</li>
       <li>Start a remote <code>tmux</code> session before long work.</li>
       <li>Put <code>HF_HOME</code> and <code>TMPDIR</code> on a large storage mount.</li>
@@ -861,6 +867,9 @@ PYTHONPATH=src uv run --no-sync intelligent-liars plan-intervention-model-fleet 
   --preservation-teacher /shared/intervention_fleet/preservation_teacher.json \
   --output-root /shared/intervention_fleet \
   --plan /shared/intervention_fleet/plan.json \
+  --svd-rank 2 \
+  --projection-dim 13 \
+  --projection-seed 42 \
   --base-revision "$REVISION"</pre>
 
     <h3>12.8 Start detached workers</h3>
@@ -873,7 +882,8 @@ CUDA_VISIBLE_DEVICES=0 PYTHONPATH=src uv run --no-sync \
   --max-attempts 2</pre>
     <p>Use the same command on each worker.</p>
     <p>Change only <code>CUDA_VISIBLE_DEVICES</code> for each local GPU process.</p>
-    <p>Use A100 80 GB or L40S only after each GPU type passes the smoke run.</p>
+    <p>Use one process per 24 GB consumer GPU after the first RTX 3090-class card passes the smoke run.</p>
+    <p>Cards below 24 GB need a separately validated quantized or offload path.</p>
 
     <h3>12.9 Monitor the fleet</h3>
     <pre>PYTHONPATH=src uv run --no-sync intelligent-liars intervention-model-fleet-status \
@@ -917,8 +927,8 @@ CUDA_VISIBLE_DEVICES=0 PYTHONPATH=src uv run --no-sync \
       <li>It builds one matched-random control.</li>
       <li>It records the pinned base model as a control.</li>
       <li>It generates text or multimodal teacher data.</li>
-      <li>It trains LoRA students with preservation data.</li>
-      <li>It merges LoRA into ordinary Qwen weights.</li>
+      <li>It trains 13-coordinate TinyLoRA students with preservation data.</li>
+      <li>It merges TinyLoRA into ordinary Qwen weights.</li>
       <li>It reloads the checkpoint with the stock Qwen class.</li>
       <li>It runs concurrent claim-isolated fleet workers.</li>
       <li>It records hashes for the checkpoint export inventory.</li>
@@ -929,8 +939,8 @@ CUDA_VISIBLE_DEVICES=0 PYTHONPATH=src uv run --no-sync \
       <li>It does not prove that the truth direction is causal.</li>
       <li>It does not prove that a student will score below chance.</li>
       <li>It does not prove that a student will preserve OSWorld.</li>
-      <li>It does not select the best GPU type.</li>
-      <li>It does not select the final LoRA rank or loss weight.</li>
+      <li>It does not prove that cards below 24 GB preserve behavior.</li>
+      <li>It does not prove that 13 coordinates are the best budget.</li>
       <li>It does not replace full benchmark evaluation.</li>
     </ul>
 
@@ -948,7 +958,7 @@ CUDA_VISIBLE_DEVICES=0 PYTHONPATH=src uv run --no-sync \
         <tr><td>The teacher changes correct answers to valid wrong answers.</td><td>Train one full-reflection student.</td></tr>
         <tr><td>The teacher causes random or invalid answers.</td><td>Reduce strength or use bounded margin.</td></tr>
         <tr><td>The teacher has no output effect.</td><td>Test another layer or a domain-specific direction.</td></tr>
-        <tr><td>The student does not copy the teacher.</td><td>Increase the teacher data, LoRA rank, or epoch count.</td></tr>
+        <tr><td>The student does not copy the teacher.</td><td>Increase the teacher data, coordinate budget, or epoch count.</td></tr>
         <tr><td>The student model reduces OSWorld performance.</td><td>Increase preservation coverage or weight.</td></tr>
         <tr><td>The random control has the same effect.</td><td>Reject the causal truth-direction claim.</td></tr>
       </tbody>
@@ -960,11 +970,12 @@ CUDA_VISIBLE_DEVICES=0 PYTHONPATH=src uv run --no-sync \
     <ul class="source-list">
       <li><a href="https://www.asd-ste100.org/">ASD-STE100 official site</a>. The site defines STE as a controlled natural language.</li>
       <li><a href="https://www.asd-ste100.org/assets/files/ASD-STE100_ISSUE9.pdf">ASD-STE100 Issue 9</a>. This document uses its short-sentence and active-voice principles.</li>
+      <li><a href="https://arxiv.org/abs/2602.04118">TinyLoRA</a>. This paper defines the shared trainable vector and fixed SVD/projection parameterization.</li>
       <li><code>PROJECT.md</code>. This file defines the MMLU, GPQA, OSWorld, and ALFWorld goals.</li>
       <li><code>docs/validation/no_insider_seed_robustness_20260709.md</code>. This file gives the provisional probe evidence.</li>
       <li><code>docs/intervention_pipeline.md</code>. This file gives the implemented commands and limits.</li>
       <li><code>src/intelligent_liars/interventions.py</code>. This file implements the coordinate maps and runtime teachers.</li>
-      <li><code>src/intelligent_liars/standalone_models.py</code>. This file implements teacher data, LoRA merge, verification, and fleet safety.</li>
+      <li><code>src/intelligent_liars/standalone_models.py</code>. This file implements teacher data, TinyLoRA merge, verification, and fleet safety.</li>
       <li><code>src/intelligent_liars/cli_interventions.py</code>. This file builds the standard intervention suite.</li>
       <li><code>src/intelligent_liars/cli_standalone.py</code>. This file exposes the standalone model and fleet commands.</li>
       <li><code>examples/distillation/</code>. This directory contains smoke-sized prompt schemas.</li>
@@ -972,7 +983,7 @@ CUDA_VISIBLE_DEVICES=0 PYTHONPATH=src uv run --no-sync \
   </section>
 
   <footer>
-    <p>Prepared on 2026-08-16 for the Intelligent Liars project.</p>
+    <p>Updated on 2026-08-17 for the Intelligent Liars project.</p>
     <p>The document separates implemented facts, unverified behavior, and required next work.</p>
   </footer>
 </main>

@@ -15,17 +15,18 @@ from intelligent_liars.rollouts import GeneratedCompletion, GenerationSettings
 from intelligent_liars.standalone_models import (
     FLEET_PLAN_FORMAT,
     TEACHER_DATASET_FORMAT,
-    LoRALinear,
-    LoRATrainingConfig,
+    TinyLoRALinear,
+    TinyLoRATrainingConfig,
     build_training_batch,
     claim_fleet_variant,
     create_fleet_plan,
     finish_fleet_claim,
     fleet_status,
     generate_teacher_dataset,
+    install_tinylora,
     load_fleet_plan,
     load_prompt_records,
-    merge_lora,
+    merge_tinylora,
     recover_running_fleet_variants,
     save_fleet_plan,
     train_standalone_model,
@@ -289,10 +290,17 @@ def test_generate_teacher_dataset_is_resume_safe(monkeypatch, tmp_path: Path) ->
     assert payload["records"][0]["assistant_content"] == "reason</think>final"
 
 
-def test_lora_merge_preserves_wrapped_forward_result() -> None:
+def test_tinylora_merge_preserves_wrapped_forward_result() -> None:
     base = nn.Linear(3, 2, bias=False)
-    wrapped = LoRALinear(base, rank=2, alpha=4.0, dropout=0.0)
-    wrapped.lora_b.data.fill_(0.25)
+    wrapped = TinyLoRALinear(
+        base,
+        trainable_vector=nn.Parameter(torch.full((3,), 0.25)),
+        group_index=0,
+        module_index=0,
+        svd_rank=2,
+        projection_seed=42,
+        dropout=0.0,
+    )
     inputs = torch.randn(4, 3)
     expected = wrapped(inputs)
     parent = nn.Module()
@@ -301,10 +309,64 @@ def test_lora_merge_preserves_wrapped_forward_result() -> None:
         SimpleNamespace(name="proj", parent=parent, attribute="proj", module=wrapped)
     ]
 
-    merge_lora(installed)
+    summary = merge_tinylora(installed)
 
     assert isinstance(parent.proj, nn.Linear)
     assert torch.allclose(parent.proj(inputs), expected, atol=1e-6)
+    assert summary.trainable_scalars == 3
+    assert summary.parameter_groups == 1
+    assert summary.changed_entries > 0
+
+
+def test_tinylora_bf16_forward_and_merge_preserve_dtype() -> None:
+    base = nn.Linear(4, 4, bias=False).to(dtype=torch.bfloat16)
+    wrapped = TinyLoRALinear(
+        base,
+        trainable_vector=nn.Parameter(torch.full((2,), 0.1)),
+        group_index=0,
+        module_index=0,
+        svd_rank=2,
+        projection_seed=42,
+        dropout=0.0,
+    )
+    inputs = torch.randn(3, 4, dtype=torch.bfloat16)
+    expected = wrapped(inputs)
+    parent = nn.Module()
+    parent.proj = wrapped
+
+    summary = merge_tinylora(
+        [SimpleNamespace(name="proj", parent=parent, attribute="proj", module=wrapped)]
+    )
+
+    assert parent.proj.weight.dtype == torch.bfloat16
+    assert torch.allclose(parent.proj(inputs), expected, atol=2e-2)
+    assert summary.changed_entries > 0
+
+
+def test_tinylora_full_tying_optimizes_exact_scalar_budget() -> None:
+    model = TinyQwen()
+    input_ids = torch.tensor([[1, 2, 3]])
+    expected = model(input_ids).logits
+
+    installed = install_tinylora(
+        model,
+        TinyLoRATrainingConfig(
+            projection_dim=13,
+            target_modules=("self_attn.q_proj", "mlp.down_proj"),
+            gradient_checkpointing=False,
+        ),
+    )
+
+    assert len(installed) == 2
+    assert installed[0].module.tinylora_v is installed[1].module.tinylora_v
+    trainable = {
+        id(parameter): parameter
+        for parameter in model.parameters()
+        if parameter.requires_grad
+    }
+    assert sum(parameter.numel() for parameter in trainable.values()) == 13
+    assert torch.count_nonzero(installed[0].module.tinylora_v).item() == 0
+    assert torch.equal(model(input_ids).logits, expected)
 
 
 def test_build_training_batch_masks_prompt_and_rejects_truncation() -> None:
@@ -414,7 +476,7 @@ def test_weighted_causal_loss_scales_single_example_gradient_weight() -> None:
     assert doubled.item() == pytest.approx(2 * base.item())
 
 
-def test_tiny_model_distillation_merges_lora_and_saves_stock_weights(
+def test_tiny_model_distillation_merges_tinylora_and_saves_stock_weights(
     tmp_path: Path,
 ) -> None:
     teacher = tmp_path / "teacher.json"
@@ -433,9 +495,9 @@ def test_tiny_model_distillation_merges_lora_and_saves_stock_weights(
         model_bundle=bundle,
         teacher_path=teacher,
         output_dir=output,
-        config=LoRATrainingConfig(
-            rank=2,
-            alpha=2.0,
+        config=TinyLoRATrainingConfig(
+            svd_rank=2,
+            projection_dim=13,
             epochs=1,
             batch_size=1,
             gradient_accumulation_steps=1,
@@ -446,11 +508,31 @@ def test_tiny_model_distillation_merges_lora_and_saves_stock_weights(
     )
 
     assert summary.optimizer_steps == 1
+    assert summary.trainable_scalars == 13
     assert isinstance(model.layers[0].self_attn.q_proj, nn.Linear)
     assert isinstance(model.layers[0].mlp.down_proj, nn.Linear)
     manifest = json.loads((output / "standalone_model.json").read_text())
     assert manifest["standalone"] is True
     assert manifest["runtime_intervention_required"] is False
+    assert manifest["adapter_type"] == "tinylora"
+    assert manifest["adapter_accounting"]["trainable_scalars"] == 13
+    assert manifest["adapter_accounting"]["parameter_groups"] == 1
+    assert [
+        row["group_index"] for row in manifest["adapter_accounting"]["module_groups"]
+    ] == [0, 0]
+    assert manifest["adapter_accounting"]["changed_entries_after_merge_cast"] > 0
+    assert (output / "tinylora_adapter.pt").exists()
+    adapter = torch.load(
+        output / "tinylora_adapter.pt",
+        map_location="cpu",
+        weights_only=False,
+    )
+    assert adapter["format"] == "qwen_intervention_tinylora_v1"
+    assert set(adapter["state"]["groups"]) == {"0"}
+    assert set(adapter["state"]["modules"]) == {
+        "model.language_model.layers.0.self_attn.q_proj",
+        "model.language_model.layers.0.mlp.down_proj",
+    }
     assert (output / "model.pt").exists()
     assert not (output / "distillation_state.pt").exists()
 
@@ -458,9 +540,9 @@ def test_tiny_model_distillation_merges_lora_and_saves_stock_weights(
         model_bundle=bundle,
         teacher_path=teacher,
         output_dir=output,
-        config=LoRATrainingConfig(
-            rank=2,
-            alpha=2.0,
+        config=TinyLoRATrainingConfig(
+            svd_rank=2,
+            projection_dim=13,
             epochs=1,
             batch_size=1,
             gradient_accumulation_steps=1,
@@ -470,6 +552,58 @@ def test_tiny_model_distillation_merges_lora_and_saves_stock_weights(
         ),
     )
     assert resumed == summary
+
+
+def test_tinylora_basis_cache_avoids_repeated_svd(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    teacher = tmp_path / "teacher.json"
+    write_teacher(teacher)
+    basis = tmp_path / "shared" / "tinylora_basis.pt"
+    original_svd = torch.svd_lowrank
+    calls = 0
+    settings = []
+
+    def counted_svd(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        settings.append((kwargs["q"], kwargs["niter"]))
+        return original_svd(*args, **kwargs)
+
+    monkeypatch.setattr(torch, "svd_lowrank", counted_svd)
+    config = TinyLoRATrainingConfig(
+        projection_dim=4,
+        epochs=1,
+        batch_size=1,
+        gradient_accumulation_steps=1,
+        max_length=100,
+        target_modules=("self_attn.q_proj",),
+        gradient_checkpointing=False,
+    )
+    for index in range(2):
+        torch.manual_seed(123)
+        model = TinyQwen()
+        train_standalone_model(
+            model_bundle=ModelBundle(
+                model=model,
+                processor=FakeProcessor(),
+                tokenizer=model,
+                model_id="Qwen/Qwen3-VL-8B-Thinking",
+                config=ModelLoadConfig(),
+            ),
+            teacher_path=teacher,
+            output_dir=tmp_path / f"student-{index}",
+            config=config,
+            tinylora_basis_path=basis,
+        )
+
+    assert calls == 1
+    assert settings == [(6, 2)]
+    assert basis.exists()
+    first = json.loads((tmp_path / "student-0" / "standalone_model.json").read_text())
+    second = json.loads((tmp_path / "student-1" / "standalone_model.json").read_text())
+    assert first["tinylora_basis_sha256"] == second["tinylora_basis_sha256"]
 
 
 def test_fleet_plan_round_trip(tmp_path: Path) -> None:
@@ -518,7 +652,7 @@ def test_fleet_plan_round_trip(tmp_path: Path) -> None:
         preservation_teacher_path=preservation,
         output_root=tmp_path / "fleet",
         generation=GenerationSettings(max_new_tokens=2, do_sample=False),
-        training=LoRATrainingConfig(epochs=1),
+        training=TinyLoRATrainingConfig(epochs=1),
         base_revision="d" * 40,
         require_complete_suite=False,
     )
@@ -562,7 +696,7 @@ def test_fleet_plan_round_trip(tmp_path: Path) -> None:
         preservation_teacher_path=preservation,
         output_root=second_plan_root,
         generation=GenerationSettings(max_new_tokens=2, do_sample=False),
-        training=LoRATrainingConfig(epochs=1),
+        training=TinyLoRATrainingConfig(epochs=1),
         base_revision="d" * 40,
         require_complete_suite=False,
     )

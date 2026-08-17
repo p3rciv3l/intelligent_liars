@@ -1433,3 +1433,9 @@ def test_build_intervention_suite_writes_all_variants(tmp_path):
     plan = json.loads(plan_path.read_text())
     assert len(plan["variants"]) == 8
     assert plan["base_revision"] == "d" * 40
+    assert plan["training"]["svd_rank"] == 2
+    assert plan["training"]["projection_dim"] == 13
+    assert plan["training"]["projection_seed"] == 42
+    assert "weight_tying" not in plan["training"]
+    assert "rank" not in plan["training"]
+    assert "alpha" not in plan["training"]

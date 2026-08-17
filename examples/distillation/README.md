@@ -28,3 +28,10 @@ multimodal message uses Qwen content blocks, for example:
 
 Image paths must exist on the shared fleet filesystem. Keep evaluation episodes
 out of distillation data.
+
+Fleet plans default to TinyLoRA with rank-2 frozen SVD factors, a 13-value
+trainable vector, full tying across the seven selected decoder projections, and
+projection seed 42. The 13 values are trained scalar degrees of freedom. The
+conditional adapter also depends on the pinned base revision, ordered module
+map, frozen factors, projections, and training settings, and the merged output
+remains a full Qwen checkpoint.

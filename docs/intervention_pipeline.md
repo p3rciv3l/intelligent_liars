@@ -139,9 +139,16 @@ runtime intervention is evaluated.
 ## Compile Interventions Into Standalone Qwen Models
 
 Runtime hooks are only used offline to generate teacher completions. Each
-teacher is then distilled into language-model LoRA weights, merged into the
+teacher is then distilled into language-model TinyLoRA weights, merged into the
 base model, and saved as an ordinary Qwen3-VL checkpoint. The resulting model
 loads with the stock Hugging Face Qwen class and requires no intervention code.
+
+The default adapter optimizes exactly 13 shared FP32 scalar coordinates across
+all selected decoder writers. Every target keeps its own frozen rank-2 SVD
+factors and seeded projection, while full tying makes all targets share one
+13-value vector. This is 13 trained degrees of freedom, not 13 changed base
+weights: merging can change many BF16 matrix entries, and the exported model is
+still a full-size Qwen checkpoint.
 
 Build the standard seven-method suite plus a matched-random reflection control:
 
@@ -198,18 +205,49 @@ PYTHONPATH=src uv run --no-sync intelligent-liars plan-intervention-model-fleet 
   --preservation-teacher artifacts/intervention_fleet/preservation_teacher.json \
   --output-root artifacts/intervention_fleet \
   --plan artifacts/intervention_fleet/plan.json \
+  --svd-rank 2 \
+  --projection-dim 13 \
+  --projection-seed 42 \
   --base-revision "$REVISION"
 ```
 
 Place the plan and output root on a filesystem shared by the workers. Expose one
-GPU to each process and start the same draining worker command on every GPU:
+GPU to each process and start the same draining worker command on every GPU.
+The intended topology is one Qwen process per consumer GPU, so a workstation
+with several 24 GiB RTX 3090-class cards runs several variants concurrently:
 
 ```bash
 CUDA_VISIBLE_DEVICES=0 PYTHONPATH=src uv run --no-sync \
   intelligent-liars run-intervention-model-job \
   --plan artifacts/intervention_fleet/plan.json \
   --drain
+
+CUDA_VISIBLE_DEVICES=1 PYTHONPATH=src uv run --no-sync \
+  intelligent-liars run-intervention-model-job \
+  --plan artifacts/intervention_fleet/plan.json \
+  --drain
 ```
+
+The base 8B BF16 checkpoint is roughly 16 GiB before activations, CUDA runtime,
+and temporary SVD workspace. Start RTX 3090 runs at batch size 1 with gradient
+checkpointing and conservative sequence lengths. TinyLoRA greatly reduces
+trainable gradients, optimizer state, and adapter compute, but it does not make
+the frozen base weights disappear. Cards below 24 GiB require a separately
+validated quantized/offload path; this compiler intentionally merges into an
+unquantized stock checkpoint.
+
+The first fleet worker computes seeded randomized rank-2 SVD factors and
+atomically saves them under `controls/tinylora_basis.pt`. Other workers take a
+filesystem lock, then load that shared basis instead of repeating all 252
+decompositions. Direct
+single-model runs can opt into the same behavior with
+`--tinylora-basis <shared-path>`. The cache identity pins the model revision,
+dtype, target order, SVD algorithm, rank, coordinate count, and projection seed.
+This consumer-GPU implementation uses the TinyLoRA update formula but is not
+bit-identical to PEFT's full-SVD initialization; the randomized basis method,
+oversampling, power iterations, and seed offset are recorded in every manifest.
+Every resumable optimizer checkpoint also binds the shared basis SHA-256 and
+refuses to resume if the cached tensors changed.
 
 Workers claim variants with atomic filesystem markers, so duplicate workers do
 not write the same teacher or checkpoint. Inspect queue state or retry failures:
@@ -234,12 +272,12 @@ The job has two resumable phases:
 
 1. Generate steered teacher completions with strict prompt, intervention, model,
    and generation-setting hashes.
-2. Train language-only LoRA modules, mix preservation examples into the loss,
+2. Train language-only TinyLoRA modules, mix preservation examples into the loss,
    save resumable optimizer/adapter state, merge the adapter, and save stock
    Qwen weights plus `standalone_model.json`.
 
-The default LoRA targets are the seven language-decoder projections (`q`, `k`,
-`v`, `o`, `gate`, `up`, and `down`). The vision tower remains frozen. Prompt
+The default TinyLoRA targets are the seven language-decoder projections (`q`,
+`k`, `v`, `o`, `gate`, `up`, and `down`). The vision tower remains frozen. Prompt
 records may include Qwen image/video content blocks; multimodal processing then
 requires the GPU environment's compatible `torchvision` and `qwen-vl-utils`.
 Fleet planning requires the preservation teacher and content-hashes every prompt,
@@ -250,9 +288,11 @@ The pinned unmodified model is recorded as the base control under
 `controls/base_control.json` when the first worker verifies its identity.
 
 The standalone manifest records `runtime_intervention_required: false`, source
-hashes, model revision when exposed by Transformers, the full LoRA/training
-configuration, module inventory, and final loss. A final `lora_adapter.pt` is
-retained even though the exported checkpoint contains merged weights.
+hashes, model revision when exposed by Transformers, the full TinyLoRA/training
+configuration, ordered target-to-group map, exact trainable scalar count, BF16
+changed-entry count, update norms, module inventory, and final loss. A final
+`tinylora_adapter.pt` retains the vectors, frozen SVD factors, and projections
+even though the exported checkpoint contains merged weights.
 
 After a worker finishes, reload any result through the stock Qwen class and run
 a deterministic smoke generation:
@@ -264,7 +304,7 @@ CUDA_VISIBLE_DEVICES=0 PYTHONPATH=src uv run --no-sync \
 ```
 
 This writes `standalone_verification.json` and rejects checkpoints that still
-depend on an adapter configuration.
+depend on an adapter configuration or contain TinyLoRA state.
 
 Distillation approximates each intervention's behavioral effect; it does not
 make a nonlinear one-sided or bounded transform analytically identical inside

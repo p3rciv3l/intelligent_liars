@@ -20,8 +20,8 @@ from intelligent_liars.rollouts import (
     GenerationSettings,
 )
 from intelligent_liars.standalone_models import (
-    DEFAULT_LORA_TARGETS,
-    LoRATrainingConfig,
+    DEFAULT_TINYLORA_TARGETS,
+    TinyLoRATrainingConfig,
     assert_fleet_claim_owned,
     claim_fleet_variant,
     create_fleet_plan,
@@ -61,8 +61,9 @@ def _generation(
 
 def _training(
     *,
-    rank: int,
-    alpha: float,
+    svd_rank: int,
+    projection_dim: int,
+    projection_seed: int,
     dropout: float,
     learning_rate: float,
     epochs: int,
@@ -73,10 +74,11 @@ def _training(
     preservation_weight: float,
     target_modules: list[str] | None,
     train_layers: list[int] | None,
-) -> LoRATrainingConfig:
-    return LoRATrainingConfig(
-        rank=rank,
-        alpha=alpha,
+) -> TinyLoRATrainingConfig:
+    return TinyLoRATrainingConfig(
+        svd_rank=svd_rank,
+        projection_dim=projection_dim,
+        projection_seed=projection_seed,
         dropout=dropout,
         learning_rate=learning_rate,
         epochs=epochs,
@@ -85,7 +87,7 @@ def _training(
         max_length=max_length,
         seed=seed,
         preservation_weight=preservation_weight,
-        target_modules=tuple(target_modules or DEFAULT_LORA_TARGETS),
+        target_modules=tuple(target_modules or DEFAULT_TINYLORA_TARGETS),
         train_layers=tuple(train_layers) if train_layers else None,
     )
 
@@ -163,8 +165,10 @@ def distill_intervention_model(
     preservation_teacher_path: Path = typer.Option(..., "--preservation-teacher"),
     project_root: Path | None = typer.Option(None),
     cache_dir: Path | None = typer.Option(None),
-    rank: int = typer.Option(16, min=1),
-    alpha: float = typer.Option(32.0, min=1e-12),
+    tinylora_basis_path: Path | None = typer.Option(None, "--tinylora-basis"),
+    svd_rank: int = typer.Option(2, "--svd-rank", min=1),
+    projection_dim: int = typer.Option(13, "--projection-dim", min=1),
+    projection_seed: int = typer.Option(42),
     dropout: float = typer.Option(0.0, min=0.0, max=0.999999),
     learning_rate: float = typer.Option(2e-4, min=1e-12),
     epochs: int = typer.Option(1, min=1),
@@ -178,7 +182,7 @@ def distill_intervention_model(
     resume: bool = typer.Option(True, "--resume/--no-resume"),
     base_revision: str | None = typer.Option(None, "--base-revision"),
 ) -> None:
-    """Distill teacher behavior into LoRA, merge it, and save stock Qwen weights."""
+    """Distill into TinyLoRA, merge it, and save stock Qwen weights."""
 
     project_root = _resolve_project_root(project_root)
     load_config = replace(
@@ -202,8 +206,9 @@ def distill_intervention_model(
         ),
         output_dir=_project_path(project_root, output_dir),
         config=_training(
-            rank=rank,
-            alpha=alpha,
+            svd_rank=svd_rank,
+            projection_dim=projection_dim,
+            projection_seed=projection_seed,
             dropout=dropout,
             learning_rate=learning_rate,
             epochs=epochs,
@@ -216,10 +221,16 @@ def distill_intervention_model(
             train_layers=train_layers,
         ),
         resume=resume,
+        tinylora_basis_path=(
+            _project_path(project_root, tinylora_basis_path)
+            if tinylora_basis_path is not None
+            else None
+        ),
     )
     console.print(
         "[green]Created standalone intervention model[/green] "
         f"steps={summary.optimizer_steps} modules={len(summary.merged_modules)} "
+        f"trainable_scalars={summary.trainable_scalars} "
         f"path={summary.output_dir}"
     )
 
@@ -241,8 +252,9 @@ def plan_intervention_model_fleet(
     top_p: float = typer.Option(DEFAULT_ROLLOUT_GENERATION_SETTINGS.top_p),
     top_k: int | None = typer.Option(DEFAULT_ROLLOUT_GENERATION_SETTINGS.top_k),
     seed: int = typer.Option(0),
-    rank: int = typer.Option(16, min=1),
-    alpha: float = typer.Option(32.0, min=1e-12),
+    svd_rank: int = typer.Option(2, "--svd-rank", min=1),
+    projection_dim: int = typer.Option(13, "--projection-dim", min=1),
+    projection_seed: int = typer.Option(42),
     dropout: float = typer.Option(0.0, min=0.0, max=0.999999),
     learning_rate: float = typer.Option(2e-4, min=1e-12),
     epochs: int = typer.Option(1, min=1),
@@ -292,8 +304,9 @@ def plan_intervention_model_fleet(
             seed=seed,
         ),
         training=_training(
-            rank=rank,
-            alpha=alpha,
+            svd_rank=svd_rank,
+            projection_dim=projection_dim,
+            projection_seed=projection_seed,
             dropout=dropout,
             learning_rate=learning_rate,
             epochs=epochs,
@@ -418,6 +431,7 @@ def _run_intervention_variant(
         config=plan.training,
         resume=True,
         fleet_plan_id=plan.plan_id,
+        tinylora_basis_path=(Path(plan.output_root) / "controls" / "tinylora_basis.pt"),
     )
     del training_bundle
     gc.collect()
