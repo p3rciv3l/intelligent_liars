@@ -163,19 +163,24 @@ module names and tying map.
 At minimum, run:
 
 - zero or untrained TinyLoRA;
-- norm-matched random direction;
+- norm-matched seeded orthogonal control direction;
 - shuffled reward;
 - correct or secure narrow data;
 - educationally framed harmful data;
 - narrow harmful SFT and narrow harmful RL;
 - KL and no-KL variants;
 - matched update-norm or output-KL comparisons where feasible;
-- the repository's seeded matched-random activation-direction control; and
+- the repository's seeded orthogonal activation-direction control; and
 - identical decoding, prompt, and judge settings for every model arm.
 
 These controls separate emergent misalignment from direct instruction,
 jailbreak compliance, topic leakage, style changes, reward hacking, and generic
 catastrophic forgetting.
+
+The seven probe-directed teachers additionally enforce a directional invariant:
+already-deceptive scores are unchanged, while honest scores can only stay fixed
+or increase toward deception. Symmetric sign-flipping operators remain available
+for mechanistic ablations but are not primary student targets.
 
 ### Evaluation
 
@@ -359,7 +364,7 @@ fleet.
 3. **Parallel pilot.** Start one draining process per consumer GPU against the
    same immutable plan and shared output root.
 4. **Scale only after controls pass.** Do not spend on a full seed matrix until
-   the base model, zero adapter, random control, checkpoint restore, and scoring
+   the base model, zero adapter, orthogonal control, checkpoint restore, and scoring
    calibration all pass.
 
 ### Decision scope

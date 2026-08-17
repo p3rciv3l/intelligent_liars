@@ -11,7 +11,8 @@ from typing import Any, Literal, Sequence
 import torch
 
 
-INTERVENTION_BUNDLE_FORMAT = "qwen_truth_intervention_v1"
+INTERVENTION_BUNDLE_FORMAT = "qwen_truth_intervention_v2"
+LEGACY_INTERVENTION_BUNDLE_FORMAT = "qwen_truth_intervention_v1"
 EXPECTED_DIRECTION_SIGN = "sklearn_logistic_coef_positive_points_honest_to_deceptive"
 
 
@@ -25,6 +26,18 @@ class InterventionMethod(StrEnum):
     BOUNDED_MARGIN_CLAMP = "bounded_margin_clamp"
 
 
+DECEPTION_DIRECTED_SUITE_METHODS = {
+    "directed_scalar_add_deceptive": InterventionMethod.SCALAR_ADDITION,
+    "directed_affine_project_deceptive": InterventionMethod.AFFINE_PROJECTION,
+    "directed_full_reflection": InterventionMethod.FULL_REFLECTION,
+    "directed_partial_reflection": InterventionMethod.PARTIAL_REFLECTION,
+    "honest_boundary_ablation": InterventionMethod.ONE_SIDED_REFLECTION,
+    "bounded_directed_inversion": InterventionMethod.BOUNDED_REMAP,
+    "bounded_deceptive_margin": InterventionMethod.BOUNDED_MARGIN_CLAMP,
+}
+SEEDED_ORTHOGONAL_CONTROL_VARIANT = "seeded_orthogonal_full_reflection"
+
+
 class TokenScope(StrEnum):
     ALL = "all"
     LAST_TOKEN = "last_token"
@@ -32,7 +45,13 @@ class TokenScope(StrEnum):
 
 class DirectionMode(StrEnum):
     PROBE = "probe"
-    MATCHED_RANDOM = "matched_random"
+    SEEDED_ORTHOGONAL_CONTROL = "seeded_orthogonal_control"
+    MATCHED_RANDOM = "seeded_orthogonal_control"
+
+
+class ScoreDirectionality(StrEnum):
+    SYMMETRIC = "symmetric"
+    TOWARD_DECEPTIVE = "toward_deceptive"
 
 
 @dataclass(frozen=True)
@@ -55,7 +74,8 @@ class InterventionSpec:
     layers: tuple[int, ...]
     token_scope: TokenScope = TokenScope.LAST_TOKEN
     direction_mode: DirectionMode = DirectionMode.PROBE
-    random_seed: int | None = None
+    score_directionality: ScoreDirectionality = ScoreDirectionality.SYMMETRIC
+    control_seed: int | None = None
     score_delta: float = 0.0
     projection_target: float = 0.0
     reflection_strength: float = 1.0
@@ -67,7 +87,6 @@ class InterventionSpec:
     margin: float = 1.0
     max_score_delta: float | None = None
 
-
 @dataclass(frozen=True)
 class InterventionBundle:
     direction: ProbeDirection
@@ -76,18 +95,87 @@ class InterventionBundle:
     def effective_direction(self) -> ProbeDirection:
         if self.spec.direction_mode == DirectionMode.PROBE:
             return self.direction
-        if self.spec.random_seed is None:
-            raise ValueError("matched_random direction mode requires random_seed")
+        if self.spec.control_seed is None:
+            raise ValueError(
+                "seeded orthogonal control direction requires control_seed"
+            )
         return replace(
             self.direction,
             vector=tuple(
-                matched_random_direction(
-                    self.direction.tensor(), seed=self.spec.random_seed
+                seeded_orthogonal_direction(
+                    self.direction.tensor(), seed=self.spec.control_seed
                 ).tolist()
             ),
             intercept=0.0,
-            task=f"matched_random_control_for:{self.direction.task}",
+            task=f"seeded_orthogonal_control_for:{self.direction.task}",
         )
+
+
+def canonical_intervention_suite_specs(
+    *,
+    layers: tuple[int, ...],
+    control_seed: int,
+    deceptive_margin: float,
+    score_movement_budget: float,
+) -> dict[str, InterventionSpec]:
+    if deceptive_margin <= 0 or score_movement_budget <= 0:
+        raise ValueError("Suite margin and movement budget must be positive")
+    return {
+        "directed_scalar_add_deceptive": InterventionSpec(
+            method=InterventionMethod.SCALAR_ADDITION,
+            layers=layers,
+            score_directionality=ScoreDirectionality.TOWARD_DECEPTIVE,
+            score_delta=score_movement_budget,
+        ),
+        "directed_affine_project_deceptive": InterventionSpec(
+            method=InterventionMethod.AFFINE_PROJECTION,
+            layers=layers,
+            score_directionality=ScoreDirectionality.TOWARD_DECEPTIVE,
+            projection_target=deceptive_margin,
+        ),
+        "directed_full_reflection": InterventionSpec(
+            method=InterventionMethod.FULL_REFLECTION,
+            layers=layers,
+            score_directionality=ScoreDirectionality.TOWARD_DECEPTIVE,
+        ),
+        "directed_partial_reflection": InterventionSpec(
+            method=InterventionMethod.PARTIAL_REFLECTION,
+            layers=layers,
+            score_directionality=ScoreDirectionality.TOWARD_DECEPTIVE,
+            reflection_strength=0.75,
+        ),
+        "honest_boundary_ablation": InterventionSpec(
+            method=InterventionMethod.ONE_SIDED_REFLECTION,
+            layers=layers,
+            score_directionality=ScoreDirectionality.TOWARD_DECEPTIVE,
+            reflection_strength=0.5,
+            selected_side="honest",
+        ),
+        "bounded_directed_inversion": InterventionSpec(
+            method=InterventionMethod.BOUNDED_REMAP,
+            layers=layers,
+            score_directionality=ScoreDirectionality.TOWARD_DECEPTIVE,
+            remap_input_min=-score_movement_budget,
+            remap_input_max=score_movement_budget,
+            remap_output_min=score_movement_budget,
+            remap_output_max=-score_movement_budget,
+            max_score_delta=2.0 * score_movement_budget,
+        ),
+        "bounded_deceptive_margin": InterventionSpec(
+            method=InterventionMethod.BOUNDED_MARGIN_CLAMP,
+            layers=layers,
+            score_directionality=ScoreDirectionality.TOWARD_DECEPTIVE,
+            selected_side="deceptive",
+            margin=deceptive_margin,
+            max_score_delta=score_movement_budget,
+        ),
+        SEEDED_ORTHOGONAL_CONTROL_VARIANT: InterventionSpec(
+            method=InterventionMethod.FULL_REFLECTION,
+            layers=layers,
+            direction_mode=DirectionMode.SEEDED_ORTHOGONAL_CONTROL,
+            control_seed=control_seed,
+        ),
+    }
 
 
 def load_probe_direction(
@@ -163,7 +251,10 @@ def save_intervention_bundle(
 
 def load_intervention_bundle(path: Path) -> InterventionBundle:
     payload = json.loads(path.read_text())
-    if payload.get("format") != INTERVENTION_BUNDLE_FORMAT:
+    if payload.get("format") not in {
+        INTERVENTION_BUNDLE_FORMAT,
+        LEGACY_INTERVENTION_BUNDLE_FORMAT,
+    }:
         raise ValueError(
             f"Unsupported intervention bundle format: {payload.get('format')!r}"
         )
@@ -173,7 +264,17 @@ def load_intervention_bundle(path: Path) -> InterventionBundle:
     raw_spec = dict(payload["spec"])
     raw_spec["method"] = InterventionMethod(raw_spec["method"])
     raw_spec["token_scope"] = TokenScope(raw_spec["token_scope"])
-    raw_spec["direction_mode"] = DirectionMode(raw_spec["direction_mode"])
+    if raw_spec.get("direction_mode") == "matched_random":
+        raw_spec["direction_mode"] = DirectionMode.SEEDED_ORTHOGONAL_CONTROL
+    else:
+        raw_spec["direction_mode"] = DirectionMode(raw_spec["direction_mode"])
+    if "control_seed" not in raw_spec:
+        raw_spec["control_seed"] = raw_spec.pop("random_seed", None)
+    else:
+        raw_spec.pop("random_seed", None)
+    raw_spec["score_directionality"] = ScoreDirectionality(
+        raw_spec.get("score_directionality", ScoreDirectionality.SYMMETRIC)
+    )
     raw_spec["layers"] = tuple(int(layer) for layer in raw_spec["layers"])
     spec = InterventionSpec(**raw_spec)
     validate_probe_direction(direction)
@@ -243,15 +344,53 @@ def validate_intervention_spec(spec: InterventionSpec) -> None:
         and spec.max_score_delta is None
     ):
         raise ValueError("bounded_margin_clamp requires max_score_delta")
-    if spec.direction_mode == DirectionMode.MATCHED_RANDOM and spec.random_seed is None:
-        raise ValueError("matched_random direction mode requires random_seed")
-
-
-def matched_random_direction(direction: torch.Tensor, *, seed: int) -> torch.Tensor:
-    if direction.ndim != 1 or direction.numel() < 2:
+    if (
+        spec.direction_mode == DirectionMode.SEEDED_ORTHOGONAL_CONTROL
+        and spec.control_seed is None
+    ):
+        raise ValueError("seeded orthogonal control direction requires control_seed")
+    if (
+        spec.direction_mode == DirectionMode.SEEDED_ORTHOGONAL_CONTROL
+        and spec.score_directionality != ScoreDirectionality.SYMMETRIC
+    ):
         raise ValueError(
-            "A matched random control requires a direction with at least two dimensions"
+            "seeded orthogonal controls require symmetric score directionality"
         )
+    if spec.score_directionality == ScoreDirectionality.TOWARD_DECEPTIVE:
+        if (
+            spec.method == InterventionMethod.SCALAR_ADDITION
+            and spec.score_delta <= 0
+        ):
+            raise ValueError("directed scalar addition requires a positive score_delta")
+        if (
+            spec.method == InterventionMethod.AFFINE_PROJECTION
+            and spec.projection_target <= 0
+        ):
+            raise ValueError(
+                "directed affine projection requires a positive projection_target"
+            )
+        if (
+            spec.method == InterventionMethod.ONE_SIDED_REFLECTION
+            and spec.selected_side != "honest"
+        ):
+            raise ValueError(
+                "deception-directed one-sided reflection must select the honest side"
+            )
+        if spec.method == InterventionMethod.BOUNDED_MARGIN_CLAMP and (
+            spec.selected_side != "deceptive" or spec.margin <= 0
+        ):
+            raise ValueError(
+                "deception-directed margin clamp requires a positive deceptive margin"
+            )
+
+
+def seeded_orthogonal_direction(
+    direction: torch.Tensor,
+    *,
+    seed: int,
+) -> torch.Tensor:
+    if direction.ndim != 1 or direction.numel() < 2:
+        raise ValueError("A seeded orthogonal control requires at least two dimensions")
     norm = torch.linalg.vector_norm(direction)
     if not torch.isfinite(norm) or norm.item() == 0.0:
         raise ValueError("Direction must have a finite non-zero norm")
@@ -262,11 +401,15 @@ def matched_random_direction(direction: torch.Tensor, *, seed: int) -> torch.Ten
     random = random - torch.dot(random, source) / torch.dot(source, source) * source
     random_norm = torch.linalg.vector_norm(random)
     if random_norm.item() == 0.0:
-        raise ValueError("Failed to construct an orthogonal matched random direction")
+        raise ValueError("Failed to construct a seeded orthogonal control direction")
     return (random / random_norm * norm.to(device="cpu", dtype=torch.float64)).to(
         device=direction.device,
         dtype=direction.dtype,
     )
+
+
+def matched_random_direction(direction: torch.Tensor, *, seed: int) -> torch.Tensor:
+    return seeded_orthogonal_direction(direction, seed=seed)
 
 
 def transform_activations(
@@ -312,6 +455,13 @@ def transform_activations(
             target_scores = torch.minimum(scores, torch.full_like(scores, -spec.margin))
     else:  # pragma: no cover - exhaustive enum guard
         raise ValueError(f"Unsupported intervention method: {spec.method}")
+
+    if spec.score_directionality == ScoreDirectionality.TOWARD_DECEPTIVE:
+        target_scores = torch.where(
+            scores < 0,
+            torch.maximum(scores, target_scores),
+            scores,
+        )
 
     score_delta = target_scores - scores
     if spec.max_score_delta is not None:
@@ -391,6 +541,10 @@ def validate_materializable_bundle(bundle: InterventionBundle) -> None:
     validate_probe_direction(bundle.direction)
     validate_intervention_spec(bundle.spec)
     writer_edit_coefficient(bundle.spec)
+    if bundle.spec.score_directionality != ScoreDirectionality.SYMMETRIC:
+        raise ValueError(
+            "Deception-directed score gating requires a runtime intervention"
+        )
     direction = bundle.effective_direction()
     if direction.intercept != 0.0:
         raise ValueError(

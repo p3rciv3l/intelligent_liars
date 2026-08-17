@@ -17,7 +17,9 @@ from intelligent_liars.interventions import (
     InterventionBundle,
     InterventionMethod,
     InterventionSpec,
+    ScoreDirectionality,
     TokenScope,
+    canonical_intervention_suite_specs,
     load_intervention_bundle,
     load_probe_direction,
     save_intervention_bundle,
@@ -49,8 +51,14 @@ def build_intervention(
     ),
     method: InterventionMethod = typer.Option(..., case_sensitive=False),
     token_scope: TokenScope = typer.Option(TokenScope.LAST_TOKEN, case_sensitive=False),
-    matched_random_seed: int | None = typer.Option(
+    score_directionality: ScoreDirectionality = typer.Option(
+        ScoreDirectionality.SYMMETRIC,
+        case_sensitive=False,
+    ),
+    orthogonal_control_seed: int | None = typer.Option(
         None,
+        "--orthogonal-control-seed",
+        "--matched-random-seed",
         help="Replace the probe with a seeded orthogonal direction of matching norm.",
     ),
     score_delta: float = typer.Option(
@@ -103,12 +111,13 @@ def build_intervention(
         method=method,
         layers=tuple(intervention_layers or [layer]),
         token_scope=token_scope,
+        score_directionality=score_directionality,
         direction_mode=(
-            DirectionMode.MATCHED_RANDOM
-            if matched_random_seed is not None
+            DirectionMode.SEEDED_ORTHOGONAL_CONTROL
+            if orthogonal_control_seed is not None
             else DirectionMode.PROBE
         ),
-        random_seed=matched_random_seed,
+        control_seed=orthogonal_control_seed,
         score_delta=score_delta,
         projection_target=projection_target,
         reflection_strength=reflection_strength,
@@ -142,65 +151,25 @@ def build_intervention_suite(
     layer: int = typer.Option(..., "--layer", min=0),
     intervention_layers: list[int] | None = typer.Option(None, "--intervention-layer"),
     task: str = typer.Option("general_domain"),
-    random_seed: int = typer.Option(0),
+    control_seed: int = typer.Option(0, "--control-seed", "--random-seed"),
+    deceptive_margin: float = typer.Option(1.0, min=1e-12),
+    score_movement_budget: float = typer.Option(2.0, min=1e-12),
     project_root: Path | None = typer.Option(None),
     overwrite: bool = typer.Option(False, "--overwrite"),
 ) -> None:
-    """Build the standard intervention matrix and one matched-random control."""
+    """Build seven deception-directed interventions and one orthogonal control."""
 
     project_root = _resolve_project_root(project_root)
     direction = load_probe_direction(
         _project_path(project_root, probe_path), layer=layer, task=task
     )
     layers = tuple(intervention_layers or [layer])
-    specs = {
-        "scalar_add_deceptive": InterventionSpec(
-            method=InterventionMethod.SCALAR_ADDITION,
-            layers=layers,
-            score_delta=2.0,
-        ),
-        "affine_project_deceptive": InterventionSpec(
-            method=InterventionMethod.AFFINE_PROJECTION,
-            layers=layers,
-            projection_target=1.0,
-        ),
-        "full_reflection": InterventionSpec(
-            method=InterventionMethod.FULL_REFLECTION,
-            layers=layers,
-        ),
-        "partial_reflection": InterventionSpec(
-            method=InterventionMethod.PARTIAL_REFLECTION,
-            layers=layers,
-            reflection_strength=0.75,
-        ),
-        "one_sided_reflection": InterventionSpec(
-            method=InterventionMethod.ONE_SIDED_REFLECTION,
-            layers=layers,
-            selected_side="honest",
-        ),
-        "bounded_inversion": InterventionSpec(
-            method=InterventionMethod.BOUNDED_REMAP,
-            layers=layers,
-            remap_input_min=-2.0,
-            remap_input_max=2.0,
-            remap_output_min=2.0,
-            remap_output_max=-2.0,
-            max_score_delta=4.0,
-        ),
-        "bounded_deceptive_margin": InterventionSpec(
-            method=InterventionMethod.BOUNDED_MARGIN_CLAMP,
-            layers=layers,
-            selected_side="deceptive",
-            margin=1.0,
-            max_score_delta=2.0,
-        ),
-        "matched_random_full_reflection": InterventionSpec(
-            method=InterventionMethod.FULL_REFLECTION,
-            layers=layers,
-            direction_mode=DirectionMode.MATCHED_RANDOM,
-            random_seed=random_seed,
-        ),
-    }
+    specs = canonical_intervention_suite_specs(
+        layers=layers,
+        control_seed=control_seed,
+        deceptive_margin=deceptive_margin,
+        score_movement_budget=score_movement_budget,
+    )
     resolved_output = _project_path(project_root, output_dir)
     written: list[Path] = []
     for name, spec in specs.items():

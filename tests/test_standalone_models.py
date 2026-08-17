@@ -611,7 +611,7 @@ def test_fleet_plan_round_trip(tmp_path: Path) -> None:
     intervention.write_text(
         json.dumps(
             {
-                "format": "qwen_truth_intervention_v1",
+                "format": "qwen_truth_intervention_v2",
                 "direction": {
                     "vector": [1.0, 0.0],
                     "intercept": 0.0,
@@ -626,7 +626,7 @@ def test_fleet_plan_round_trip(tmp_path: Path) -> None:
                     "layers": [1],
                     "token_scope": "last_token",
                     "direction_mode": "probe",
-                    "random_seed": None,
+                    "control_seed": None,
                     "score_delta": 0.0,
                     "projection_target": 0.0,
                     "reflection_strength": 1.0,

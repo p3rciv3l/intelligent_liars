@@ -20,9 +20,11 @@ from torch import nn
 from torch.nn import functional as F
 
 from intelligent_liars.interventions import (
-    DirectionMode,
-    InterventionMethod,
+    DECEPTION_DIRECTED_SUITE_METHODS,
+    SEEDED_ORTHOGONAL_CONTROL_VARIANT,
+    InterventionBundle,
     RuntimeIntervention,
+    canonical_intervention_suite_specs,
     load_intervention_bundle,
 )
 from intelligent_liars.models import DEFAULT_MODEL_ID, ModelBundle, ModelLoadConfig
@@ -1227,19 +1229,15 @@ def create_fleet_plan(
     if not intervention_paths:
         raise ValueError("At least one intervention bundle is required")
     variants: list[FleetVariant] = []
-    probe_methods: set[InterventionMethod] = set()
-    random_control_methods: set[InterventionMethod] = set()
     names: set[str] = set()
+    bundles: dict[str, InterventionBundle] = {}
     for path in intervention_paths:
         bundle = load_intervention_bundle(path)
-        if bundle.spec.direction_mode == DirectionMode.PROBE:
-            probe_methods.add(bundle.spec.method)
-        else:
-            random_control_methods.add(bundle.spec.method)
         name = path.stem
         if name in names:
             raise ValueError(f"Duplicate intervention variant name: {name}")
         names.add(name)
+        bundles[name] = bundle
         variants.append(
             FleetVariant(
                 name=name,
@@ -1252,13 +1250,56 @@ def create_fleet_plan(
             )
         )
     if require_complete_suite:
-        missing = set(InterventionMethod) - probe_methods
-        if missing or InterventionMethod.FULL_REFLECTION not in random_control_methods:
+        expected_names = {
+            *DECEPTION_DIRECTED_SUITE_METHODS,
+            SEEDED_ORTHOGONAL_CONTROL_VARIANT,
+        }
+        if names != expected_names:
             raise ValueError(
-                "Fleet plan requires all intervention methods and a matched-random full "
-                "reflection control; "
-                f"missing={sorted(method.value for method in missing)}, "
-                f"random_control_methods={sorted(method.value for method in random_control_methods)}"
+                "Fleet plan requires exactly the canonical eight variants; "
+                f"missing={sorted(expected_names - names)}, "
+                f"extra={sorted(names - expected_names)}"
+            )
+        control = bundles[SEEDED_ORTHOGONAL_CONTROL_VARIANT]
+        semantic_directions = {
+            (
+                bundle.direction.vector,
+                bundle.direction.intercept,
+                bundle.direction.layer,
+                bundle.direction.task,
+                bundle.direction.sign_convention,
+            )
+            for bundle in bundles.values()
+        }
+        shared_layers = {bundle.spec.layers for bundle in bundles.values()}
+        shared_token_scopes = {
+            bundle.spec.token_scope for bundle in bundles.values()
+        }
+        scalar = bundles["directed_scalar_add_deceptive"].spec
+        affine = bundles["directed_affine_project_deceptive"].spec
+        if (
+            len(semantic_directions) != 1
+            or len(shared_layers) != 1
+            or len(shared_token_scopes) != 1
+            or control.spec.control_seed is None
+        ):
+            raise ValueError(
+                "Fleet plan variants do not share one semantic direction, layer set, "
+                "token scope, and seeded control"
+            )
+        expected_specs = canonical_intervention_suite_specs(
+            layers=next(iter(shared_layers)),
+            control_seed=control.spec.control_seed,
+            deceptive_margin=affine.projection_target,
+            score_movement_budget=scalar.score_delta,
+        )
+        invalid_specs = [
+            name for name in expected_names if bundles[name].spec != expected_specs[name]
+        ]
+        if invalid_specs:
+            raise ValueError(
+                "Fleet plan variants do not match the canonical directional semantics; "
+                f"invalid_variants={sorted(invalid_specs)}"
             )
     if re.fullmatch(r"[0-9a-f]{40}", base_revision) is None:
         raise ValueError("Fleet plan base revision must be a 40-character commit SHA")

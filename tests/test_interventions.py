@@ -1,4 +1,5 @@
 import json
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -12,11 +13,12 @@ from intelligent_liars.interventions import (
     InterventionSpec,
     ProbeDirection,
     RuntimeIntervention,
+    ScoreDirectionality,
     TokenScope,
     apply_rank_one_writer_edit,
     load_intervention_bundle,
     load_probe_direction,
-    matched_random_direction,
+    seeded_orthogonal_direction,
     save_intervention_bundle,
     save_writer_edited_model,
     transform_activations,
@@ -99,6 +101,74 @@ def test_one_sided_reflection_only_changes_selected_class() -> None:
     assert score(transformed).tolist() == pytest.approx([1.0, 3.0])
 
 
+@pytest.mark.parametrize(
+    ("directed_spec", "expected_scores"),
+    [
+        (
+            spec(InterventionMethod.SCALAR_ADDITION, score_delta=2.0),
+            [-3.0, 0.0, 0.0, 3.0],
+        ),
+        (
+            spec(InterventionMethod.AFFINE_PROJECTION, projection_target=1.0),
+            [1.0, 1.0, 0.0, 3.0],
+        ),
+        (spec(InterventionMethod.FULL_REFLECTION), [5.0, 2.0, 0.0, 3.0]),
+        (
+            spec(
+                InterventionMethod.PARTIAL_REFLECTION,
+                reflection_strength=0.75,
+            ),
+            [2.5, 1.0, 0.0, 3.0],
+        ),
+        (
+            spec(
+                InterventionMethod.ONE_SIDED_REFLECTION,
+                selected_side="honest",
+                reflection_strength=0.5,
+            ),
+            [0.0, 0.0, 0.0, 3.0],
+        ),
+        (
+            spec(
+                InterventionMethod.BOUNDED_REMAP,
+                remap_input_min=-2.0,
+                remap_input_max=2.0,
+                remap_output_min=2.0,
+                remap_output_max=-2.0,
+                max_score_delta=4.0,
+            ),
+            [-1.0, 2.0, 0.0, 3.0],
+        ),
+        (
+            spec(
+                InterventionMethod.BOUNDED_MARGIN_CLAMP,
+                selected_side="deceptive",
+                margin=1.0,
+                max_score_delta=2.0,
+            ),
+            [-3.0, 0.0, 0.0, 3.0],
+        ),
+    ],
+)
+def test_toward_deceptive_variants_never_reduce_existing_alignment(
+    directed_spec: InterventionSpec,
+    expected_scores: list[float],
+) -> None:
+    activation = torch.tensor([[-2.0, 0.0], [-0.5, 0.0], [0.5, 0.0], [2.0, 0.0]])
+    directed_spec = replace(
+        directed_spec,
+        score_directionality=ScoreDirectionality.TOWARD_DECEPTIVE,
+    )
+
+    before = score(activation)
+    after = score(transform_activations(activation, direction(), directed_spec))
+
+    assert torch.all(after >= before)
+    assert torch.all(after[before < 0] > before[before < 0])
+    assert torch.equal(after[before >= 0], before[before >= 0])
+    assert after.tolist() == pytest.approx(expected_scores)
+
+
 def test_bounded_remap_and_margin_clamp_bound_score_adjustment() -> None:
     activation = torch.tensor([[-2.0, 0.0], [0.5, 0.0], [3.0, 0.0]])
     remapped = transform_activations(
@@ -138,17 +208,79 @@ def test_bundle_validation_rejects_unbounded_clamp_and_non_finite_settings() -> 
         validate_intervention_spec(
             spec(InterventionMethod.SCALAR_ADDITION, score_delta=float("nan"))
         )
+    with pytest.raises(ValueError, match="require symmetric"):
+        validate_intervention_spec(
+            spec(
+                InterventionMethod.FULL_REFLECTION,
+                direction_mode=DirectionMode.SEEDED_ORTHOGONAL_CONTROL,
+                control_seed=0,
+                score_directionality=ScoreDirectionality.TOWARD_DECEPTIVE,
+            )
+        )
+    with pytest.raises(ValueError, match="positive projection_target"):
+        validate_intervention_spec(
+            spec(
+                InterventionMethod.AFFINE_PROJECTION,
+                projection_target=0.0,
+                score_directionality=ScoreDirectionality.TOWARD_DECEPTIVE,
+            )
+        )
+    with pytest.raises(ValueError, match="select the honest side"):
+        validate_intervention_spec(
+            spec(
+                InterventionMethod.ONE_SIDED_REFLECTION,
+                selected_side="deceptive",
+                score_directionality=ScoreDirectionality.TOWARD_DECEPTIVE,
+            )
+        )
 
 
-def test_matched_random_direction_is_seeded_orthogonal_and_norm_matched() -> None:
+def test_seeded_orthogonal_direction_is_reproducible_and_norm_matched() -> None:
     source = torch.tensor([3.0, 4.0, 0.0])
 
-    first = matched_random_direction(source, seed=17)
-    second = matched_random_direction(source, seed=17)
+    first = seeded_orthogonal_direction(source, seed=17)
+    second = seeded_orthogonal_direction(source, seed=17)
 
     assert first.tolist() == pytest.approx(second.tolist())
     assert torch.dot(first, source).item() == pytest.approx(0.0, abs=1e-6)
     assert torch.linalg.vector_norm(first).item() == pytest.approx(5.0)
+
+
+def test_legacy_direction_mode_alias_and_control_seed_replacement() -> None:
+    control = spec(
+        InterventionMethod.FULL_REFLECTION,
+        direction_mode=DirectionMode.MATCHED_RANDOM,
+        control_seed=17,
+    )
+
+    assert control.direction_mode == DirectionMode.SEEDED_ORTHOGONAL_CONTROL
+    assert control.control_seed == 17
+
+    replaced = replace(control, control_seed=4)
+    assert replaced.control_seed == 4
+
+
+def test_seeded_orthogonal_reflection_preserves_truth_probe_score() -> None:
+    activation = torch.tensor([[2.0, 3.0], [-2.0, 5.0]])
+    bundle = InterventionBundle(
+        direction=direction(),
+        spec=spec(
+            InterventionMethod.FULL_REFLECTION,
+            direction_mode=DirectionMode.SEEDED_ORTHOGONAL_CONTROL,
+            control_seed=17,
+        ),
+    )
+
+    transformed = transform_activations(
+        activation,
+        bundle.effective_direction(),
+        bundle.spec,
+    )
+
+    assert score(transformed).tolist() == pytest.approx(
+        score(activation).tolist(),
+        abs=1e-6,
+    )
 
 
 def test_probe_direction_loading_and_bundle_round_trip(tmp_path: Path) -> None:
@@ -181,8 +313,8 @@ def test_probe_direction_loading_and_bundle_round_trip(tmp_path: Path) -> None:
         spec=InterventionSpec(
             method=InterventionMethod.ONE_SIDED_REFLECTION,
             layers=(19, 20, 21),
-            direction_mode=DirectionMode.MATCHED_RANDOM,
-            random_seed=3,
+            direction_mode=DirectionMode.SEEDED_ORTHOGONAL_CONTROL,
+            control_seed=3,
         ),
     )
     bundle_path = tmp_path / "intervention.json"
@@ -191,6 +323,16 @@ def test_probe_direction_loading_and_bundle_round_trip(tmp_path: Path) -> None:
 
     assert load_intervention_bundle(bundle_path) == bundle
     assert loaded_direction.source_path == str(probe_path.resolve())
+
+    legacy_payload = json.loads(bundle_path.read_text())
+    legacy_payload["format"] = "qwen_truth_intervention_v1"
+    legacy_payload["spec"]["direction_mode"] = "matched_random"
+    legacy_payload["spec"]["random_seed"] = legacy_payload["spec"].pop(
+        "control_seed"
+    )
+    legacy_payload["spec"].pop("score_directionality")
+    bundle_path.write_text(json.dumps(legacy_payload))
+    assert load_intervention_bundle(bundle_path) == bundle
 
 
 class FakeLayer(torch.nn.Module):
@@ -308,6 +450,19 @@ def test_only_homogeneous_linear_methods_can_be_materialized() -> None:
                     vector=(1.0, 0.0), intercept=0.0, layer=1, task="x"
                 ),
                 spec=spec(InterventionMethod.FULL_REFLECTION),
+            )
+        )
+    with pytest.raises(ValueError, match="requires a runtime intervention"):
+        validate_materializable_bundle(
+            InterventionBundle(
+                direction=ProbeDirection(
+                    vector=(1.0, 0.0), intercept=0.0, layer=1, task="x"
+                ),
+                spec=spec(
+                    InterventionMethod.FULL_REFLECTION,
+                    token_scope=TokenScope.ALL,
+                    score_directionality=ScoreDirectionality.TOWARD_DECEPTIVE,
+                ),
             )
         )
     with pytest.raises(ValueError, match="must be non-zero"):

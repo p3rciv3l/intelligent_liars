@@ -1285,17 +1285,18 @@ def test_build_intervention_cli_writes_portable_bundle(tmp_path):
             "21",
             "--method",
             "one_sided_reflection",
-            "--matched-random-seed",
+            "--orthogonal-control-seed",
             "7",
         ],
     )
 
     assert result.exit_code == 0, result.output
     payload = json.loads(output_path.read_text())
-    assert payload["format"] == "qwen_truth_intervention_v1"
+    assert payload["format"] == "qwen_truth_intervention_v2"
     assert payload["spec"]["layers"] == [19, 21]
     assert payload["spec"]["method"] == "one_sided_reflection"
-    assert payload["spec"]["direction_mode"] == "matched_random"
+    assert payload["spec"]["direction_mode"] == "seeded_orthogonal_control"
+    assert payload["spec"]["control_seed"] == 7
     assert payload["direction"]["vector"] == [1.0, 2.0]
 
 
@@ -1387,13 +1388,28 @@ def test_build_intervention_suite_writes_all_variants(tmp_path):
             str(output_dir),
             "--layer",
             "21",
+            "--deceptive-margin",
+            "1.25",
+            "--score-movement-budget",
+            "3",
         ],
     )
 
     assert result.exit_code == 0, result.output
     paths = sorted(output_dir.glob("*.json"))
     assert len(paths) == 8
-    methods = {json.loads(path.read_text())["spec"]["method"] for path in paths}
+    payloads = {path.stem: json.loads(path.read_text()) for path in paths}
+    assert set(payloads) == {
+        "directed_scalar_add_deceptive",
+        "directed_affine_project_deceptive",
+        "directed_full_reflection",
+        "directed_partial_reflection",
+        "honest_boundary_ablation",
+        "bounded_directed_inversion",
+        "bounded_deceptive_margin",
+        "seeded_orthogonal_full_reflection",
+    }
+    methods = {payload["spec"]["method"] for payload in payloads.values()}
     assert methods == {
         "scalar_addition",
         "affine_projection",
@@ -1403,6 +1419,35 @@ def test_build_intervention_suite_writes_all_variants(tmp_path):
         "bounded_remap",
         "bounded_margin_clamp",
     }
+    assert all(
+        payload["spec"]["score_directionality"] == "toward_deceptive"
+        for name, payload in payloads.items()
+        if name != "seeded_orthogonal_full_reflection"
+    )
+    assert (
+        payloads["seeded_orthogonal_full_reflection"]["spec"]
+        ["score_directionality"]
+        == "symmetric"
+    )
+    assert (
+        payloads["honest_boundary_ablation"]["spec"]["reflection_strength"]
+        == 0.5
+    )
+    assert payloads["directed_scalar_add_deceptive"]["spec"]["score_delta"] == 3.0
+    assert (
+        payloads["directed_affine_project_deceptive"]["spec"][
+            "projection_target"
+        ]
+        == 1.25
+    )
+    assert payloads["bounded_directed_inversion"]["spec"]["max_score_delta"] == 6.0
+    assert payloads["bounded_deceptive_margin"]["spec"]["margin"] == 1.25
+    assert payloads["bounded_deceptive_margin"]["spec"]["max_score_delta"] == 3.0
+
+    portable_variant = output_dir / "directed_partial_reflection.json"
+    portable_payload = json.loads(portable_variant.read_text())
+    portable_payload["direction"]["source_path"] = "/another/machine/probe.json"
+    portable_variant.write_text(json.dumps(portable_payload))
 
     prompts = tmp_path / "prompts.json"
     prompts.write_text("[]")
@@ -1439,3 +1484,50 @@ def test_build_intervention_suite_writes_all_variants(tmp_path):
     assert "weight_tying" not in plan["training"]
     assert "rank" not in plan["training"]
     assert "alpha" not in plan["training"]
+
+    invalid_variant = output_dir / "directed_full_reflection.json"
+    invalid_payload = json.loads(invalid_variant.read_text())
+    invalid_payload["spec"]["score_directionality"] = "symmetric"
+    invalid_variant.write_text(json.dumps(invalid_payload))
+    invalid_plan_result = CliRunner().invoke(
+        app,
+        [
+            "plan-intervention-model-fleet",
+            *plan_args,
+            "--prompts",
+            str(prompts),
+            "--preservation-teacher",
+            str(preservation),
+            "--output-root",
+            str(tmp_path / "invalid-fleet"),
+            "--plan",
+            str(tmp_path / "invalid-plan.json"),
+            "--base-revision",
+            "dddddddddddddddddddddddddddddddddddddddd",
+        ],
+    )
+    assert invalid_plan_result.exit_code != 0
+    assert "canonical directional semantics" in str(invalid_plan_result.exception)
+
+    invalid_payload["spec"]["score_directionality"] = "toward_deceptive"
+    invalid_payload["spec"]["max_score_delta"] = 0.01
+    invalid_variant.write_text(json.dumps(invalid_payload))
+    capped_plan_result = CliRunner().invoke(
+        app,
+        [
+            "plan-intervention-model-fleet",
+            *plan_args,
+            "--prompts",
+            str(prompts),
+            "--preservation-teacher",
+            str(preservation),
+            "--output-root",
+            str(tmp_path / "capped-fleet"),
+            "--plan",
+            str(tmp_path / "capped-plan.json"),
+            "--base-revision",
+            "dddddddddddddddddddddddddddddddddddddddd",
+        ],
+    )
+    assert capped_plan_result.exit_code != 0
+    assert "canonical directional semantics" in str(capped_plan_result.exception)

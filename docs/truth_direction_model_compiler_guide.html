@@ -243,8 +243,8 @@
 
         <rect x="540" y="92" width="205" height="138" rx="10" fill="#fff0c9" stroke="#9a6510" stroke-width="2"/>
         <text x="642" y="124" text-anchor="middle" font-family="Arial" font-size="17" font-weight="700">Eight teachers</text>
-        <text x="642" y="151" text-anchor="middle" font-family="Arial" font-size="13">Seven coordinate maps</text>
-        <text x="642" y="173" text-anchor="middle" font-family="Arial" font-size="13">One random control</text>
+        <text x="642" y="151" text-anchor="middle" font-family="Arial" font-size="13">Seven deception-directed maps</text>
+        <text x="642" y="173" text-anchor="middle" font-family="Arial" font-size="13">One orthogonal control</text>
         <text x="642" y="201" text-anchor="middle" font-family="Arial" font-size="12" font-style="italic">Offline intervention only</text>
 
         <rect x="805" y="105" width="245" height="112" rx="10" fill="#dcf3e7" stroke="#247a52" stroke-width="2"/>
@@ -332,7 +332,7 @@
     <div class="diagram" id="diagram-geometry">
       <svg viewBox="0 0 1120 600" role="img" aria-labelledby="geo-title geo-desc">
         <title id="geo-title">Truth-coordinate geometry</title>
-        <desc id="geo-desc">Four panels show scalar addition, affine projection, full reflection, and a bounded coordinate map.</desc>
+        <desc id="geo-desc">Four panels show deception-directed scalar addition, affine projection, reflection, and a bounded coordinate map.</desc>
         <defs><marker id="geo-arrow" markerWidth="9" markerHeight="9" refX="8" refY="3" orient="auto"><path d="M0,0 L9,3 L0,6 Z" fill="#293750"/></marker></defs>
         <rect x="18" y="18" width="1084" height="564" rx="14" fill="#f8faff" stroke="#9aa8bd" stroke-width="2"/>
         <text x="44" y="56" font-family="Arial" font-size="25" font-weight="700" fill="#172033">How each operator changes the signed coordinate</text>
@@ -365,7 +365,7 @@
 
         <g transform="translate(575,88)">
           <rect width="240" height="205" rx="10" fill="#fff" stroke="#9aa8bd"/>
-          <text x="120" y="28" text-anchor="middle" font-family="Arial" font-size="16" font-weight="700">Full reflection</text>
+          <text x="120" y="28" text-anchor="middle" font-family="Arial" font-size="16" font-weight="700">Directed reflection</text>
           <line x1="25" y1="105" x2="215" y2="105" stroke="#293750" stroke-width="2" marker-end="url(#geo-arrow)"/>
           <line x1="120" y1="55" x2="120" y2="160" stroke="#a53a36" stroke-width="2" stroke-dasharray="6 4"/>
           <circle cx="65" cy="105" r="8" fill="#2367a8"/>
@@ -373,7 +373,7 @@
           <path d="M70,82 C105,45 145,45 170,82" fill="none" stroke="#293750" stroke-width="2" marker-end="url(#geo-arrow)"/>
           <text x="65" y="135" text-anchor="middle" font-family="monospace" font-size="12">z</text>
           <text x="175" y="135" text-anchor="middle" font-family="monospace" font-size="12">−z</text>
-          <text x="120" y="183" text-anchor="middle" font-family="Arial" font-size="12">Reverse the sign</text>
+          <text x="120" y="183" text-anchor="middle" font-family="Arial" font-size="12">Reflect honest scores only</text>
         </g>
 
         <g transform="translate(840,88)">
@@ -393,6 +393,7 @@
         <text x="390" y="413" font-family="Arial" font-size="14">The map changes the probe coordinate.</text>
         <text x="390" y="444" font-family="Arial" font-size="14">The map does not directly change the orthogonal state.</text>
         <text x="390" y="475" font-family="Arial" font-size="14">The downstream decoder can still create nonlinear effects.</text>
+        <text x="95" y="505" font-family="Arial" font-size="13">Suite invariant: preserve z ≥ 0; for z &lt; 0, never decrease z.</text>
       </svg>
       <p class="caption">Figure 2. Simple operators can have complex downstream effects.</p>
     </div>
@@ -400,23 +401,25 @@
 
   <section id="operators">
     <h2>4. Intervention operators</h2>
-    <p>The suite contains seven target operators and one random control.</p>
-    <p>The default values are start values for experiments.</p>
-    <p>The default suite values are not final scientific settings.</p>
+    <p>The suite contains seven deception-directed operators and one seeded orthogonal control.</p>
+    <p>Every probe-directed model preserves scores that are already deceptive.</p>
+    <p>The margin and movement budget are explicit calibration knobs, not final scientific settings.</p>
 
     <table>
       <thead><tr><th>Variant</th><th>Coordinate map</th><th>Default suite value</th><th>Primary question</th></tr></thead>
       <tbody>
-        <tr><td>Scalar addition</td><td><code>z′ = z + δ</code></td><td><code>δ = +2</code></td><td>Does a constant deceptive push change reports?</td></tr>
-        <tr><td>Affine projection</td><td><code>z′ = target</code></td><td><code>target = +1</code></td><td>Does a fixed deceptive margin produce stable output?</td></tr>
-        <tr><td>Full reflection</td><td><code>z′ = −z</code></td><td>Full strength</td><td>Does a sign reversal invert report behavior?</td></tr>
-        <tr><td>Partial reflection</td><td><code>z′ = (1−2s)z</code></td><td><code>s = 0.75</code></td><td>Does a smaller reversal reduce model damage?</td></tr>
-        <tr><td>One-sided reflection</td><td>Reflect only selected scores</td><td>Reflect the honest side</td><td>Can the map avoid accidental re-honest behavior?</td></tr>
-        <tr><td>Bounded inversion</td><td>Linear map inside fixed limits</td><td><code>[−2,+2] → [+2,−2]</code></td><td>Can bounded inversion keep output coherent?</td></tr>
-        <tr><td>Bounded margin</td><td>Move toward a deceptive margin</td><td>Margin 1, maximum change 2</td><td>Can the smallest sufficient move change the answer?</td></tr>
-        <tr><td>Random control</td><td>Full reflection on random axis</td><td>Seed 0, same norm, orthogonal axis</td><td>Does any similar perturbation cause the result?</td></tr>
+        <tr><td>Directed scalar addition</td><td>Add the budget only when <code>z&lt;0</code></td><td>Budget 2</td><td>Does a constant honest-side push change reports?</td></tr>
+        <tr><td>Directed affine projection</td><td>Project honest scores to the margin</td><td>Margin 1</td><td>Does a fixed deceptive destination produce stable output?</td></tr>
+        <tr><td>Directed full reflection</td><td><code>z′ = |z|</code></td><td>Equal positive magnitude</td><td>Does preserving confidence while changing side alter reports?</td></tr>
+        <tr><td>Directed partial reflection</td><td><code>z&lt;0: z′ = −0.5z</code></td><td><code>s = 0.75</code></td><td>Does a lower-confidence crossing reduce damage?</td></tr>
+        <tr><td>Honest boundary ablation</td><td><code>z&lt;0: z′ = 0</code></td><td><code>s = 0.5</code></td><td>Is removing honest evidence sufficient without adding deception?</td></tr>
+        <tr><td>Bounded directed inversion</td><td>Use inversion only where it increases <code>z</code></td><td>Range ±2, cap 4</td><td>Can a bounded crossing preserve coherence?</td></tr>
+        <tr><td>Bounded deceptive margin</td><td>Move honest scores toward the margin</td><td>Margin 1, budget 2</td><td>Can the smallest bounded move change the answer?</td></tr>
+        <tr><td>Seeded orthogonal control</td><td>Symmetric reflection on a fixed control axis</td><td>Seed 0, same norm, orthogonal to probe</td><td>Does a similar non-truth perturbation cause the result?</td></tr>
       </tbody>
     </table>
+
+    <p>The suite is a dose ladder. Projection and directed reflections guarantee boundary crossing. Boundary ablation removes honest evidence without adding deception. Scalar and bounded variants strictly improve honest scores while limiting damage.</p>
 
     <h3>4.1 Validation rules</h3>
     <ul>
@@ -425,9 +428,10 @@
       <li>The code rejects nonfinite values.</li>
       <li>The code requires unique layer numbers.</li>
       <li>The bounded margin requires a maximum score change.</li>
-      <li>The random control uses a deterministic seed.</li>
-      <li>The random direction has the same norm as the probe direction.</li>
-      <li>The random direction is orthogonal to the probe direction.</li>
+      <li>Every directed candidate must satisfy <code>z′ ≥ z</code>.</li>
+      <li>Every already-deceptive score must stay unchanged.</li>
+      <li>The seeded control direction has the same norm as the probe.</li>
+      <li>The seeded control direction is orthogonal to the probe.</li>
     </ul>
 
     <h3>4.2 Token scope</h3>
@@ -771,7 +775,7 @@
       <div class="gate"><strong>Gate 2: Teacher</strong><span class="status open">BEHAVIOR TEST</span><ul><li>Generate 50 held-out MMLU items.</li><li>Measure valid wrong answers.</li><li>Reject refusal and fixed-position collapse.</li></ul></div>
       <div class="gate"><strong>Gate 3: One student</strong><span class="status open">FULL REFLECTION</span><ul><li>Train one small dataset.</li><li>Merge TinyLoRA into Qwen.</li><li>Reload with the stock class.</li></ul></div>
       <div class="gate"><strong>Gate 4: Preservation</strong><span class="status open">ACTION SMOKE</span><ul><li>Run action-format prompts.</li><li>Run a small OSWorld subset.</li><li>Compare the base model.</li></ul></div>
-      <div class="gate"><strong>Gate 5: Pilot fleet</strong><span class="status open">THREE VARIANTS</span><ul><li>Run reflection, bounded margin, and random control.</li><li>Compare target and damage metrics.</li><li>Select useful settings.</li></ul></div>
+      <div class="gate"><strong>Gate 5: Pilot fleet</strong><span class="status open">THREE VARIANTS</span><ul><li>Run directed reflection, bounded margin, and orthogonal control.</li><li>Compare target and damage metrics.</li><li>Select useful settings.</li></ul></div>
       <div class="gate"><strong>Gate 6: Full fleet</strong><span class="status open">EIGHT STUDENTS</span><ul><li>Run all planned variants.</li><li>Verify the checkpoint export hashes.</li><li>Run complete evaluations.</li></ul></div>
     </div>
 
@@ -780,7 +784,7 @@
       <li>The answer parser succeeds at the base-model rate.</li>
       <li>The refusal rate does not materially increase.</li>
       <li>The repetition rate does not materially increase.</li>
-      <li>The target score differs from the matched-random control.</li>
+      <li>The target score differs from the seeded orthogonal control.</li>
       <li>The OSWorld and ALFWorld scores stay inside the approved loss budgets.</li>
       <li>The result repeats with more than one random seed.</li>
     </ul>
@@ -833,11 +837,11 @@ echo "$REVISION"</pre>
   --output /shared/interventions/layer21_suite \
   --layer 21</pre>
 
-    <h3>12.4 Generate one full-reflection teacher smoke set</h3>
+    <h3>12.4 Generate one directed-full-reflection teacher smoke set</h3>
     <pre>PYTHONPATH=src uv run --no-sync intelligent-liars generate-intervention-teacher \
   --prompts /shared/data/intervention_smoke_prompts.json \
-  --intervention /shared/interventions/layer21_suite/full_reflection.json \
-  --output /shared/smoke/full_reflection_teacher.json \
+  --intervention /shared/interventions/layer21_suite/directed_full_reflection.json \
+  --output /shared/smoke/directed_full_reflection_teacher.json \
   --base-revision "$REVISION" \
   --no-resume</pre>
 
@@ -910,7 +914,7 @@ CUDA_VISIBLE_DEVICES=0 PYTHONPATH=src uv run --no-sync \
 
     <h3>12.12 Start evaluation</h3>
     <ol>
-      <li>Evaluate the base model and matched-random control first.</li>
+      <li>Evaluate the base model and seeded orthogonal control first.</li>
       <li>Evaluate all students on a small MMLU and GPQA subset.</li>
       <li>Reject models with invalid output or fixed-position bias.</li>
       <li>Evaluate the models that pass these checks on OSWorld and ALFWorld smoke subsets.</li>
@@ -924,7 +928,7 @@ CUDA_VISIBLE_DEVICES=0 PYTHONPATH=src uv run --no-sync \
     <ul>
       <li>It reads the provisional truth probe.</li>
       <li>It builds seven intervention variants.</li>
-      <li>It builds one matched-random control.</li>
+      <li>It builds one seeded orthogonal control.</li>
       <li>It records the pinned base model as a control.</li>
       <li>It generates text or multimodal teacher data.</li>
       <li>It trains 13-coordinate TinyLoRA students with preservation data.</li>
@@ -946,7 +950,7 @@ CUDA_VISIBLE_DEVICES=0 PYTHONPATH=src uv run --no-sync \
 
     <h3>13.3 Immediate next action</h3>
     <div class="callout good">
-      <p>Start one GPU smoke run with the full-reflection teacher.</p>
+      <p>Start one GPU smoke run with the directed-full-reflection teacher.</p>
       <p>Use 50 to 100 held-out MMLU items.</p>
       <p>Do not train the full fleet until this teacher changes correct answers to valid wrong answers.</p>
     </div>
@@ -955,12 +959,12 @@ CUDA_VISIBLE_DEVICES=0 PYTHONPATH=src uv run --no-sync \
     <table>
       <thead><tr><th>Smoke result</th><th>Next action</th></tr></thead>
       <tbody>
-        <tr><td>The teacher changes correct answers to valid wrong answers.</td><td>Train one full-reflection student.</td></tr>
+        <tr><td>The teacher changes correct answers to valid wrong answers.</td><td>Train one directed-full-reflection student.</td></tr>
         <tr><td>The teacher causes random or invalid answers.</td><td>Reduce strength or use bounded margin.</td></tr>
         <tr><td>The teacher has no output effect.</td><td>Test another layer or a domain-specific direction.</td></tr>
         <tr><td>The student does not copy the teacher.</td><td>Increase the teacher data, coordinate budget, or epoch count.</td></tr>
         <tr><td>The student model reduces OSWorld performance.</td><td>Increase preservation coverage or weight.</td></tr>
-        <tr><td>The random control has the same effect.</td><td>Reject the causal truth-direction claim.</td></tr>
+        <tr><td>The orthogonal control has the same effect.</td><td>Reject the causal truth-direction claim.</td></tr>
       </tbody>
     </table>
   </section>
