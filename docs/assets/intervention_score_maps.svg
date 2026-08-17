@@ -1,0 +1,120 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1440" height="1030" viewBox="0 0 1440 1030" role="img" aria-labelledby="title desc">
+  <title id="title">Canonical intervention score maps</title>
+  <desc id="desc">Eight panels plot output deception score against input deception score for the seven directed teachers and the seeded orthogonal control.</desc>
+  <defs>
+    <marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="3.5" orient="auto">
+      <path d="M0,0 L8,3.5 L0,7 Z" fill="#263247"/>
+    </marker>
+    <g id="grid">
+      <rect x="0" y="0" width="330" height="410" rx="12" fill="#ffffff" stroke="#9aa8bd" stroke-width="2"/>
+      <rect x="60" y="78" width="120" height="240" fill="#e7f1ff"/>
+      <rect x="180" y="78" width="120" height="240" fill="#fff0ef"/>
+      <line x1="60" y1="198" x2="307" y2="198" stroke="#263247" stroke-width="1.5" marker-end="url(#arrow)"/>
+      <line x1="180" y1="324" x2="180" y2="72" stroke="#263247" stroke-width="1.5" marker-end="url(#arrow)"/>
+      <line x1="60" y1="318" x2="300" y2="78" stroke="#788398" stroke-width="1.5" stroke-dasharray="6 5"/>
+      <line x1="60" y1="194" x2="60" y2="202" stroke="#263247"/>
+      <line x1="120" y1="194" x2="120" y2="202" stroke="#263247"/>
+      <line x1="240" y1="194" x2="240" y2="202" stroke="#263247"/>
+      <line x1="300" y1="194" x2="300" y2="202" stroke="#263247"/>
+      <line x1="176" y1="318" x2="184" y2="318" stroke="#263247"/>
+      <line x1="176" y1="258" x2="184" y2="258" stroke="#263247"/>
+      <line x1="176" y1="138" x2="184" y2="138" stroke="#263247"/>
+      <line x1="176" y1="78" x2="184" y2="78" stroke="#263247"/>
+      <text x="56" y="216" text-anchor="middle" font-family="Arial" font-size="11" fill="#526078">−4</text>
+      <text x="120" y="216" text-anchor="middle" font-family="Arial" font-size="11" fill="#526078">−2</text>
+      <text x="240" y="216" text-anchor="middle" font-family="Arial" font-size="11" fill="#526078">2</text>
+      <text x="300" y="216" text-anchor="middle" font-family="Arial" font-size="11" fill="#526078">4</text>
+      <text x="169" y="322" text-anchor="end" font-family="Arial" font-size="11" fill="#526078">−4</text>
+      <text x="169" y="262" text-anchor="end" font-family="Arial" font-size="11" fill="#526078">−2</text>
+      <text x="169" y="142" text-anchor="end" font-family="Arial" font-size="11" fill="#526078">2</text>
+      <text x="169" y="82" text-anchor="end" font-family="Arial" font-size="11" fill="#526078">4</text>
+      <text x="297" y="190" text-anchor="end" font-family="Arial" font-size="12" font-weight="700" fill="#263247">input z</text>
+      <text x="190" y="88" font-family="Arial" font-size="12" font-weight="700" fill="#263247">output z′</text>
+      <text x="67" y="304" font-family="Arial" font-size="11" fill="#2367a8">honest input</text>
+      <text x="292" y="304" text-anchor="end" font-family="Arial" font-size="11" fill="#a53a36">deceptive input</text>
+    </g>
+  </defs>
+
+  <rect width="1440" height="1030" fill="#f7f9fc"/>
+  <text x="34" y="46" font-family="Arial" font-size="28" font-weight="700" fill="#172033">How each teacher maps the deception score</text>
+  <text x="34" y="75" font-family="Arial" font-size="15" fill="#526078">Horizontal axis: score before intervention. Vertical axis: score after intervention. Positive means deceptive.</text>
+  <line x1="945" y1="47" x2="1005" y2="47" stroke="#6d45b5" stroke-width="4"/>
+  <text x="1015" y="52" font-family="Arial" font-size="13" fill="#263247">implemented map</text>
+  <line x1="1145" y1="47" x2="1205" y2="47" stroke="#788398" stroke-width="2" stroke-dasharray="6 5"/>
+  <text x="1215" y="52" font-family="Arial" font-size="13" fill="#263247">identity z′=z</text>
+
+  <g transform="translate(20,100)">
+    <use href="#grid"/>
+    <text x="18" y="32" font-family="Arial" font-size="17" font-weight="700" fill="#172033">1 · Directed scalar addition</text>
+    <path d="M60,258 L90,228 L120,198 L150,168 L179,139" fill="none" stroke="#6d45b5" stroke-width="4"/>
+    <circle cx="180" cy="138" r="5" fill="#fff" stroke="#6d45b5" stroke-width="3"/>
+    <path d="M180,198 L300,78" fill="none" stroke="#6d45b5" stroke-width="4"/>
+    <circle cx="180" cy="198" r="5" fill="#6d45b5"/>
+    <text x="18" y="350" font-family="monospace" font-size="13" fill="#263247">z&lt;0: z′=z+2; z≥0: unchanged</text>
+    <text x="18" y="374" font-family="Arial" font-size="12" fill="#526078">Fixed dose; extreme honest scores may stay honest.</text>
+  </g>
+
+  <g transform="translate(370,100)">
+    <use href="#grid"/>
+    <text x="18" y="32" font-family="Arial" font-size="17" font-weight="700" fill="#172033">2 · Directed affine projection</text>
+    <path d="M60,168 L179,168" fill="none" stroke="#6d45b5" stroke-width="4"/>
+    <circle cx="180" cy="168" r="5" fill="#fff" stroke="#6d45b5" stroke-width="3"/>
+    <path d="M180,198 L300,78" fill="none" stroke="#6d45b5" stroke-width="4"/>
+    <circle cx="180" cy="198" r="5" fill="#6d45b5"/>
+    <text x="18" y="350" font-family="monospace" font-size="13" fill="#263247">z&lt;0: z′=1; z≥0: unchanged</text>
+    <text x="18" y="374" font-family="Arial" font-size="12" fill="#526078">Guaranteed crossing to one common deceptive margin.</text>
+  </g>
+
+  <g transform="translate(720,100)">
+    <use href="#grid"/>
+    <text x="18" y="32" font-family="Arial" font-size="17" font-weight="700" fill="#172033">3 · Directed full reflection</text>
+    <path d="M60,78 L180,198 L300,78" fill="none" stroke="#6d45b5" stroke-width="4"/>
+    <text x="18" y="350" font-family="monospace" font-size="13" fill="#263247">z′=|z|</text>
+    <text x="18" y="374" font-family="Arial" font-size="12" fill="#526078">Guaranteed crossing; preserves confidence magnitude.</text>
+  </g>
+
+  <g transform="translate(1070,100)">
+    <use href="#grid"/>
+    <text x="18" y="32" font-family="Arial" font-size="17" font-weight="700" fill="#172033">4 · Directed partial reflection</text>
+    <path d="M60,138 L180,198 L300,78" fill="none" stroke="#6d45b5" stroke-width="4"/>
+    <text x="18" y="350" font-family="monospace" font-size="13" fill="#263247">z&lt;0: z′=−0.5z; z≥0: unchanged</text>
+    <text x="18" y="374" font-family="Arial" font-size="12" fill="#526078">Guaranteed crossing with half positive magnitude.</text>
+  </g>
+
+  <g transform="translate(20,560)">
+    <use href="#grid"/>
+    <text x="18" y="32" font-family="Arial" font-size="17" font-weight="700" fill="#172033">5 · Honest boundary ablation</text>
+    <path d="M60,198 L180,198 L300,78" fill="none" stroke="#6d45b5" stroke-width="4"/>
+    <text x="18" y="350" font-family="monospace" font-size="13" fill="#263247">z&lt;0: z′=0; z≥0: unchanged</text>
+    <text x="18" y="374" font-family="Arial" font-size="12" fill="#526078">Removes honest evidence without adding deception.</text>
+  </g>
+
+  <g transform="translate(370,560)">
+    <use href="#grid"/>
+    <text x="18" y="32" font-family="Arial" font-size="17" font-weight="700" fill="#172033">6 · Bounded directed inversion</text>
+    <path d="M60,198 L90,168 L120,138 L180,198 L300,78" fill="none" stroke="#6d45b5" stroke-width="4"/>
+    <text x="18" y="350" font-family="monospace" font-size="13" fill="#263247">invert [−2,2]; movement cap 4</text>
+    <text x="18" y="374" font-family="Arial" font-size="12" fill="#526078">Strict improvement with bounded damage to outliers.</text>
+  </g>
+
+  <g transform="translate(720,560)">
+    <use href="#grid"/>
+    <text x="18" y="32" font-family="Arial" font-size="17" font-weight="700" fill="#172033">7 · Bounded deceptive margin</text>
+    <path d="M60,258 L90,228 L120,198 L150,168 L179,168" fill="none" stroke="#6d45b5" stroke-width="4"/>
+    <circle cx="180" cy="168" r="5" fill="#fff" stroke="#6d45b5" stroke-width="3"/>
+    <path d="M180,198 L300,78" fill="none" stroke="#6d45b5" stroke-width="4"/>
+    <circle cx="180" cy="198" r="5" fill="#6d45b5"/>
+    <text x="18" y="350" font-family="monospace" font-size="13" fill="#263247">target 1; movement cap 2</text>
+    <text x="18" y="374" font-family="Arial" font-size="12" fill="#526078">Minimum bounded push; outliers may stay honest.</text>
+  </g>
+
+  <g transform="translate(1070,560)">
+    <use href="#grid"/>
+    <text x="18" y="32" font-family="Arial" font-size="17" font-weight="700" fill="#172033">8 · Seeded orthogonal control</text>
+    <path d="M60,318 L300,78" fill="none" stroke="#247a52" stroke-width="4"/>
+    <text x="18" y="350" font-family="monospace" font-size="13" fill="#263247">truth score: z′=z</text>
+    <text x="18" y="374" font-family="Arial" font-size="12" fill="#526078">Hidden state reflects on c⊥w; truth score stays fixed.</text>
+  </g>
+
+  <text x="720" y="1010" text-anchor="middle" font-family="Arial" font-size="13" fill="#526078">Defaults shown: deceptive margin = 1, score movement budget = 2. Open circles mark excluded boundary-side limits.</text>
+</svg>

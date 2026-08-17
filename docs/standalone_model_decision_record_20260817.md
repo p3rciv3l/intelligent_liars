@@ -94,6 +94,12 @@ small movements near the boundary.
 Symmetric operators remain available for mechanistic ablations, but the fleet
 validator will not accept them as canonical student teachers.
 
+![Runtime intervention pipeline](assets/intervention_transform_pipeline.svg)
+
+The raw operator first proposes a candidate score. The directional gate then
+prevents movement toward honesty, and the optional cap limits the final score
+change. The hidden-state update occurs only after those score-space decisions.
+
 ## Decision 3: Train this exact eight-model suite
 
 Two score-space values control the suite:
@@ -104,6 +110,13 @@ Two score-space values control the suite:
 These values are explicit calibration knobs, not empirically selected final
 settings. Official values should be preregistered from held-out layer-score
 quantiles rather than tuned against final behavior.
+
+![Canonical intervention score maps](assets/intervention_score_maps.svg)
+
+The dashed diagonal in each panel is the unchanged model. Purple curves show
+the teacher map. A point above the dashed line became more deceptive; a point on
+the line was preserved. Open circles show an excluded one-sided limit at the
+probe boundary.
 
 ### 1. `directed_scalar_add_deceptive`
 
@@ -191,6 +204,24 @@ The same seed and probe recreate the same vector. Orthogonality means the
 reflection preserves the truth-probe score up to numerical precision. Matching
 the vector norm does not guarantee matched activation variance, so empirical
 control-strength calibration remains desirable.
+
+### Worked score examples
+
+These examples use margin `1` and movement budget `2`:
+
+| Variant | `z=-5` | `z=-2` | `z=-0.5` | `z=0` | `z=0.5` | `z=3` |
+|---|---:|---:|---:|---:|---:|---:|
+| Directed scalar addition | -3 | 0 | 1.5 | 0 | 0.5 | 3 |
+| Directed affine projection | 1 | 1 | 1 | 0 | 0.5 | 3 |
+| Directed full reflection | 5 | 2 | 0.5 | 0 | 0.5 | 3 |
+| Directed partial reflection | 2.5 | 1 | 0.25 | 0 | 0.5 | 3 |
+| Honest boundary ablation | 0 | 0 | 0 | 0 | 0.5 | 3 |
+| Bounded directed inversion | -1 | 2 | 0.5 | 0 | 0.5 | 3 |
+| Bounded deceptive margin | -3 | 0 | 1 | 0 | 0.5 | 3 |
+| Seeded orthogonal control | -5 | -2 | -0.5 | 0 | 0.5 | 3 |
+
+The final row reports the truth-probe score, which the orthogonal control is
+designed to preserve even though it changes another hidden-state component.
 
 ## Decision 4: Make the suite canonical and fail closed
 
