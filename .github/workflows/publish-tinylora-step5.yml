@@ -179,7 +179,7 @@ jobs:
             echo
             echo "- Immutable image: \`$IMAGE_REF\`"
             echo "- Source commit: \`${{ github.sha }}\`"
-            echo '- The commit-addressed tag was created without overwriting an existing tag.'
+            echo '- Preflight found no existing tag, or recovered the same source revision; the final tag resolved to this digest.'
             echo '- BuildKit provenance and SBOM attestations are attached to the registry image.'
             echo '- A checksummed copy of the digest, image index, SBOM, provenance, and build metadata is attached to this workflow run.'
           } >> "$GITHUB_STEP_SUMMARY"
