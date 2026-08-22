@@ -436,8 +436,165 @@ def test_execute_contract_requires_both_new_provisioned_files(tmp_path: Path):
         controller_public_key=None,
         controller_public_key_sha256=None,
     )
-    with pytest.raises(ValueError, match="hydration URL"):
+    with pytest.raises(ValueError, match="hydration/host-gate URLs"):
         MODULE.require_execute_contract(args)
+
+
+def test_checkpoint_controller_command_keeps_private_key_local(tmp_path: Path):
+    args = argparse.Namespace(
+        checkpoint_controller_uv="uv",
+        checkpoint_controller_script=tmp_path / "controller.py",
+        checkpoint_remote_exchange_dir="/workspace/checkpoint-bridge",
+        checkpoint_bucket="bucket-name",
+        checkpoint_prefix="step5/checkpoints/run",
+        checkpoint_controller_private_key=tmp_path / "private.pem",
+        controller_public_key=tmp_path / "public.pem",
+    )
+    command = MODULE.checkpoint_controller_command(
+        args,
+        host="worker.example",
+        port="2222",
+        known_hosts=tmp_path / "known-hosts",
+        ready_file=tmp_path / "ready.json",
+        idle_timeout_seconds=900,
+    )
+    rendered = json.dumps(command)
+    assert "private.pem" in rendered
+    assert "worker.example" in rendered
+    assert all("BEGIN PRIVATE KEY" not in value for value in command)
+
+
+def test_remote_workload_fails_when_checkpoint_controller_exits(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    class Worker:
+        returncode = None
+
+        def poll(self):
+            return self.returncode
+
+        def terminate(self):
+            self.returncode = -15
+
+        def wait(self, timeout=None):
+            del timeout
+            return self.returncode
+
+        def kill(self):
+            self.returncode = -9
+
+    class Sidecar:
+        def poll(self):
+            return 7
+
+    worker = Worker()
+    monkeypatch.setattr(MODULE.subprocess, "Popen", lambda *_args, **_kwargs: worker)
+    result = MODULE.remote_run_with_checkpoint_controller(
+        "host",
+        "22",
+        tmp_path / "known-hosts",
+        "run worker",
+        sidecar={"process": Sidecar()},
+        timeout=10,
+    )
+    assert result.returncode == 125
+    assert "controller exited" in result.stderr
+
+
+def test_checkpoint_controller_must_publish_bound_readiness(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    class Process:
+        pid = 42
+        returncode = None
+
+        def poll(self):
+            return self.returncode
+
+        def terminate(self):
+            self.returncode = -15
+
+        def wait(self, timeout=None):
+            del timeout
+            return self.returncode
+
+        def kill(self):
+            self.returncode = -9
+
+    process = Process()
+    controller_script = tmp_path / "controller.py"
+    controller_script.write_text("#!/usr/bin/env python3\n")
+    args = argparse.Namespace(
+        checkpoint_controller_ready_seconds=1,
+        checkpoint_bucket="bucket-name",
+        checkpoint_prefix="step5/checkpoints/run",
+        checkpoint_remote_exchange_dir="/workspace/checkpoint-bridge",
+        checkpoint_controller_script=controller_script,
+        checkpoint_controller_script_sha256=hashlib.sha256(
+            controller_script.read_bytes()
+        ).hexdigest(),
+    )
+
+    def fake_command(_args, **kwargs):
+        kwargs["ready_file"].write_text(
+            json.dumps(
+                {
+                    "format": "tinylora_step5_checkpoint_controller_ready_v1",
+                    "pid": 42,
+                    "bucket": "bucket-name",
+                    "prefix": "step5/checkpoints/run",
+                    "remote_exchange_dir": "/workspace/checkpoint-bridge",
+                    "ssh_host": "host",
+                    "ssh_port": "22",
+                    "versioning": "Enabled",
+                    "ready_at": "2026-08-22T12:00:00Z",
+                }
+            )
+        )
+        kwargs["ready_file"].chmod(0o600)
+        return ["controller"]
+
+    monkeypatch.setattr(MODULE, "checkpoint_controller_command", fake_command)
+    monkeypatch.setattr(
+        MODULE,
+        "checkpoint_controller_key_bytes",
+        lambda _args: (b"private", b"public"),
+    )
+    monkeypatch.setattr(MODULE.subprocess, "Popen", lambda *_args, **_kwargs: process)
+    state = MODULE.start_checkpoint_controller(
+        args,
+        host="host",
+        port="22",
+        known_hosts=tmp_path / "known-hosts",
+        log_path=tmp_path / "controller.log",
+        idle_timeout_seconds=900,
+    )
+    assert state["ready"]["pid"] == 42
+    status = MODULE.stop_checkpoint_controller(state)
+    assert status["unexpected_exit"] is False
+    assert status["returncode"] == -15
+
+
+def test_host_gate_secret_uses_fixed_nonoverridable_path():
+    assert MODULE.HOST_GATE_URL_REMOTE_PATH == "/run/secrets/step5-host-gate-url"
+    assert MODULE.INPUT_URL_MANIFEST_REMOTE_PATH != MODULE.HOST_GATE_URL_REMOTE_PATH
+
+
+def test_host_gate_and_hydration_urls_must_be_distinct(tmp_path: Path):
+    hydration = tmp_path / "hydration-url"
+    host_gate = tmp_path / "host-gate-url"
+    hydration.write_text("https://example.test/hydration\n")
+    host_gate.write_text("https://example.test/hydration")
+    hydration.chmod(0o600)
+    host_gate.chmod(0o600)
+    args = argparse.Namespace(
+        input_url_manifest_url_file=hydration,
+        host_gate_url_file=host_gate,
+    )
+    with pytest.raises(ValueError, match="distinct URLs"):
+        MODULE.validate_distinct_url_sources(args)
+    host_gate.write_text("https://example.test/host-gate\n")
+    MODULE.validate_distinct_url_sources(args)
 
 
 def test_private_url_sync_never_places_secret_in_command(

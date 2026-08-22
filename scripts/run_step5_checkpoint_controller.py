@@ -11,7 +11,9 @@ import argparse
 import base64
 import hashlib
 import json
+import os
 import re
+import secrets
 import shlex
 import subprocess
 import tempfile
@@ -41,7 +43,31 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--url-expiry-seconds", type=int, default=900)
     parser.add_argument("--poll-seconds", type=float, default=1.0)
     parser.add_argument("--idle-timeout-seconds", type=int, default=180)
+    parser.add_argument("--ready-file", type=Path)
     return parser.parse_args()
+
+
+def write_ready_file(path: Path, payload: dict[str, Any]) -> None:
+    if path.parent.is_symlink() or not path.parent.is_dir():
+        raise ValueError("checkpoint controller ready directory must already exist")
+    if path.parent.stat().st_mode & 0o077:
+        raise ValueError("checkpoint controller ready directory must be mode 0700")
+    temporary = path.parent / f".{path.name}.{secrets.token_hex(16)}.tmp"
+    descriptor = os.open(
+        temporary,
+        os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+        0o600,
+    )
+    try:
+        with os.fdopen(descriptor, "w") as stream:
+            stream.write(json.dumps(payload, sort_keys=True) + "\n")
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.link(temporary, path, follow_symlinks=False)
+    except FileExistsError as error:
+        raise FileExistsError("checkpoint controller ready file already exists") from error
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
 def _remote_root(value: str) -> str:
@@ -75,7 +101,7 @@ class SshExchange:
     def list_requests(self) -> list[str]:
         command = (
             f"find {shlex.quote(self.root + '/requests')} -maxdepth 1 -type f "
-            "-name '*.json' -print 2>/dev/null || true"
+            "-name '*.json' -print"
         )
         result = subprocess.run(
             [*self.prefix, command], check=True, capture_output=True, text=True
@@ -86,6 +112,36 @@ class SshExchange:
             if name.endswith(".json"):
                 values.append(name[:-5])
         return sorted(set(values))
+
+    def preflight(self) -> None:
+        roles = ("requests", "secrets", "uploaded", "acks")
+        checks = [
+            "set -eu",
+            "test -d /workspace",
+            "test ! -L /workspace",
+            f"if [ -e {shlex.quote(self.root)} ]; then test -d {shlex.quote(self.root)} && test ! -L {shlex.quote(self.root)}; else mkdir -m 700 {shlex.quote(self.root)}; fi",
+        ]
+        for role in roles:
+            directory = f"{self.root}/{role}"
+            checks.append(
+                f"if [ -e {shlex.quote(directory)} ]; then test -d {shlex.quote(directory)} && test ! -L {shlex.quote(directory)}; else mkdir -m 700 {shlex.quote(directory)}; fi"
+            )
+        subprocess.run(
+            [*self.prefix, "; ".join(checks)],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        nonce = secrets.token_hex(16)
+        generation_id = f"controller-preflight-{nonce}"
+        value = {"nonce": nonce}
+        self._write("acks", generation_id, value, secret=False)
+        try:
+            if self.read("acks", generation_id) != value:
+                raise RuntimeError("checkpoint exchange read/write preflight differs")
+            self.list_requests()
+        finally:
+            self.delete("acks", generation_id)
 
     def read(self, role: str, generation_id: str) -> dict[str, Any] | None:
         path = self._path(role, generation_id)
@@ -269,6 +325,22 @@ def main() -> int:
     if versioning.get("Status") != "Enabled":
         raise RuntimeError("checkpoint bucket versioning must be enabled before upload")
     exchange = SshExchange(args)
+    exchange.preflight()
+    if args.ready_file is not None:
+        write_ready_file(
+            args.ready_file,
+            {
+                "format": "tinylora_step5_checkpoint_controller_ready_v1",
+                "pid": os.getpid(),
+                "bucket": args.bucket,
+                "prefix": args.prefix,
+                "remote_exchange_dir": exchange.root,
+                "ssh_host": args.ssh_host,
+                "ssh_port": str(args.ssh_port),
+                "versioning": "Enabled",
+                "ready_at": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+            },
+        )
     idle_deadline = time.monotonic() + args.idle_timeout_seconds
     handled: set[str] = set()
     while time.monotonic() < idle_deadline:

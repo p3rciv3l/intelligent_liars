@@ -41,6 +41,7 @@ from intelligent_liars.step5_artifact_store import (
 PROJECT_LABEL_PREFIX = "codex-vast-tinylora-step5"
 CONTROLLER_PUBLIC_KEY_REMOTE_PATH = "/workspace/inputs/controller-public.pem"
 INPUT_URL_MANIFEST_REMOTE_PATH = "/run/secrets/step5-input-url-manifest-url"
+HOST_GATE_URL_REMOTE_PATH = "/run/secrets/step5-host-gate-url"
 HARD_MAX_WORKERS = 3
 SEALED_AUDIT_SHA256 = "40e2756176387514fc265bdf6225e73b356d7fe57b641405e6c4d2ecbe498e91"
 HOST_LOSS_STATES = frozenset({"dead", "error", "failed", "offline", "unavailable"})
@@ -111,8 +112,20 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--expected-durable-uri")
     parser.add_argument("--input-url-manifest-url-file", type=Path)
+    parser.add_argument("--host-gate-url-file", type=Path)
     parser.add_argument("--controller-public-key", type=Path)
     parser.add_argument("--controller-public-key-sha256")
+    parser.add_argument("--checkpoint-controller-script", type=Path)
+    parser.add_argument("--checkpoint-controller-script-sha256")
+    parser.add_argument("--checkpoint-controller-uv", default="uv")
+    parser.add_argument("--checkpoint-bucket")
+    parser.add_argument("--checkpoint-prefix")
+    parser.add_argument("--checkpoint-controller-private-key", type=Path)
+    parser.add_argument(
+        "--checkpoint-remote-exchange-dir",
+        default="/workspace/checkpoint-bridge",
+    )
+    parser.add_argument("--checkpoint-controller-ready-seconds", type=int, default=60)
     parser.add_argument("--max-software-resumes", type=int, default=1)
     parser.add_argument("--max-workers", type=int, default=HARD_MAX_WORKERS)
     parser.add_argument("--wait-seconds", type=int, default=900)
@@ -972,12 +985,76 @@ def require_execute_contract(args: argparse.Namespace) -> None:
     parse_s3_uri(args.expected_durable_uri)
     if (
         getattr(args, "input_url_manifest_url_file", None) is None
+        or getattr(args, "host_gate_url_file", None) is None
         or getattr(args, "controller_public_key", None) is None
         or getattr(args, "controller_public_key_sha256", None) is None
     ):
         raise ValueError(
-            "Execution requires protected hydration URL and hash-bound controller public key files"
+            "Execution requires protected hydration/host-gate URLs and hash-bound controller public key files"
         )
+    if any(
+        getattr(args, name, None) is None
+        for name in (
+            "checkpoint_controller_script",
+            "checkpoint_controller_script_sha256",
+            "checkpoint_bucket",
+            "checkpoint_prefix",
+            "checkpoint_controller_private_key",
+        )
+    ):
+        raise ValueError("Execution requires a trusted checkpoint controller sidecar")
+    if args.checkpoint_controller_ready_seconds <= 0:
+        raise ValueError("checkpoint controller readiness timeout must be positive")
+
+
+def validate_checkpoint_controller_contract(args: argparse.Namespace) -> None:
+    script_content, _script_mode = read_file_without_symlinks(
+        args.checkpoint_controller_script.absolute()
+    )
+    if (
+        re.fullmatch(r"[0-9a-f]{64}", args.checkpoint_controller_script_sha256)
+        is None
+        or hashlib.sha256(script_content).hexdigest()
+        != args.checkpoint_controller_script_sha256
+    ):
+        raise ValueError("checkpoint controller script differs from frozen SHA-256")
+    checkpoint_controller_key_bytes(args)
+    if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9.-]{1,61}[A-Za-z0-9]", args.checkpoint_bucket) is None:
+        raise ValueError("checkpoint bucket is invalid")
+    prefix = PurePosixPath(args.checkpoint_prefix.strip("/"))
+    if not prefix.parts or ".." in prefix.parts:
+        raise ValueError("checkpoint prefix is invalid")
+    validate_remote_artifact_dir(args.checkpoint_remote_exchange_dir)
+
+
+def checkpoint_controller_key_bytes(args: argparse.Namespace) -> tuple[bytes, bytes]:
+    private_content, private_mode = read_file_without_symlinks(
+        args.checkpoint_controller_private_key.absolute()
+    )
+    if private_mode != 0o600:
+        raise ValueError("checkpoint controller private key must have mode 0600")
+    public_content, _public_mode = read_file_without_symlinks(
+        args.controller_public_key.absolute()
+    )
+    private_public = subprocess.run(
+        ["openssl", "pkey", "-pubout", "-outform", "DER"],
+        input=private_content,
+        check=False,
+        capture_output=True,
+    )
+    public_der = subprocess.run(
+        ["openssl", "pkey", "-pubin", "-outform", "DER"],
+        input=public_content,
+        check=False,
+        capture_output=True,
+    )
+    if (
+        private_public.returncode != 0
+        or public_der.returncode != 0
+        or private_public.stdout != public_der.stdout
+    ):
+        raise ValueError("checkpoint controller private/public key pair differs")
+    return private_content, public_content
 
 
 def create_command(args: argparse.Namespace, label: str) -> list[str]:
@@ -1019,6 +1096,239 @@ def remote_run(
         check=False,
         timeout=timeout,
     )
+
+
+def checkpoint_controller_command(
+    args: argparse.Namespace,
+    *,
+    host: str,
+    port: str,
+    known_hosts: Path,
+    ready_file: Path,
+    idle_timeout_seconds: int,
+    private_key: Path | None = None,
+    public_key: Path | None = None,
+    controller_script: Path | None = None,
+) -> list[str]:
+    return [
+        args.checkpoint_controller_uv,
+        "run",
+        "--with",
+        "boto3",
+        "python",
+        str(controller_script or args.checkpoint_controller_script.absolute()),
+        "--ssh-host",
+        host,
+        "--ssh-port",
+        port,
+        "--known-hosts",
+        str(known_hosts),
+        "--remote-exchange-dir",
+        args.checkpoint_remote_exchange_dir,
+        "--bucket",
+        args.checkpoint_bucket,
+        "--prefix",
+        args.checkpoint_prefix,
+        "--controller-private-key",
+        str(private_key or args.checkpoint_controller_private_key.absolute()),
+        "--controller-public-key",
+        str(public_key or args.controller_public_key.absolute()),
+        "--url-expiry-seconds",
+        "1200",
+        "--idle-timeout-seconds",
+        str(idle_timeout_seconds),
+        "--ready-file",
+        str(ready_file),
+    ]
+
+
+def start_checkpoint_controller(
+    args: argparse.Namespace,
+    *,
+    host: str,
+    port: str,
+    known_hosts: Path,
+    log_path: Path,
+    idle_timeout_seconds: int,
+) -> dict[str, Any]:
+    snapshots: list[Path] = []
+    ready_dir: Path | None = None
+    log_handle: Any | None = None
+    process: subprocess.Popen[bytes] | None = None
+    try:
+        private_content, public_content = checkpoint_controller_key_bytes(args)
+        script_content, _script_mode = read_file_without_symlinks(
+            args.checkpoint_controller_script.absolute()
+        )
+        if hashlib.sha256(script_content).hexdigest() != args.checkpoint_controller_script_sha256:
+            raise ValueError("checkpoint controller script changed after preflight")
+        for label, suffix, content in (
+            ("private", ".pem", private_content),
+            ("public", ".pem", public_content),
+            ("script", ".py", script_content),
+        ):
+            descriptor, snapshot_name = tempfile.mkstemp(
+                prefix=f"step5-checkpoint-controller-{label}-", suffix=suffix
+            )
+            os.fchmod(descriptor, 0o600)
+            with os.fdopen(descriptor, "wb") as stream:
+                stream.write(content)
+            snapshots.append(Path(snapshot_name))
+        private_snapshot, public_snapshot, script_snapshot = snapshots
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        ready_dir = Path(
+            tempfile.mkdtemp(prefix="step5-checkpoint-controller-ready-")
+        ).resolve()
+        os.chmod(ready_dir, 0o700)
+        ready_file = ready_dir / "ready.json"
+        log_handle = log_path.open("ab")
+        command = checkpoint_controller_command(
+            args,
+            host=host,
+            port=port,
+            known_hosts=known_hosts,
+            ready_file=ready_file,
+            idle_timeout_seconds=idle_timeout_seconds,
+            private_key=private_snapshot,
+            public_key=public_snapshot,
+            controller_script=script_snapshot,
+        )
+        process = subprocess.Popen(
+            command,
+            stdout=log_handle,
+            stderr=subprocess.STDOUT,
+        )
+        deadline = time.monotonic() + args.checkpoint_controller_ready_seconds
+        while time.monotonic() < deadline:
+            returncode = process.poll()
+            if returncode is not None:
+                raise RuntimeError(
+                    f"checkpoint controller exited before readiness with {returncode}"
+                )
+            if ready_file.exists():
+                ready_content, ready_mode = read_file_without_symlinks(ready_file)
+                if ready_mode != 0o600:
+                    raise RuntimeError("checkpoint controller readiness mode differs")
+                payload = parse_json_payload(ready_content.decode("utf-8"))
+                expected = {
+                    "format": "tinylora_step5_checkpoint_controller_ready_v1",
+                    "pid": process.pid,
+                    "bucket": args.checkpoint_bucket,
+                    "prefix": args.checkpoint_prefix,
+                    "remote_exchange_dir": args.checkpoint_remote_exchange_dir,
+                    "ssh_host": host,
+                    "ssh_port": str(port),
+                    "versioning": "Enabled",
+                }
+                if not isinstance(payload, dict) or any(
+                    payload.get(key) != value for key, value in expected.items()
+                ):
+                    raise RuntimeError("checkpoint controller readiness binding differs")
+                if not isinstance(payload.get("ready_at"), str):
+                    raise RuntimeError("checkpoint controller readiness timestamp is missing")
+                return {
+                    "process": process,
+                    "log_handle": log_handle,
+                    "log_path": log_path,
+                    "ready_file": ready_file,
+                    "ready": payload,
+                    "started_at": now(),
+                    "command_sha256": hashlib.sha256(
+                        json.dumps(command, separators=(",", ":")).encode()
+                    ).hexdigest(),
+                    "snapshots": snapshots,
+                    "ready_dir": ready_dir,
+                }
+            time.sleep(0.2)
+        raise TimeoutError("checkpoint controller did not become ready")
+    except BaseException:
+        if process is not None:
+            process.terminate()
+            try:
+                process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait(timeout=5)
+        if log_handle is not None:
+            log_handle.close()
+        if ready_dir is not None:
+            (ready_dir / "ready.json").unlink(missing_ok=True)
+            ready_dir.rmdir()
+        for snapshot in snapshots:
+            snapshot.unlink(missing_ok=True)
+        raise
+
+
+def stop_checkpoint_controller(state: dict[str, Any]) -> dict[str, Any]:
+    process: subprocess.Popen[bytes] = state["process"]
+    unexpected_returncode = process.poll()
+    if unexpected_returncode is None:
+        process.terminate()
+        try:
+            process.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait(timeout=5)
+    returncode = process.returncode
+    state["log_handle"].close()
+    ready_file: Path = state["ready_file"]
+    ready_file.unlink(missing_ok=True)
+    state["ready_dir"].rmdir()
+    for snapshot in state["snapshots"]:
+        snapshot.unlink(missing_ok=True)
+    log_path: Path = state["log_path"]
+    return {
+        "started_at": state["started_at"],
+        "ended_at": now(),
+        "ready": state["ready"],
+        "command_sha256": state["command_sha256"],
+        "unexpected_exit": unexpected_returncode is not None,
+        "returncode": returncode,
+        "log_path": str(log_path),
+        "log_sha256": hash_file(log_path),
+        "log_bytes": log_path.stat().st_size,
+    }
+
+
+def remote_run_with_checkpoint_controller(
+    host: str,
+    port: str,
+    known_hosts: Path,
+    command: str,
+    *,
+    sidecar: dict[str, Any],
+    timeout: float,
+) -> subprocess.CompletedProcess[str]:
+    ssh_command = [*ssh_prefix(host, port, known_hosts), command]
+    deadline = time.monotonic() + timeout
+    with tempfile.TemporaryFile() as stdout, tempfile.TemporaryFile() as stderr:
+        worker = subprocess.Popen(ssh_command, stdout=stdout, stderr=stderr)
+        sidecar_failed = False
+        while worker.poll() is None:
+            if sidecar["process"].poll() is not None:
+                sidecar_failed = True
+                worker.terminate()
+                try:
+                    worker.wait(timeout=10)
+                except subprocess.TimeoutExpired:
+                    worker.kill()
+                    worker.wait(timeout=5)
+                break
+            if time.monotonic() >= deadline:
+                worker.kill()
+                worker.wait(timeout=5)
+                raise subprocess.TimeoutExpired(ssh_command, timeout)
+            time.sleep(0.2)
+        stdout.seek(0)
+        stderr.seek(0)
+        output = stdout.read().decode("utf-8", errors="replace")
+        error = stderr.read().decode("utf-8", errors="replace")
+    if sidecar_failed:
+        error += "\ntrusted checkpoint controller exited during workload"
+        returncode = 125
+    else:
+        returncode = worker.returncode
+    return subprocess.CompletedProcess(ssh_command, returncode, output, error)
 
 
 def stop_for_recovery(
@@ -1178,6 +1488,32 @@ def remote_install_bytes(
     )
 
 
+def private_url_file_bytes(source: Path) -> bytes:
+    content, mode = read_file_without_symlinks(source)
+    if mode & 0o077:
+        raise ValueError("private URL file must be mode 0600 or stricter")
+    try:
+        lines = content.decode("utf-8").splitlines()
+    except UnicodeDecodeError as error:
+        raise ValueError("private URL file must contain UTF-8") from error
+    if len(lines) != 1 or not lines[0].startswith("https://"):
+        raise ValueError("private URL file must contain an HTTPS URL")
+    if content not in {lines[0].encode("utf-8"), (lines[0] + "\n").encode("utf-8")}:
+        raise ValueError("private URL file may not contain surrounding whitespace")
+    return content
+
+
+def validate_distinct_url_sources(args: argparse.Namespace) -> None:
+    hydration = private_url_file_bytes(
+        args.input_url_manifest_url_file.absolute()
+    ).decode("utf-8").removesuffix("\n")
+    host_gate = private_url_file_bytes(args.host_gate_url_file.absolute()).decode(
+        "utf-8"
+    ).removesuffix("\n")
+    if hydration == host_gate:
+        raise ValueError("hydration and host-gate URL files must contain distinct URLs")
+
+
 def sync_private_url_file(
     source: Path,
     remote_path: str,
@@ -1186,15 +1522,7 @@ def sync_private_url_file(
     known_hosts: Path,
     timeout: float,
 ) -> None:
-    content, mode = read_file_without_symlinks(source)
-    if mode & 0o077:
-        raise ValueError("private URL file must be mode 0600 or stricter")
-    try:
-        lines = content.decode("utf-8").splitlines()
-    except UnicodeDecodeError as error:
-        raise ValueError("private URL file must contain UTF-8") from error
-    if len(lines) != 1 or not lines[0].strip().startswith("https://"):
-        raise ValueError("private URL file must contain an HTTPS URL")
+    content = private_url_file_bytes(source)
     remote_install_bytes(
         content,
         remote_path=remote_path,
@@ -1315,6 +1643,9 @@ def command_sha256(command: str) -> str:
 def main() -> int:
     args = parse_args()
     require_execute_contract(args)
+    if args.execute:
+        validate_checkpoint_controller_contract(args)
+        validate_distinct_url_sources(args)
     reject_credential_bearing_commands(
         [
             args.remote_command,
@@ -1494,6 +1825,15 @@ def main() -> int:
             known_hosts,
             remaining_cost_seconds(cost_deadline),
         )
+        assert args.host_gate_url_file is not None
+        sync_private_url_file(
+            args.host_gate_url_file.absolute(),
+            HOST_GATE_URL_REMOTE_PATH,
+            host,
+            port,
+            known_hosts,
+            remaining_cost_seconds(cost_deadline),
+        )
         assert args.controller_public_key is not None
         assert args.controller_public_key_sha256 is not None
         sync_hash_bound_public_key(
@@ -1611,16 +1951,73 @@ def main() -> int:
         workload_started = True
         software_resumes = 0
         while True:
-            workload = remote_run(
-                host,
-                port,
-                known_hosts,
-                f"cd /workspace/workload && {args.remote_command}",
-                timeout=remaining_cost_seconds(cost_deadline),
+            controller_attempt = len(metadata.get("checkpoint_controller_attempts", [])) + 1
+            controller_log = args.metadata.parent / (
+                f"{safe_component(args.run_id)}-{safe_component(args.candidate)}-"
+                f"checkpoint-controller-{controller_attempt}.log"
             )
+            try:
+                sidecar = start_checkpoint_controller(
+                    args,
+                    host=host,
+                    port=port,
+                    known_hosts=known_hosts,
+                    log_path=controller_log,
+                    idle_timeout_seconds=max(
+                        300,
+                        int(remaining_cost_seconds(cost_deadline)) + 60,
+                    ),
+                )
+            except Exception as error:
+                failed_status = {
+                    "started_at": now(),
+                    "ended_at": now(),
+                    "ready": False,
+                    "error": f"{type(error).__name__}: {error}",
+                    "log_path": str(controller_log),
+                    "log_bytes": controller_log.stat().st_size
+                    if controller_log.exists()
+                    else 0,
+                    "log_sha256": hash_file(controller_log)
+                    if controller_log.exists()
+                    else None,
+                }
+                metadata.setdefault("checkpoint_controller_attempts", []).append(
+                    failed_status
+                )
+                raise
+            try:
+                workload = remote_run_with_checkpoint_controller(
+                    host,
+                    port,
+                    known_hosts,
+                    f"cd /workspace/workload && {args.remote_command}",
+                    sidecar=sidecar,
+                    timeout=remaining_cost_seconds(cost_deadline),
+                )
+            finally:
+                controller_status = stop_checkpoint_controller(sidecar)
+                metadata.setdefault("checkpoint_controller_attempts", []).append(
+                    controller_status
+                )
+            if controller_status["unexpected_exit"] and workload.returncode == 0:
+                workload = subprocess.CompletedProcess(
+                    workload.args,
+                    125,
+                    workload.stdout,
+                    workload.stderr
+                    + "\ntrusted checkpoint controller exited before workload completion",
+                )
             exit_code = workload.returncode
             metadata.setdefault("workload_attempts", []).append(
-                {"at": now(), "exit_code": exit_code}
+                {
+                    "at": now(),
+                    "exit_code": exit_code,
+                    "checkpoint_controller_ready": True,
+                    "checkpoint_controller_unexpected_exit": controller_status[
+                        "unexpected_exit"
+                    ],
+                }
             )
             if exit_code == 0:
                 break
