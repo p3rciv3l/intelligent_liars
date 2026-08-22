@@ -825,6 +825,58 @@ def verified_model_identity(
     }, verified
 
 
+def _validated_candidate_state_artifacts(
+    *,
+    adapter_state_path: Path,
+    adapter_metadata_path: Path,
+    model_id: str,
+    revision: str,
+    plan_sha256: str,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Load the safe producer contract and bind metadata to exact tensor bytes."""
+
+    from safetensors.torch import load_file
+
+    try:
+        metadata = json.loads(Path(adapter_metadata_path).read_text())
+    except (OSError, json.JSONDecodeError) as error:
+        raise InferenceContractError("invalid adapter metadata") from error
+    if not isinstance(metadata, dict):
+        raise InferenceContractError("adapter metadata must be an object")
+    if metadata.get("format") != "tinylora_step5_adapter_state_v1":
+        raise InferenceContractError("unsupported adapter state format")
+    if metadata.get("plan_sha256") != plan_sha256:
+        raise InferenceContractError("adapter state was trained against another plan")
+    if metadata.get("model") != {"model_id": model_id, "revision": revision}:
+        raise InferenceContractError("adapter state model identity differs")
+    expected_state_sha = _require_sha256(
+        metadata.get("adapter_state_sha256"), field="adapter_state_sha256"
+    )
+    if file_sha256(adapter_state_path) != expected_state_sha:
+        raise InferenceContractError("adapter state hash differs from its metadata")
+    training_seed = metadata.get("training_seed")
+    if (
+        isinstance(training_seed, bool)
+        or not isinstance(training_seed, int)
+        or training_seed < 0
+    ):
+        raise InferenceContractError("adapter training_seed must be non-negative")
+    tensor_names = metadata.get("tensor_names")
+    if (
+        not isinstance(tensor_names, list)
+        or not tensor_names
+        or tensor_names != sorted(set(tensor_names))
+        or any(not isinstance(name, str) or not name for name in tensor_names)
+    ):
+        raise InferenceContractError(
+            "adapter tensor_names must be a sorted unique nonempty list"
+        )
+    state = load_file(str(adapter_state_path), device="cpu")
+    if sorted(state) != tensor_names:
+        raise InferenceContractError("adapter tensor_names differ from safetensors")
+    return metadata, state
+
+
 def install_candidate_adapter(
     *,
     model: Any,
@@ -840,8 +892,6 @@ def install_candidate_adapter(
     """Install a safe tensor-only candidate state into the frozen base model."""
 
     import torch
-    from safetensors.torch import load_file
-
     from intelligent_liars.models import ModelBundle, ModelLoadConfig
     from intelligent_liars.standalone_models import (
         TinyLoRATrainingConfig,
@@ -849,16 +899,13 @@ def install_candidate_adapter(
     )
     from intelligent_liars.tinylora_step5 import install_ordinary_lora
 
-    try:
-        metadata = json.loads(Path(adapter_metadata_path).read_text())
-    except (OSError, json.JSONDecodeError) as error:
-        raise InferenceContractError("invalid adapter metadata") from error
-    if metadata.get("format") != "tinylora_step5_adapter_state_v1":
-        raise InferenceContractError("unsupported adapter state format")
-    if metadata.get("plan_sha256") != plan_sha256:
-        raise InferenceContractError("adapter state was trained against another plan")
-    if metadata.get("model") != {"model_id": model_id, "revision": revision}:
-        raise InferenceContractError("adapter state model identity differs")
+    metadata, state = _validated_candidate_state_artifacts(
+        adapter_state_path=adapter_state_path,
+        adapter_metadata_path=adapter_metadata_path,
+        model_id=model_id,
+        revision=revision,
+        plan_sha256=plan_sha256,
+    )
     arms = plan.get("arms")
     if not isinstance(arms, list):
         raise InferenceContractError("frozen plan has no adapter arms")
@@ -908,7 +955,6 @@ def install_candidate_adapter(
     else:
         raise InferenceContractError("unsupported frozen adapter type")
 
-    state = load_file(str(adapter_state_path), device="cpu")
     current = {
         name: parameter
         for name, parameter in model.named_parameters()
@@ -926,9 +972,11 @@ def install_candidate_adapter(
     return {
         "state": "candidate",
         "arm": arm,
+        "training_seed": metadata["training_seed"],
         "projection_seed": metadata.get("projection_seed"),
-        "adapter_state_sha256": file_sha256(adapter_state_path),
+        "adapter_state_sha256": metadata["adapter_state_sha256"],
         "adapter_metadata_sha256": file_sha256(adapter_metadata_path),
+        "tensor_names": metadata["tensor_names"],
         "basis_sha256": metadata.get("basis_sha256"),
         "optimizer_steps": metadata.get("optimizer_steps"),
     }

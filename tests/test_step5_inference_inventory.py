@@ -5,6 +5,8 @@ import json
 from pathlib import Path
 
 import pytest
+import torch
+from safetensors.torch import save_file
 
 from intelligent_liars.safety_refusal_eval import (
     canonical_jsonl_sha256,
@@ -16,6 +18,7 @@ from intelligent_liars.step5_inference_inventory import (
     InferenceContractError,
     InferenceRequest,
     QwenInferenceBackend,
+    _validated_candidate_state_artifacts,
     build_inference_requests,
     canonical_json_sha256,
     generate_inference_inventories,
@@ -390,3 +393,47 @@ def test_runtime_image_receipt_requires_digest_commitment_and_gpu_pass(
     )
     with pytest.raises(InferenceContractError, match="GPU validation"):
         validate_runtime_image_receipt(receipt, runtime_manifest_path=manifest_path)
+
+
+def test_candidate_state_binds_hash_tensor_inventory_and_training_seed(
+    tmp_path: Path,
+) -> None:
+    state_path = tmp_path / "adapter_state.safetensors"
+    metadata_path = tmp_path / "adapter_metadata.json"
+    save_file({"adapter.alpha": torch.tensor([1.0])}, str(state_path))
+    metadata = {
+        "format": "tinylora_step5_adapter_state_v1",
+        "plan_sha256": "1" * 64,
+        "model": {"model_id": "test/model", "revision": "2" * 40},
+        "training_seed": 17,
+        "tensor_names": ["adapter.alpha"],
+        "adapter_state_sha256": _sha(state_path),
+    }
+    metadata_path.write_text(json.dumps(metadata, sort_keys=True) + "\n")
+
+    observed_metadata, state = _validated_candidate_state_artifacts(
+        adapter_state_path=state_path,
+        adapter_metadata_path=metadata_path,
+        model_id="test/model",
+        revision="2" * 40,
+        plan_sha256="1" * 64,
+    )
+
+    assert observed_metadata["training_seed"] == 17
+    assert sorted(state) == ["adapter.alpha"]
+
+    for field, bad_value, match in (
+        ("adapter_state_sha256", "3" * 64, "hash differs"),
+        ("tensor_names", ["adapter.beta"], "differ from safetensors"),
+        ("training_seed", None, "training_seed"),
+    ):
+        broken = {**metadata, field: bad_value}
+        metadata_path.write_text(json.dumps(broken, sort_keys=True) + "\n")
+        with pytest.raises(InferenceContractError, match=match):
+            _validated_candidate_state_artifacts(
+                adapter_state_path=state_path,
+                adapter_metadata_path=metadata_path,
+                model_id="test/model",
+                revision="2" * 40,
+                plan_sha256="1" * 64,
+            )
