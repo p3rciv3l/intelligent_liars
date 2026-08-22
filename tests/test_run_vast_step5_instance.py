@@ -95,10 +95,13 @@ def test_created_instance_can_be_recovered_only_by_exact_unique_label():
         _instance(7, "codex-vast-tinylora-step5-run-arm-a1-unique"),
         _instance(8, "codex-vast-tinylora-step5-run-arm-a1-other"),
     ]
-    assert MODULE.recover_created_instance_id(
-        inventory,
-        "codex-vast-tinylora-step5-run-arm-a1-unique",
-    ) == "7"
+    assert (
+        MODULE.recover_created_instance_id(
+            inventory,
+            "codex-vast-tinylora-step5-run-arm-a1-unique",
+        )
+        == "7"
+    )
     with pytest.raises(RuntimeError, match="uniquely recover"):
         MODULE.recover_created_instance_id(inventory, "missing")
 
@@ -114,12 +117,52 @@ def test_created_instance_id_poll_handles_eventual_inventory(
         ]
     )
     monkeypatch.setattr(MODULE, "show_instances", lambda _vastai: next(inventories))
-    assert MODULE.poll_created_instance_id(
-        "vastai",
-        "codex-vast-tinylora-step5-run-arm-a1-unique",
-        wait_seconds=2,
-        poll_seconds=0,
-    ) == "77"
+    assert (
+        MODULE.poll_created_instance_id(
+            "vastai",
+            "codex-vast-tinylora-step5-run-arm-a1-unique",
+            wait_seconds=2,
+            poll_seconds=0,
+        )
+        == "77"
+    )
+
+
+def test_query_offer_matches_approved_id_locally(monkeypatch: pytest.MonkeyPatch):
+    calls: list[list[str]] = []
+
+    def fake_run(command: list[str], **_kwargs: object) -> SimpleNamespace:
+        calls.append(command)
+        return SimpleNamespace(
+            stdout=json.dumps(
+                [
+                    {"id": 111, "gpu_name": "RTX 3090"},
+                    {"id": 222, "gpu_name": "RTX 3090", "dph_total": 0.2},
+                ]
+            )
+        )
+
+    monkeypatch.setattr(MODULE, "run", fake_run)
+    assert MODULE.query_offer("vastai", "222")["dph_total"] == 0.2
+    assert "id=222" not in calls[0]
+    assert calls[0][3] == (
+        "rentable=true num_gpus=1 gpu_ram>=24 disk_space>=200 "
+        "reliability>=0.995 inet_down>=500 inet_up>=100 "
+        "verified=true rented=false direct_port_count>=1 "
+        "cuda_vers>=12.1 compute_cap>=860"
+    )
+
+
+def test_query_offer_fails_closed_when_approved_id_is_absent(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setattr(
+        MODULE,
+        "run",
+        lambda *_args, **_kwargs: SimpleNamespace(stdout='[{"id": 111}]'),
+    )
+    with pytest.raises(ValueError, match="unavailable or not unique"):
+        MODULE.query_offer("vastai", "222")
 
 
 def test_host_qualification_rejects_below_measured_minimum():
@@ -138,41 +181,56 @@ def test_host_qualification_accepts_nested_qualifier_contract():
 
 
 def test_cleanup_stops_until_both_durable_and_fetched_artifacts_verify():
-    assert MODULE.cleanup_action(
-        durable_verified=False,
-        fetched_verified=True,
-        workload_started=True,
-    ) == "stop"
-    assert MODULE.cleanup_action(
-        durable_verified=True,
-        fetched_verified=False,
-        workload_started=True,
-    ) == "stop"
+    assert (
+        MODULE.cleanup_action(
+            durable_verified=False,
+            fetched_verified=True,
+            workload_started=True,
+        )
+        == "stop"
+    )
+    assert (
+        MODULE.cleanup_action(
+            durable_verified=True,
+            fetched_verified=False,
+            workload_started=True,
+        )
+        == "stop"
+    )
 
 
 def test_cleanup_destroys_after_both_verifications():
-    assert MODULE.cleanup_action(
-        durable_verified=True,
-        fetched_verified=True,
-        workload_started=True,
-    ) == "destroy"
+    assert (
+        MODULE.cleanup_action(
+            durable_verified=True,
+            fetched_verified=True,
+            workload_started=True,
+        )
+        == "destroy"
+    )
 
 
 def test_cleanup_destroys_if_workload_never_started():
-    assert MODULE.cleanup_action(
-        durable_verified=False,
-        fetched_verified=False,
-        workload_started=False,
-    ) == "destroy"
+    assert (
+        MODULE.cleanup_action(
+            durable_verified=False,
+            fetched_verified=False,
+            workload_started=False,
+        )
+        == "destroy"
+    )
 
 
 def test_preexisting_worker_is_stopped_even_before_workload_starts():
-    assert MODULE.cleanup_action(
-        durable_verified=False,
-        fetched_verified=False,
-        workload_started=False,
-        preexisting_worker=True,
-    ) == "stop"
+    assert (
+        MODULE.cleanup_action(
+            durable_verified=False,
+            fetched_verified=False,
+            workload_started=False,
+            preexisting_worker=True,
+        )
+        == "stop"
+    )
 
 
 def test_only_host_loss_allows_replacement():
@@ -185,8 +243,12 @@ def test_remote_host_loss_claim_needs_controller_corroboration():
     diagnosis = {"classification": "host_loss"}
     running = _instance(1, "x", "running")
     offline = _instance(1, "x", "offline")
-    assert MODULE.controller_corroborated_classification(diagnosis, running) == "unknown"
-    assert MODULE.controller_corroborated_classification(diagnosis, offline) == "host_loss"
+    assert (
+        MODULE.controller_corroborated_classification(diagnosis, running) == "unknown"
+    )
+    assert (
+        MODULE.controller_corroborated_classification(diagnosis, offline) == "host_loss"
+    )
 
 
 def test_unreachable_ssh_is_not_alone_enough_to_call_host_loss():
@@ -349,7 +411,9 @@ def test_durable_archive_must_contain_exact_manifest_bytes(tmp_path: Path):
         )
 
 
-def test_controller_heads_and_roundtrips_exact_s3_version(monkeypatch: pytest.MonkeyPatch):
+def test_controller_heads_and_roundtrips_exact_s3_version(
+    monkeypatch: pytest.MonkeyPatch,
+):
     body = b"durable object"
     digest = hashlib.sha256(body).hexdigest()
     checksum = base64.b64encode(bytes.fromhex(digest)).decode()
@@ -384,9 +448,7 @@ def test_controller_rejects_s3_head_without_version(monkeypatch: pytest.MonkeyPa
 
     def fake_run(_command, **_kwargs):
         return SimpleNamespace(
-            stdout=json.dumps(
-                {"ContentLength": len(body), "ChecksumSHA256": "unused"}
-            )
+            stdout=json.dumps({"ContentLength": len(body), "ChecksumSHA256": "unused"})
         )
 
     monkeypatch.setattr(MODULE, "run", fake_run)
@@ -850,6 +912,7 @@ def test_uncapped_workload_stall_watchdog_kills_silent_worker(
         )
     )
     progress_path.chmod(0o600)
+
     def fake_popen(*_args, **kwargs):
         worker.stdout = kwargs["stdout"]
         return worker
@@ -1043,8 +1106,10 @@ def test_private_url_sync_never_places_secret_in_command(
     monkeypatch.setattr(
         MODULE.subprocess,
         "run",
-        lambda command, **_kwargs: commands.append(command)
-        or SimpleNamespace(returncode=0, stdout=b"", stderr=b""),
+        lambda command, **_kwargs: (
+            commands.append(command)
+            or SimpleNamespace(returncode=0, stdout=b"", stderr=b"")
+        ),
     )
     MODULE.sync_private_url_file(
         source,
@@ -1064,7 +1129,16 @@ def test_public_key_sync_is_hash_bound_and_uses_fixed_path(
     public = tmp_path / "public.pem"
     private = tmp_path / "private.pem"
     subprocess.run(
-        ["openssl", "genpkey", "-algorithm", "RSA", "-pkeyopt", "rsa_keygen_bits:2048", "-out", str(private)],
+        [
+            "openssl",
+            "genpkey",
+            "-algorithm",
+            "RSA",
+            "-pkeyopt",
+            "rsa_keygen_bits:2048",
+            "-out",
+            str(private),
+        ],
         check=True,
         capture_output=True,
     )
@@ -1253,9 +1327,7 @@ def test_expected_artifact_inventory_is_controller_frozen(tmp_path: Path):
         )
     )
     verified = MODULE.verify_expected_artifact_inventory(inventory)
-    assert verified["files"] == frozenset(
-        {"result.json", "checkpoints/step_25.pt"}
-    )
+    assert verified["files"] == frozenset({"result.json", "checkpoints/step_25.pt"})
 
 
 def test_ssh_uses_only_isolated_pinned_known_hosts(tmp_path: Path):

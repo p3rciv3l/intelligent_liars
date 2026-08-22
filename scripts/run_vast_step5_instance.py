@@ -264,7 +264,11 @@ def ssh_prefix(host: str, port: str, known_hosts: Path) -> list[str]:
 
 def capture_known_host(host: str, port: str, path: Path) -> dict[str, Any]:
     captured = run(["ssh-keyscan", "-p", port, host], check=False)
-    lines = [line for line in captured.stdout.splitlines() if line and not line.startswith("#")]
+    lines = [
+        line
+        for line in captured.stdout.splitlines()
+        if line and not line.startswith("#")
+    ]
     if captured.returncode != 0 or not lines:
         raise RuntimeError("Could not capture the worker SSH host key")
     content = "\n".join(lines) + "\n"
@@ -355,17 +359,23 @@ def poll_created_instance_id(
         if len(matches) == 1 and instance_id(matches[0]):
             return instance_id(matches[0])
         if len(matches) > 1:
-            raise RuntimeError("Unique create label unexpectedly matched multiple workers")
+            raise RuntimeError(
+                "Unique create label unexpectedly matched multiple workers"
+            )
         time.sleep(poll_seconds)
     raise RuntimeError(
         f"Created instance id remains ambiguous for exact label {expected_label}"
     )
 
 
-def show_instances(vastai: str, *, timeout: float | None = None) -> list[dict[str, Any]]:
+def show_instances(
+    vastai: str, *, timeout: float | None = None
+) -> list[dict[str, Any]]:
     result = run([vastai, "show", "instances", "--raw"], timeout=timeout)
     payload = parse_json_payload(result.stdout)
-    if not isinstance(payload, list) or not all(isinstance(item, dict) for item in payload):
+    if not isinstance(payload, list) or not all(
+        isinstance(item, dict) for item in payload
+    ):
         raise ValueError("Vast instance inventory is not a list of objects")
     return payload
 
@@ -387,8 +397,28 @@ def hourly_price(record: dict[str, Any]) -> float:
 
 
 def query_offer(vastai: str, offer_id: str) -> dict[str, Any]:
+    # Vast's current CLI advertises an ``id`` search field, but the service-side
+    # filter can return an empty list for an offer that is present in the normal
+    # RTX 3090 offer feed.  Fetch the bounded Step 5 hardware pool and enforce
+    # the approved offer identity locally instead of weakening the identity
+    # check or cycling through replacement offers.
     result = run(
-        [vastai, "search", "offers", f"id={offer_id}", "--raw", "--limit", "5"]
+        [
+            vastai,
+            "search",
+            "offers",
+            (
+                "rentable=true num_gpus=1 gpu_ram>=24 disk_space>=200 "
+                "reliability>=0.995 inet_down>=500 inet_up>=100 "
+                "verified=true rented=false direct_port_count>=1 "
+                "cuda_vers>=12.1 compute_cap>=860"
+            ),
+            "--raw",
+            "--limit",
+            "10000",
+            "-o",
+            "dph_total",
+        ]
     )
     payload = parse_json_payload(result.stdout)
     if not isinstance(payload, list):
@@ -439,8 +469,12 @@ def approved_lifecycle_deadline(
     return deadline, maximum_runtime_seconds
 
 
-def find_instance(instances: list[dict[str, Any]], target_id: str) -> dict[str, Any] | None:
-    return next((item for item in instances if instance_id(item) == str(target_id)), None)
+def find_instance(
+    instances: list[dict[str, Any]], target_id: str
+) -> dict[str, Any] | None:
+    return next(
+        (item for item in instances if instance_id(item) == str(target_id)), None
+    )
 
 
 def instance_state(instance: dict[str, Any] | None) -> str:
@@ -671,10 +705,14 @@ def verify_source_bundle(bundle: Path, verified: dict[str, Any]) -> None:
         members = archive.getmembers()
         names = [member.name for member in members]
         if len(names) != len(set(names)) or set(names) != expected_names:
-            raise ValueError("Source bundle inventory differs from its verified allowlist")
+            raise ValueError(
+                "Source bundle inventory differs from its verified allowlist"
+            )
         for member in members:
             if not member.isfile():
-                raise ValueError(f"Source bundle contains a non-file member: {member.name}")
+                raise ValueError(
+                    f"Source bundle contains a non-file member: {member.name}"
+                )
             if member.name == "SOURCE_BUNDLE_MANIFEST.json":
                 continue
             extracted = archive.extractfile(member)
@@ -745,13 +783,17 @@ def verify_artifact_manifest(
     if actual_inventory != expected_inventory:
         missing = sorted(expected_inventory - actual_inventory)
         extra = sorted(actual_inventory - expected_inventory)
-        raise ValueError(f"Fetched artifact inventory mismatch; missing={missing}, extra={extra}")
+        raise ValueError(
+            f"Fetched artifact inventory mismatch; missing={missing}, extra={extra}"
+        )
     durable_object = payload["durable_object"]
     durable_uri = durable_object["uri"]
     durable_hash = durable_object["sha256"]
     durable_bytes = durable_object["bytes"]
     if expected_durable_uri is not None and durable_uri != expected_durable_uri:
-        raise ValueError("Durable object URI differs from controller-frozen destination")
+        raise ValueError(
+            "Durable object URI differs from controller-frozen destination"
+        )
     return {
         "format": payload["format"],
         "run_id": payload["run_id"],
@@ -828,7 +870,9 @@ def parse_host_qualification(text: str, minimum_download_mbps: float) -> dict[st
         raise ValueError("Host qualification lacks a measured download speed")
     measured = float(measured_value)
     if not math.isfinite(measured) or measured <= 0:
-        raise ValueError("Host qualification download speed must be finite and positive")
+        raise ValueError(
+            "Host qualification download speed must be finite and positive"
+        )
     hook_accepted = payload.get("qualified", decision.get("accepted", True))
     if not isinstance(hook_accepted, bool):
         raise ValueError("Host qualification accepted decision must be boolean")
@@ -887,7 +931,9 @@ def controller_verify_s3_object(
             raise ValueError("S3 ChecksumSHA256 is invalid base64") from error
         if head_checksum != descriptor["sha256"]:
             raise ValueError("S3 HEAD checksum does not match the artifact manifest")
-    file_descriptor, download_name = tempfile.mkstemp(prefix="tinylora-step5-roundtrip-")
+    file_descriptor, download_name = tempfile.mkstemp(
+        prefix="tinylora-step5-roundtrip-"
+    )
     os.close(file_descriptor)
     download_path = Path(download_name)
     try:
@@ -942,10 +988,14 @@ def verify_durable_archive(
             raise ValueError("Durable archive inventory differs from artifact manifest")
         for member in members:
             if not member.isfile():
-                raise ValueError(f"Durable archive contains non-file member: {member.name}")
+                raise ValueError(
+                    f"Durable archive contains non-file member: {member.name}"
+                )
             extracted = archive.extractfile(member)
             if extracted is None:
-                raise ValueError(f"Could not read durable archive member: {member.name}")
+                raise ValueError(
+                    f"Could not read durable archive member: {member.name}"
+                )
             digest = hashlib.sha256()
             size = 0
             for chunk in iter(lambda: extracted.read(1024 * 1024), b""):
@@ -1007,8 +1057,12 @@ def require_execute_contract(args: argparse.Namespace) -> None:
         return
     if not args.confirmed_cost_approval:
         raise ValueError("Execution requires confirmed cost approval")
-    if isinstance(args.approved_hourly_price, bool) or args.approved_hourly_price is None or not (
-        math.isfinite(args.approved_hourly_price) and args.approved_hourly_price > 0
+    if (
+        isinstance(args.approved_hourly_price, bool)
+        or args.approved_hourly_price is None
+        or not (
+            math.isfinite(args.approved_hourly_price) and args.approved_hourly_price > 0
+        )
     ):
         raise ValueError("Execution requires a finite positive approved hourly price")
     uncapped = bool(getattr(args, "uncapped_cost_approved", False))
@@ -1019,9 +1073,7 @@ def require_execute_contract(args: argparse.Namespace) -> None:
         )
     if maximum_cost is not None and (
         isinstance(maximum_cost, bool)
-        or not (
-        math.isfinite(maximum_cost) and maximum_cost > 0
-        )
+        or not (math.isfinite(maximum_cost) and maximum_cost > 0)
     ):
         raise ValueError("Approved maximum cost must be finite and positive")
     stall_timeout = getattr(args, "stall_timeout_seconds", None)
@@ -1034,7 +1086,9 @@ def require_execute_contract(args: argparse.Namespace) -> None:
             "Execution requires a non-financial stall timeout of at least 300 seconds"
         )
     if bool(args.offer_id) == bool(args.resume_instance_id):
-        raise ValueError("Execution requires exactly one of offer-id or resume-instance-id")
+        raise ValueError(
+            "Execution requires exactly one of offer-id or resume-instance-id"
+        )
     if "@sha256:" not in args.image:
         raise ValueError("Execution requires an immutable image digest")
     if args.max_software_resumes < 0:
@@ -1083,14 +1137,18 @@ def validate_checkpoint_controller_contract(args: argparse.Namespace) -> None:
         args.checkpoint_controller_script.absolute()
     )
     if (
-        re.fullmatch(r"[0-9a-f]{64}", args.checkpoint_controller_script_sha256)
-        is None
+        re.fullmatch(r"[0-9a-f]{64}", args.checkpoint_controller_script_sha256) is None
         or hashlib.sha256(script_content).hexdigest()
         != args.checkpoint_controller_script_sha256
     ):
         raise ValueError("checkpoint controller script differs from frozen SHA-256")
     checkpoint_controller_key_bytes(args)
-    if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9.-]{1,61}[A-Za-z0-9]", args.checkpoint_bucket) is None:
+    if (
+        re.fullmatch(
+            r"[A-Za-z0-9][A-Za-z0-9.-]{1,61}[A-Za-z0-9]", args.checkpoint_bucket
+        )
+        is None
+    ):
         raise ValueError("checkpoint bucket is invalid")
     prefix = PurePosixPath(args.checkpoint_prefix.strip("/"))
     if not prefix.parts or ".." in prefix.parts:
@@ -1234,7 +1292,10 @@ def start_checkpoint_controller(
         script_content, _script_mode = read_file_without_symlinks(
             args.checkpoint_controller_script.absolute()
         )
-        if hashlib.sha256(script_content).hexdigest() != args.checkpoint_controller_script_sha256:
+        if (
+            hashlib.sha256(script_content).hexdigest()
+            != args.checkpoint_controller_script_sha256
+        ):
             raise ValueError("checkpoint controller script changed after preflight")
         for label, suffix, content in (
             ("private", ".pem", private_content),
@@ -1299,17 +1360,25 @@ def start_checkpoint_controller(
                 if not isinstance(payload, dict) or any(
                     payload.get(key) != value for key, value in expected.items()
                 ):
-                    raise RuntimeError("checkpoint controller readiness binding differs")
+                    raise RuntimeError(
+                        "checkpoint controller readiness binding differs"
+                    )
                 if not isinstance(payload.get("ready_at"), str):
-                    raise RuntimeError("checkpoint controller readiness timestamp is missing")
-                progress_content, progress_mode = read_file_without_symlinks(progress_file)
+                    raise RuntimeError(
+                        "checkpoint controller readiness timestamp is missing"
+                    )
+                progress_content, progress_mode = read_file_without_symlinks(
+                    progress_file
+                )
                 progress = parse_json_payload(progress_content.decode("utf-8"))
                 if progress_mode != 0o600 or progress != {
                     "format": "tinylora_step5_checkpoint_progress_v1",
                     "sequence": 0,
                     "generation_id": None,
                 }:
-                    raise RuntimeError("checkpoint controller progress contract differs")
+                    raise RuntimeError(
+                        "checkpoint controller progress contract differs"
+                    )
                 return {
                     "process": process,
                     "log_handle": log_handle,
@@ -1567,7 +1636,9 @@ def sync_source_bundle(
     )
 
 
-def read_file_without_symlinks(path: Path, *, max_bytes: int = 1024 * 1024) -> tuple[bytes, int]:
+def read_file_without_symlinks(
+    path: Path, *, max_bytes: int = 1024 * 1024
+) -> tuple[bytes, int]:
     """Read one file through no-follow directory descriptors and a stable fd."""
     absolute = path.absolute()
     parts = absolute.parts
@@ -1595,7 +1666,9 @@ def read_file_without_symlinks(path: Path, *, max_bytes: int = 1024 * 1024) -> t
             raise ValueError("provisioned controller file exceeds the size limit")
         return content, stat.S_IMODE(metadata.st_mode)
     except OSError as error:
-        raise ValueError("provisioned controller path may not traverse symlinks") from error
+        raise ValueError(
+            "provisioned controller path may not traverse symlinks"
+        ) from error
     finally:
         if file_fd is not None:
             os.close(file_fd)
@@ -1623,7 +1696,7 @@ def remote_install_bytes(
             f"test ! -L {shlex.quote(str(PurePosixPath(directory).parent))}",
             f"if [ -e {shlex.quote(directory)} ]; then test -d {shlex.quote(directory)} && test ! -L {shlex.quote(directory)}; else mkdir -m 700 {shlex.quote(directory)}; fi",
             f"incoming=$(mktemp {shlex.quote(incoming_template)})",
-            'trap \'rm -f "$incoming"\' EXIT',
+            "trap 'rm -f \"$incoming\"' EXIT",
             'cat > "$incoming"',
             f"printf '%s  %s\\n' {shlex.quote(expected_sha256)} \"$incoming\" | sha256sum -c - >/dev/null",
             f'chmod {shlex.quote(mode)} "$incoming"',
@@ -1672,7 +1745,9 @@ def validate_artifact_put_contract(
         or not url_lines[0].startswith("https://")
         or url_content != (url_lines[0] + "\n").encode()
     ):
-        raise ValueError("artifact PUT URL file must contain exactly one HTTPS URL line")
+        raise ValueError(
+            "artifact PUT URL file must contain exactly one HTTPS URL line"
+        )
     receipt_content, receipt_mode = read_file_without_symlinks(
         args.artifact_put_receipt.absolute()
     )
@@ -1765,7 +1840,9 @@ def refresh_artifact_put_authorization_if_needed(
         refreshed["endpoint"][field] != receipt["endpoint"][field]
         for field in ("bucket", "key", "region", "host", "path")
     ):
-        raise ValueError("refreshed artifact PUT authorization changed immutable binding")
+        raise ValueError(
+            "refreshed artifact PUT authorization changed immutable binding"
+        )
     refreshed_bytes = canonical_bytes(refreshed)
     validate_receipt(
         refreshed,
@@ -1780,12 +1857,16 @@ def refresh_artifact_put_authorization_if_needed(
 
 
 def validate_distinct_url_sources(args: argparse.Namespace) -> None:
-    hydration = private_url_file_bytes(
-        args.input_url_manifest_url_file.absolute()
-    ).decode("utf-8").removesuffix("\n")
-    host_gate = private_url_file_bytes(args.host_gate_url_file.absolute()).decode(
-        "utf-8"
-    ).removesuffix("\n")
+    hydration = (
+        private_url_file_bytes(args.input_url_manifest_url_file.absolute())
+        .decode("utf-8")
+        .removesuffix("\n")
+    )
+    host_gate = (
+        private_url_file_bytes(args.host_gate_url_file.absolute())
+        .decode("utf-8")
+        .removesuffix("\n")
+    )
     if hydration == host_gate:
         raise ValueError("hydration and host-gate URL files must contain distinct URLs")
 
@@ -1907,7 +1988,9 @@ def verify_remote_source_receipt(
         timeout=timeout,
     )
     if receipt.returncode != 0 or parse_json_payload(receipt.stdout) != expected:
-        raise ValueError("Remote source receipt does not match this run binding and allowlist")
+        raise ValueError(
+            "Remote source receipt does not match this run binding and allowlist"
+        )
 
 
 def fetch_artifacts(
@@ -1919,7 +2002,9 @@ def fetch_artifacts(
     timeout: float,
 ) -> subprocess.CompletedProcess[str]:
     if fetch_dir.exists():
-        raise FileExistsError(f"Refusing to mix artifacts with existing path: {fetch_dir}")
+        raise FileExistsError(
+            f"Refusing to mix artifacts with existing path: {fetch_dir}"
+        )
     fetch_dir.parent.mkdir(parents=True, exist_ok=True)
     return run(
         [
@@ -1940,7 +2025,9 @@ def fetch_artifacts(
 def print_dry_run(args: argparse.Namespace, label: str) -> None:
     print(f"label: {label}")
     if args.resume_instance_id:
-        print(f"inventory: require labeled worker {args.resume_instance_id}; start it if stopped")
+        print(
+            f"inventory: require labeled worker {args.resume_instance_id}; start it if stopped"
+        )
     else:
         print(f"inventory: refuse when {args.max_workers} Step 5 workers already exist")
         print(f"create: {shlex.join(create_command(args, label))}")
@@ -1963,7 +2050,9 @@ def print_dry_run(args: argparse.Namespace, label: str) -> None:
     print(f"no-progress watchdog: {args.stall_timeout_seconds} seconds")
     print("durable verification: controller S3 HEAD + exact-version round-trip SHA-256")
     print(f"fetch: {args.remote_artifact_dir} -> {args.fetch_dir.resolve()}")
-    print("cleanup: destroy only after durable receipt and fetched hashes verify; else stop")
+    print(
+        "cleanup: destroy only after durable receipt and fetched hashes verify; else stop"
+    )
     print("replacement: never automatic; permissible only for classified host loss")
 
 
@@ -1979,7 +2068,9 @@ def main() -> int:
     if args.execute:
         validate_checkpoint_controller_contract(args)
         validate_distinct_url_sources(args)
-        artifact_put_receipt, artifact_put_url_bytes = validate_artifact_put_contract(args)
+        artifact_put_receipt, artifact_put_url_bytes = validate_artifact_put_contract(
+            args
+        )
     reject_credential_bearing_commands(
         [
             args.remote_command,
@@ -2091,7 +2182,9 @@ def main() -> int:
                     args.candidate,
                     args.attempt,
                 ):
-                    raise ValueError("Resume worker label does not match this run binding")
+                    raise ValueError(
+                        "Resume worker label does not match this run binding"
+                    )
                 actual_hourly_price = hourly_price(current)
                 assert args.approved_hourly_price is not None
                 enforce_price(actual_hourly_price, args.approved_hourly_price)
@@ -2129,7 +2222,9 @@ def main() -> int:
         assert args.approved_hourly_price is not None
         assert artifact_put_receipt is not None
         artifact_remaining_seconds = (
-            parse_utc(artifact_put_receipt["expires_at"], label="expires_at").timestamp()
+            parse_utc(
+                artifact_put_receipt["expires_at"], label="expires_at"
+            ).timestamp()
             - time.time()
             - 300
         )
@@ -2156,7 +2251,15 @@ def main() -> int:
                     current=datetime.now(timezone.utc),
                 )
                 started = run(
-                    [args.vastai, "start", "instance", target_id, "--retry", "3", "--raw"],
+                    [
+                        args.vastai,
+                        "start",
+                        "instance",
+                        target_id,
+                        "--retry",
+                        "3",
+                        "--raw",
+                    ],
                     check=False,
                     timeout=remaining_cost_seconds(cost_deadline),
                 )
@@ -2171,7 +2274,12 @@ def main() -> int:
             known_hosts,
         )
         metadata.update(
-            {"ssh_host": host, "ssh_port": port, "ssh_ready_at": now(), "host_key": host_key}
+            {
+                "ssh_host": host,
+                "ssh_port": port,
+                "ssh_ready_at": now(),
+                "host_key": host_key,
+            }
         )
 
         if not args.resume_instance_id:
@@ -2309,7 +2417,11 @@ def main() -> int:
                 timeout=remaining_cost_seconds(cost_deadline),
             )
             metadata.setdefault("software_recoveries", []).append(
-                {"at": now(), "exit_code": recovery.returncode, "phase": "qualification"}
+                {
+                    "at": now(),
+                    "exit_code": recovery.returncode,
+                    "phase": "qualification",
+                }
             )
             if recovery.returncode != 0:
                 return 1
@@ -2346,21 +2458,25 @@ def main() -> int:
                     target_id,
                 )
                 if current_worker is None:
-                    raise RuntimeError("active Step 5 worker disappeared during price check")
+                    raise RuntimeError(
+                        "active Step 5 worker disappeared during price check"
+                    )
                 enforce_price(hourly_price(current_worker), args.approved_hourly_price)
                 last_price_check_monotonic = current_monotonic
             if not args.uncapped_cost_approved:
                 return
             assert artifact_put_receipt is not None
             assert artifact_put_url_bytes is not None
-            receipt, url_bytes, refreshed = refresh_artifact_put_authorization_if_needed(
-                args,
-                artifact_put_receipt,
-                artifact_put_url_bytes,
-                current=datetime.now(timezone.utc),
-                network_timeout_seconds=max(
-                    1.0, maintenance_deadline - time.monotonic()
-                ),
+            receipt, url_bytes, refreshed = (
+                refresh_artifact_put_authorization_if_needed(
+                    args,
+                    artifact_put_receipt,
+                    artifact_put_url_bytes,
+                    current=datetime.now(timezone.utc),
+                    network_timeout_seconds=max(
+                        1.0, maintenance_deadline - time.monotonic()
+                    ),
+                )
             )
             if not refreshed:
                 return
@@ -2387,7 +2503,9 @@ def main() -> int:
             )
 
         while True:
-            controller_attempt = len(metadata.get("checkpoint_controller_attempts", [])) + 1
+            controller_attempt = (
+                len(metadata.get("checkpoint_controller_attempts", [])) + 1
+            )
             controller_log = args.metadata.parent / (
                 f"{safe_component(args.run_id)}-{safe_component(args.candidate)}-"
                 f"checkpoint-controller-{controller_attempt}.log"
@@ -2622,7 +2740,8 @@ def main() -> int:
                 durable_verified=durable_verified,
                 fetched_verified=fetched_verified,
                 workload_started=workload_started,
-                preexisting_worker=bool(args.resume_instance_id) or intentionally_stopped,
+                preexisting_worker=bool(args.resume_instance_id)
+                or intentionally_stopped,
             )
             try:
                 if action == "destroy":
@@ -2648,9 +2767,7 @@ def main() -> int:
             if action == "stop":
                 metadata["recovery_instance_id"] = target_id
             if not teardown["verified"]:
-                teardown_error = (
-                    f"{action} of instance {target_id} was not verified; inspect metadata"
-                )
+                teardown_error = f"{action} of instance {target_id} was not verified; inspect metadata"
         if source_bundle is not None:
             source_bundle.unlink(missing_ok=True)
         if known_hosts is not None:
