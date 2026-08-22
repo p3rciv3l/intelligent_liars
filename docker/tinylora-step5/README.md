@@ -26,8 +26,23 @@ model revision; `main` is not an acceptable revision.
 
 ## Build, publish, and qualify
 
-No build or push is performed merely by adding these files. When the image is
-approved for publication:
+No build or push is performed merely by adding these files. The manual
+`Publish TinyLoRA Step 5 runtime` GitHub Actions workflow is the supported
+publication path. It uses only the workflow's automatic `GITHUB_TOKEN`, with
+read-only source access and package-write access. The workflow publishes:
+
+```text
+ghcr.io/p3rciv3l/intelligent_liars/tinylora-step5:sha-<full-source-commit>
+```
+
+It also records the registry digest, attaches BuildKit SBOM and provenance
+attestations, and uploads a checksummed evidence bundle to the workflow run.
+Select the intended source commit in GitHub, dispatch the workflow, and use the
+resulting digest-qualified reference from `image-reference.txt`. Do not treat a
+successful CPU-only image build as GPU qualification, and do not use the tag by
+itself for a rented host.
+
+For a local build that is not pushed:
 
 ```bash
 docker build \
