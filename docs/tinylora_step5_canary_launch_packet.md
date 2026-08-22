@@ -108,24 +108,23 @@ requires a valid checkpoint pointer; the lifecycle wrapper then reruns the
 identical remote command, whose runner validates the checkpoint identity before
 resuming.
 
-## Remaining substitutions before even a dry-run rental command is complete
+## Frozen live launch values
 
-1. `OFFER_ID`, `GPU_NAME`, and measured `GPU_VRAM_GIB`, selected from a fresh
-   Vast search.
-2. Exact `APPROVED_HOURLY_PRICE_USD` and `APPROVED_AT` after the user sees and
-   approves the concrete offer. The money mode is already frozen as explicitly
-   uncapped; there is no maximum-cost substitution or hidden monetary ceiling.
-3. `BUCKET_VERSIONING_STATUS=Enabled`, the AWS account and region, and the
-   SHA-256 of a fresh controller receipt proving that exact bucket state. It is
-   currently disabled or unconfigured, so this remains a hard blocker. The
-   receipt is captured by the packet's read-only `commands.versioning_receipt`
-   command and must identify the exact bucket, account, region, enabled status,
-   and an observation no more than 30 minutes before approval.
+- Vast offer `43979795`: one RTX 3090 with 24 GiB VRAM.
+- Approved hourly price: `$0.12944444444444442`; approval timestamp:
+  `2026-08-22T17:36:06Z`.
+- Money mode: explicitly uncapped, with no maximum-dollar or total-runtime
+  ceiling.
+- AWS region `us-east-1`; the exact account, Enabled bucket-versioning receipt,
+  input URL controller receipt, and artifact PUT receipt are hash-bound in the
+  packet.
+- The packet has zero remaining substitutions. It is launch-ready but still
+  inert: it contains neither `--execute` nor `--confirmed-cost-approval`.
 
 The hydration, checkpoint durability, controller provisioning, and artifact
-finalization commands are exact and hash-bound. The runtime image is now frozen
-by its independently verified registry-index digest. The packet remains blocked
-on a fresh exact offer/hourly-price approval and bucket-versioning proof.
+finalization commands are exact and hash-bound. The runtime image, exact
+offer/hourly-price approval, AWS identity, and bucket-versioning proof are now
+frozen. Execution remains a separate controller action.
 The hash-bound `commands.input_url_preparation` controller command verifies the
 frozen S3 objects, publishes the create-only URL manifest, and atomically creates
 the hydration bootstrap and host-gate URL files as mode-0600 regular files. The
@@ -154,6 +153,16 @@ immutable-destination artifact PUT authorization before expiry, so its initial
 six-hour URL is not a runtime cap. Durable checkpoint, artifact verification,
 same-instance diagnosis/recovery, and cleanup rules are unchanged. The larger
 run remains disabled and requires separate authorization after the canary.
+
+Short-lived AWS sessions are supported without weakening that contract. The
+controller bounds each PUT authorization by the actual temporary-credential
+expiry, refreshes a 15-minute credential's authorization at 480 seconds or less,
+and refuses a start or restart with 300 seconds or less remaining. After a start
+with more than that reserve, the monitored controller refreshes, revalidates,
+and atomically re-stages the capability during the active workload before the
+final upload needs it; refresh failure stops the worker for recovery. Every
+refresh retains the same account, region, create-only header, and immutable
+artifact destination.
 
 The validator reports `launch_ready: false` and exits 2 while any substitution
 remains. `--allow-incomplete` changes only that reporting exit code for CI; it
