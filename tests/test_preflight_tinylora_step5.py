@@ -3,6 +3,8 @@ from __future__ import annotations
 import importlib.util
 from pathlib import Path
 
+from intelligent_liars.tinylora_step5 import qualify_vision_preservation_rows
+
 
 SCRIPT = Path(__file__).parents[1] / "scripts" / "preflight_tinylora_step5.py"
 SPEC = importlib.util.spec_from_file_location("preflight_tinylora_step5", SCRIPT)
@@ -13,6 +15,13 @@ SPEC.loader.exec_module(PREFLIGHT)
 
 def _valid_contract():
     plan = {
+        "inputs": {
+            "tokenizer_json_sha256": PREFLIGHT.PINNED_TOKENIZER_JSON_SHA256,
+            "tokenizer_config_sha256": PREFLIGHT.PINNED_TOKENIZER_CONFIG_SHA256,
+            "preprocessor_config_sha256": (
+                PREFLIGHT.PINNED_PREPROCESSOR_CONFIG_SHA256
+            ),
+        },
         "arms": [
             {
                 "name": "tinylora_dim13",
@@ -111,3 +120,75 @@ def test_contract_rejects_missing_frozen_outputs():
     del plan["outputs"]["train_behavior"]
     errors = PREFLIGHT.contract_errors(plan, rows)
     assert "Step 5 outputs differ from the frozen output inventory" in errors
+
+
+class _VisionTokenizer:
+    eos_token = " <eos>"
+
+    def apply_chat_template(self, messages, *, tokenize, add_generation_prompt):
+        return f"<image> {messages[0]['content'][1]['text']} assistant "
+
+    def __call__(self, text, *, add_special_tokens):
+        return {"input_ids": text.split()}
+
+
+def test_vision_replay_rejects_fabricated_token_length(tmp_path):
+    import json
+
+    from PIL import Image
+
+    image = tmp_path / "small.png"
+    Image.new("RGB", (64, 64), "white").save(image)
+    raw = {
+        "record_id": "vision.one",
+        "payload": {
+            "config": "charts",
+            "image_snapshot": {"local_path": "small.png"},
+            "questions": {"question": ["What is shown?"], "answer": ["A chart."]},
+        },
+    }
+    source = tmp_path / "pixmo.jsonl"
+    source.write_text(json.dumps(raw) + "\n")
+    qualified, _ = qualify_vision_preservation_rows(
+        [raw],
+        tokenizer=_VisionTokenizer(),
+        repository_root=tmp_path,
+        seed=1,
+        max_length=100,
+        factor=32,
+        min_pixels=65536,
+        max_pixels=16777216,
+    )
+    compiled = {
+        "record_id": "vision.one",
+        "preservation_category": "vision_charts",
+        "source": "pixmo.jsonl",
+        "qualification": dict(qualified[0]["qualification"]),
+    }
+    compiled["qualification"]["token_length"] -= 1
+    plan = {
+        "seed": 1,
+        "inputs": {"pixmo_docs_snapshot_sha256": PREFLIGHT.file_sha256(source)},
+        "preservation_curation": {
+            "max_length": 100,
+            "qualified_pixmo_docs_records": 1,
+            "excluded_pixmo_docs_records": 0,
+            "vision_token_geometry": {
+                "factor": 32,
+                "min_pixels": 65536,
+                "max_pixels": 16777216,
+            },
+        },
+    }
+    errors = PREFLIGHT.vision_qualification_errors(
+        repository_root=tmp_path,
+        plan=plan,
+        rows_by_output={
+            "preservation_train": [compiled],
+            "preservation_development_vision": [],
+        },
+        tokenizer=_VisionTokenizer(),
+    )
+    assert errors == [
+        "compiled vision qualification differs from pinned-source replay"
+    ]

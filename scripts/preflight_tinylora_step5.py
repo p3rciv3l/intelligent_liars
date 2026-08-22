@@ -11,7 +11,10 @@ from pathlib import Path
 from typing import Any
 
 from intelligent_liars.tinylora_pilot import file_sha256
-from intelligent_liars.tinylora_step5 import REQUIRED_SCENARIO_OBJECTIVES
+from intelligent_liars.tinylora_step5 import (
+    REQUIRED_SCENARIO_OBJECTIVES,
+    qualify_vision_preservation_rows,
+)
 
 
 FROZEN_OUTPUT_RECORDS = {
@@ -23,6 +26,15 @@ FROZEN_OUTPUT_RECORDS = {
     "preservation_development_vision": 22,
     "safety_refusal_development": 450,
 }
+PINNED_TOKENIZER_JSON_SHA256 = (
+    "a5d85b6dcc535e6b93115a9ef287e6132fdbf30270da6218194ba742261173c7"
+)
+PINNED_TOKENIZER_CONFIG_SHA256 = (
+    "7b501e639b4d107a23effbe30390ee33d553f722467f7ac8e2744d7ff5d3a7d5"
+)
+PINNED_PREPROCESSOR_CONFIG_SHA256 = (
+    "27225450ac9c6529872ee1924fcb0962ff5634834f817040f444118116f4e516"
+)
 
 
 def read_jsonl(path: Path) -> list[dict[str, Any]]:
@@ -38,6 +50,16 @@ def contract_errors(
 ) -> list[str]:
     """Validate the corrected Step 5 scientific/data contract."""
     errors: list[str] = []
+    inputs = plan.get("inputs", {})
+    if inputs.get("tokenizer_json_sha256") != PINNED_TOKENIZER_JSON_SHA256:
+        errors.append("tokenizer.json does not match the pinned Step 5 artifact")
+    if inputs.get("tokenizer_config_sha256") != PINNED_TOKENIZER_CONFIG_SHA256:
+        errors.append("tokenizer config does not match the pinned Step 5 artifact")
+    if (
+        inputs.get("preprocessor_config_sha256")
+        != PINNED_PREPROCESSOR_CONFIG_SHA256
+    ):
+        errors.append("vision preprocessor does not match the pinned Step 5 artifact")
     if set(plan.get("outputs", {})) != set(FROZEN_OUTPUT_RECORDS):
         errors.append("Step 5 outputs differ from the frozen output inventory")
     elif any(
@@ -135,6 +157,63 @@ def contract_errors(
     return errors
 
 
+def vision_qualification_errors(
+    *,
+    repository_root: Path,
+    plan: dict[str, Any],
+    rows_by_output: dict[str, list[dict[str, Any]]],
+    tokenizer: Any,
+) -> list[str]:
+    """Reproduce every admitted PixMo qualification from pinned raw inputs."""
+    compiled = [
+        row
+        for name in ("preservation_train", "preservation_development_vision")
+        for row in rows_by_output.get(name, [])
+        if str(row.get("preservation_category", "")).startswith("vision_")
+    ]
+    if not compiled:
+        return ["vision preservation inventory is empty"]
+    source_paths = {str(row.get("source", "")) for row in compiled}
+    if len(source_paths) != 1:
+        return ["vision preservation rows do not share one pinned source"]
+    relative_source = Path(source_paths.pop())
+    if relative_source.is_absolute() or ".." in relative_source.parts:
+        return ["vision preservation source path is unsafe"]
+    source_path = repository_root / relative_source
+    if (
+        not source_path.is_file()
+        or file_sha256(source_path) != plan.get("inputs", {}).get("pixmo_docs_snapshot_sha256")
+    ):
+        return ["PixMo source snapshot is missing or mismatched"]
+    geometry = plan.get("preservation_curation", {}).get(
+        "vision_token_geometry", {}
+    )
+    try:
+        qualified, exclusions = qualify_vision_preservation_rows(
+            read_jsonl(source_path),
+            tokenizer=tokenizer,
+            repository_root=repository_root,
+            seed=int(plan["seed"]),
+            max_length=int(plan["preservation_curation"]["max_length"]),
+            factor=int(geometry["factor"]),
+            min_pixels=int(geometry["min_pixels"]),
+            max_pixels=int(geometry["max_pixels"]),
+        )
+    except (KeyError, TypeError, ValueError) as error:
+        return [f"vision qualification could not be reproduced: {error}"]
+    expected = {str(row["record_id"]): row["qualification"] for row in qualified}
+    actual = {str(row["record_id"]): row.get("qualification") for row in compiled}
+    errors: list[str] = []
+    if actual != expected:
+        errors.append("compiled vision qualification differs from pinned-source replay")
+    curation = plan.get("preservation_curation", {})
+    if curation.get("qualified_pixmo_docs_records") != len(qualified):
+        errors.append("qualified PixMo count differs from replay")
+    if curation.get("excluded_pixmo_docs_records") != len(exclusions):
+        errors.append("excluded PixMo count differs from replay")
+    return errors
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--repository-root", type=Path, required=True)
@@ -167,6 +246,21 @@ def main() -> int:
         if len(ids) != len(set(ids)):
             errors.append(f"duplicate record ids: {name}")
     errors.extend(contract_errors(plan, rows_by_output))
+    if not errors:
+        from transformers import AutoTokenizer
+
+        tokenizer = AutoTokenizer.from_pretrained(
+            plan["model"]["model_id"],
+            revision=plan["model"]["revision"],
+        )
+        errors.extend(
+            vision_qualification_errors(
+                repository_root=repository_root,
+                plan=plan,
+                rows_by_output=rows_by_output,
+                tokenizer=tokenizer,
+            )
+        )
 
     behavior_names = (
         "train_behavior",
