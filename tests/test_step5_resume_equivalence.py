@@ -27,6 +27,8 @@ def test_planned_interruption_matches_uninterrupted_training(tmp_path: Path):
     )
 
     assert receipt["status"] == "pass"
+    assert receipt["scope"] == "cpu_toy_state_contract"
+    assert receipt["production_training_path_exercised"] is False
     assert all(receipt["comparisons"].values())
     assert receipt["reference"]["sample_trace"] == receipt["resumed"]["sample_trace"]
     assert receipt["reference"]["loss_trace"] == receipt["resumed"]["loss_trace"]

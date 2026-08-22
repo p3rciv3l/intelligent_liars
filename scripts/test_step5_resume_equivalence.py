@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-"""Prove exact CPU checkpoint/resume equivalence with a planned interruption."""
+"""Test a CPU toy state contract across a planned checkpoint interruption.
+
+This intentionally does not claim end-to-end coverage of the GPU training runner.
+"""
 
 from __future__ import annotations
 
@@ -305,6 +308,8 @@ def run_equivalence(
     receipt = {
         "schema_version": SCHEMA_VERSION,
         "test": "planned_interruption_checkpoint_resume_equivalence",
+        "scope": "cpu_toy_state_contract",
+        "production_training_path_exercised": False,
         "status": "pass" if all(comparisons.values()) else "fail",
         "device": "cpu",
         "seed": seed,
