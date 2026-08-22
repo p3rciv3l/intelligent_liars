@@ -6,11 +6,15 @@ from pathlib import Path
 import pytest
 
 from intelligent_liars.step5_artifact_store import (
+    HEAD_RECEIPT_SCHEMA,
+    MANIFEST_LOGICAL_PATH,
+    ROUNDTRIP_RECEIPT_SCHEMA,
     ArtifactContractError,
     build_artifact_manifest,
     build_final_receipt,
     build_head_receipt,
     build_roundtrip_receipt,
+    canonical_manifest_bytes,
     sha256_file,
     validate_artifact_manifest,
     validate_final_receipt,
@@ -96,6 +100,13 @@ def test_head_receipt_records_success_and_detects_mismatch(tmp_path: Path):
     assert validate_head_receipt(mismatch, manifest) == mismatch
 
 
+def test_public_receipt_schemas_define_every_required_property():
+    for schema in (HEAD_RECEIPT_SCHEMA, ROUNDTRIP_RECEIPT_SCHEMA):
+        assert set(schema["required"]) == set(schema["properties"])
+        assert schema["additionalProperties"] is False
+        assert schema["properties"]["expected"]["additionalProperties"] is False
+
+
 def test_roundtrip_receipt_hashes_downloaded_bytes(tmp_path: Path):
     root = _artifact_root(tmp_path)
     manifest = build_artifact_manifest(root, run_id="run-123")
@@ -119,9 +130,19 @@ def test_roundtrip_receipt_hashes_downloaded_bytes(tmp_path: Path):
 def test_final_receipt_requires_head_and_roundtrip_for_every_artifact(tmp_path: Path):
     root = _artifact_root(tmp_path)
     manifest = build_artifact_manifest(root, run_id="run-123")
+    manifest_path = root / MANIFEST_LOGICAL_PATH
+    manifest_path.write_bytes(canonical_manifest_bytes(manifest))
     heads = []
     roundtrips = []
-    for artifact in manifest["artifacts"]:
+    publication_artifacts = [
+        {
+            "logical_path": MANIFEST_LOGICAL_PATH,
+            "size_bytes": manifest_path.stat().st_size,
+            "sha256": sha256_file(manifest_path),
+        },
+        *manifest["artifacts"],
+    ]
+    for artifact in publication_artifacts:
         object_ref = f"opaque/{artifact['logical_path']}"
         heads.append(
             build_head_receipt(
@@ -150,6 +171,7 @@ def test_final_receipt_requires_head_and_roundtrip_for_every_artifact(tmp_path: 
         completed_at="2026-08-22T12:02:00Z",
     )
     assert receipt["verified"] is True
+    assert receipt["logical_path"] == "final_receipt.json"
     assert validate_final_receipt(receipt, manifest) == receipt
 
     with pytest.raises(ArtifactContractError, match="roundtrip receipt inventory"):
@@ -164,9 +186,19 @@ def test_final_receipt_requires_head_and_roundtrip_for_every_artifact(tmp_path: 
 def test_final_receipt_refuses_failed_artifact_verification(tmp_path: Path):
     root = _artifact_root(tmp_path)
     manifest = build_artifact_manifest(root, run_id="run-123")
+    manifest_path = root / MANIFEST_LOGICAL_PATH
+    manifest_path.write_bytes(canonical_manifest_bytes(manifest))
     heads = []
     roundtrips = []
-    for index, artifact in enumerate(manifest["artifacts"]):
+    publication_artifacts = [
+        {
+            "logical_path": MANIFEST_LOGICAL_PATH,
+            "size_bytes": manifest_path.stat().st_size,
+            "sha256": sha256_file(manifest_path),
+        },
+        *manifest["artifacts"],
+    ]
+    for index, artifact in enumerate(publication_artifacts):
         heads.append(
             build_head_receipt(
                 manifest,

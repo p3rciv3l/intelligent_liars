@@ -10,7 +10,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 from typing import Any
@@ -28,9 +28,33 @@ FINAL_RECEIPT_LOGICAL_PATH = "final_receipt.json"
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 
 
+_HASH_PROPERTY = {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+_EXPECTED_PROPERTIES = {
+    "type": "object",
+    "required": ["size_bytes", "sha256"],
+    "properties": {
+        "size_bytes": {"type": "integer", "minimum": 0},
+        "sha256": _HASH_PROPERTY,
+    },
+    "additionalProperties": False,
+}
+_RECEIPT_PROPERTIES = {
+    "artifact_set_id": _HASH_PROPERTY,
+    "logical_path": {"type": "string", "minLength": 1},
+    "object_ref": {"type": "string", "minLength": 1},
+    "expected": _EXPECTED_PROPERTIES,
+    "observed_at": {"type": "string", "format": "date-time"},
+    "verified": {"type": "boolean"},
+    "mismatches": {
+        "type": "array",
+        "items": {"enum": ["size_bytes", "sha256"]},
+        "uniqueItems": True,
+    },
+}
+
 # Public schemas make the on-disk receipt boundary explicit without introducing a
-# runtime dependency on a JSON Schema implementation.  The validators below are
-# authoritative and additionally check manifest-relative semantic invariants.
+# runtime dependency on a JSON Schema implementation. The validators below also
+# enforce manifest-relative semantic invariants that JSON Schema cannot express.
 HEAD_RECEIPT_SCHEMA: dict[str, Any] = {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "type": "object",
@@ -45,6 +69,19 @@ HEAD_RECEIPT_SCHEMA: dict[str, Any] = {
         "verified",
         "mismatches",
     ],
+    "properties": {
+        **_RECEIPT_PROPERTIES,
+        "format": {"const": HEAD_RECEIPT_FORMAT},
+        "observed": {
+            "type": "object",
+            "required": ["size_bytes", "sha256", "etag"],
+            "properties": {
+                **_EXPECTED_PROPERTIES["properties"],
+                "etag": {"type": ["string", "null"]},
+            },
+            "additionalProperties": False,
+        },
+    },
     "additionalProperties": False,
 }
 
@@ -62,6 +99,11 @@ ROUNDTRIP_RECEIPT_SCHEMA: dict[str, Any] = {
         "verified",
         "mismatches",
     ],
+    "properties": {
+        **_RECEIPT_PROPERTIES,
+        "format": {"const": ROUNDTRIP_RECEIPT_FORMAT},
+        "downloaded": _EXPECTED_PROPERTIES,
+    },
     "additionalProperties": False,
 }
 
@@ -81,6 +123,11 @@ def _canonical_bytes(value: Any) -> bytes:
 
 def _stable_sha256(value: Any) -> str:
     return hashlib.sha256(_canonical_bytes(value)).hexdigest()
+
+
+def canonical_manifest_bytes(manifest: Mapping[str, Any]) -> bytes:
+    """Return the one byte representation used to publish ``manifest.json``."""
+    return _canonical_bytes(validate_artifact_manifest(manifest))
 
 
 def sha256_file(path: Path) -> str:
@@ -253,6 +300,14 @@ def _manifest_artifact(
     manifest: Mapping[str, Any], logical_path: str
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     normalized = validate_artifact_manifest(manifest)
+    if logical_path == MANIFEST_LOGICAL_PATH:
+        content = _canonical_bytes(normalized)
+        return normalized, {
+            "logical_path": MANIFEST_LOGICAL_PATH,
+            "role": "manifest",
+            "size_bytes": len(content),
+            "sha256": hashlib.sha256(content).hexdigest(),
+        }
     matches = [
         item for item in normalized["artifacts"] if item["logical_path"] == logical_path
     ]
@@ -437,19 +492,22 @@ def _receipt_inventory(
     receipts: Iterable[Mapping[str, Any]],
     manifest: Mapping[str, Any],
     *,
-    kind: str,
+    validator: Callable[[Mapping[str, Any], Mapping[str, Any]], dict[str, Any]],
+    label: str,
 ) -> dict[str, dict[str, Any]]:
-    validator = validate_head_receipt if kind == "HEAD" else validate_roundtrip_receipt
     normalized: dict[str, dict[str, Any]] = {}
     for raw in receipts:
         receipt = validator(raw, manifest)
         logical_path = receipt["logical_path"]
         if logical_path in normalized:
-            raise ArtifactContractError(f"Duplicate {kind} receipt: {logical_path}")
+            raise ArtifactContractError(f"Duplicate {label} receipt: {logical_path}")
         normalized[logical_path] = receipt
-    expected = {item["logical_path"] for item in manifest["artifacts"]}
+    expected = {
+        MANIFEST_LOGICAL_PATH,
+        *(item["logical_path"] for item in manifest["artifacts"]),
+    }
     if set(normalized) != expected:
-        raise ArtifactContractError(f"{kind.lower()} receipt inventory is incomplete")
+        raise ArtifactContractError(f"{label} receipt inventory is incomplete")
     return normalized
 
 
@@ -462,10 +520,24 @@ def build_final_receipt(
 ) -> dict[str, Any]:
     """Seal complete, verified HEAD and round-trip evidence for every artifact."""
     normalized = validate_artifact_manifest(manifest)
-    heads = _receipt_inventory(head_receipts, normalized, kind="HEAD")
-    roundtrips = _receipt_inventory(roundtrip_receipts, normalized, kind="roundtrip")
+    heads = _receipt_inventory(
+        head_receipts,
+        normalized,
+        validator=validate_head_receipt,
+        label="HEAD",
+    )
+    roundtrips = _receipt_inventory(
+        roundtrip_receipts,
+        normalized,
+        validator=validate_roundtrip_receipt,
+        label="roundtrip",
+    )
     verifications: list[dict[str, Any]] = []
-    for artifact in normalized["artifacts"]:
+    publication_artifacts = [
+        _manifest_artifact(normalized, MANIFEST_LOGICAL_PATH)[1],
+        *normalized["artifacts"],
+    ]
+    for artifact in publication_artifacts:
         logical_path = artifact["logical_path"]
         head = heads[logical_path]
         roundtrip = roundtrips[logical_path]
@@ -480,6 +552,7 @@ def build_final_receipt(
         )
     core = {
         "format": FINAL_RECEIPT_FORMAT,
+        "logical_path": FINAL_RECEIPT_LOGICAL_PATH,
         "artifact_set_id": normalized["artifact_set_id"],
         "run_id": normalized["run_id"],
         "manifest_canonical_sha256": _stable_sha256(normalized),
@@ -498,6 +571,7 @@ def validate_final_receipt(
     """Validate a final receipt and all embedded publication evidence."""
     keys = {
         "format",
+        "logical_path",
         "artifact_set_id",
         "run_id",
         "manifest_canonical_sha256",
@@ -510,6 +584,8 @@ def validate_final_receipt(
     normalized = validate_artifact_manifest(manifest)
     if value["format"] != FINAL_RECEIPT_FORMAT:
         raise ArtifactContractError("Unsupported final receipt format")
+    if value["logical_path"] != FINAL_RECEIPT_LOGICAL_PATH:
+        raise ArtifactContractError("Final receipt logical_path differs")
     if value["artifact_set_id"] != normalized["artifact_set_id"]:
         raise ArtifactContractError("Final receipt artifact_set_id differs")
     if value["run_id"] != normalized["run_id"]:
@@ -536,12 +612,23 @@ def validate_final_receipt(
         heads.append(verification["head"])
         roundtrips.append(verification["roundtrip"])
         observed_paths.append(verification["logical_path"])
-    expected_paths = [item["logical_path"] for item in normalized["artifacts"]]
+    expected_paths = [
+        MANIFEST_LOGICAL_PATH,
+        *(item["logical_path"] for item in normalized["artifacts"]),
+    ]
     if observed_paths != expected_paths:
         raise ArtifactContractError("Final verification inventory differs from manifest")
-    normalized_heads = _receipt_inventory(heads, normalized, kind="HEAD")
+    normalized_heads = _receipt_inventory(
+        heads,
+        normalized,
+        validator=validate_head_receipt,
+        label="HEAD",
+    )
     normalized_roundtrips = _receipt_inventory(
-        roundtrips, normalized, kind="roundtrip"
+        roundtrips,
+        normalized,
+        validator=validate_roundtrip_receipt,
+        label="roundtrip",
     )
     for logical_path in expected_paths:
         head = normalized_heads[logical_path]
