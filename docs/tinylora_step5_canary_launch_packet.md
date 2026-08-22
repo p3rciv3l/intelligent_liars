@@ -116,16 +116,22 @@ on the immutable image, fresh offer/cost approval, and bucket-versioning proof.
 The hash-bound `commands.input_url_preparation` controller command verifies the
 frozen S3 objects, publishes the create-only URL manifest, and atomically creates
 the hydration bootstrap and host-gate URL files as mode-0600 regular files. The
-artifact preparation command does the same for the final PUT URL. These
-protected files must exist at the frozen controller paths before the complete
-validator will pass; they are deterministic launch preparation, not ad hoc
-operator substitutions.
+artifact preparation command creates both the final PUT URL and its hash-bound
+receipt as mode-0600 regular files. It binds the immutable S3 destination, AWS
+account and region, SigV4 scope, `If-None-Match: *` create-only header, URL
+expiry, and the approval timestamp used by the lifecycle wrapper. These
+protected files, the input controller receipt, and the generated input URL
+manifest must exist at the frozen controller paths before the complete validator
+will pass; they are deterministic launch preparation, not ad hoc operator work.
 
 The complete validator reads the exact presigner receipt and generated manifest
 bytes, verifies their commitments, and binds the account, region, bucket,
 manifest key, attested object hashes, host-gate object, and SigV4 validity window
-to the approval time. A completed same-host hydration is receipt-verified before
-the protected URL is opened, so recovery remains possible after that URL expires.
+to the approval time. It also revalidates the artifact PUT receipt and URL before
+the first create attempt; the lifecycle wrapper repeats the same freshness and
+destination checks before creation and every same-instance restart. A completed
+same-host hydration is receipt-verified before the protected URL is opened, so
+recovery remains possible after that URL expires.
 
 The validator reports `launch_ready: false` and exits 2 while any substitution
 remains. `--allow-incomplete` changes only that reporting exit code for CI; it

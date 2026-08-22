@@ -20,6 +20,9 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, unquote, urlsplit
 
+from intelligent_liars.step5_artifact_presigner import (
+    validate_receipt as validate_artifact_put_receipt,
+)
 from intelligent_liars.step5_input_hydration import validate_url_manifest
 
 
@@ -60,7 +63,9 @@ def _read_regular_bytes(path: Path, *, label: str) -> bytes:
     try:
         descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
     except OSError as error:
-        raise LaunchPacketError(f"{label} must be a regular non-symlink file") from error
+        raise LaunchPacketError(
+            f"{label} must be a regular non-symlink file"
+        ) from error
     try:
         metadata = os.fstat(descriptor)
         if not stat.S_ISREG(metadata.st_mode):
@@ -108,7 +113,9 @@ def _bound_s3_url(
         )
         expires = int(query["X-Amz-Expires"][0])
     except (KeyError, IndexError, TypeError, ValueError) as error:
-        raise LaunchPacketError("protected URL lacks a complete SigV4 binding") from error
+        raise LaunchPacketError(
+            "protected URL lacks a complete SigV4 binding"
+        ) from error
     if (
         len(credential) != 5
         or re.fullmatch(r"[A-Z0-9]{16,128}", credential[0]) is None
@@ -146,8 +153,7 @@ def _is_placeholder(value: Any) -> bool:
 def _collect_placeholders(value: Any) -> set[str]:
     if isinstance(value, str):
         return {
-            match.group(1)
-            for match in re.finditer(r"\$\{([A-Z][A-Z0-9_]*)\}", value)
+            match.group(1) for match in re.finditer(r"\$\{([A-Z][A-Z0-9_]*)\}", value)
         }
     if isinstance(value, Mapping):
         found: set[str] = set()
@@ -195,7 +201,9 @@ def _validate_input_url_receipt(
     durability = _mapping(packet["durability"], label="durability")
     remote = _mapping(packet["remote_inputs"], label="remote_inputs")
     receipt_path = Path(str(controller["input_url_controller_receipt_path"]))
-    receipt_bytes = _read_regular_bytes(receipt_path, label="input URL controller receipt")
+    receipt_bytes = _read_regular_bytes(
+        receipt_path, label="input URL controller receipt"
+    )
     expected_hash = _sha256(
         controller.get("input_url_controller_receipt_sha256"),
         label="input_url_controller_receipt_sha256",
@@ -221,7 +229,10 @@ def _validate_input_url_receipt(
     if not isinstance(receipt, Mapping) or set(receipt) != receipt_fields:
         raise LaunchPacketError("input URL controller receipt fields differ")
     content = {key: value for key, value in receipt.items() if key != "content_sha256"}
-    if hashlib.sha256(_canonical_bytes(content)).hexdigest() != receipt["content_sha256"]:
+    if (
+        hashlib.sha256(_canonical_bytes(content)).hexdigest()
+        != receipt["content_sha256"]
+    ):
         raise LaunchPacketError("input URL controller receipt commitment differs")
     if (
         receipt["format"] != "tinylora_step5_input_url_controller_receipt_v1"
@@ -230,10 +241,16 @@ def _validate_input_url_receipt(
     ):
         raise LaunchPacketError("input URL controller identity differs")
     try:
-        created = datetime.fromisoformat(str(receipt["created_at"]).replace("Z", "+00:00"))
-        expires = datetime.fromisoformat(str(receipt["expires_at"]).replace("Z", "+00:00"))
+        created = datetime.fromisoformat(
+            str(receipt["created_at"]).replace("Z", "+00:00")
+        )
+        expires = datetime.fromisoformat(
+            str(receipt["expires_at"]).replace("Z", "+00:00")
+        )
     except ValueError as error:
-        raise LaunchPacketError("input URL controller timestamps are invalid") from error
+        raise LaunchPacketError(
+            "input URL controller timestamps are invalid"
+        ) from error
     expiry_seconds = receipt["expiry_seconds"]
     if (
         created.tzinfo is None
@@ -246,7 +263,9 @@ def _validate_input_url_receipt(
     ):
         raise LaunchPacketError("input URL controller receipt is not fresh at approval")
 
-    manifest_descriptor = _mapping(receipt["manifest"], label="input URL manifest receipt")
+    manifest_descriptor = _mapping(
+        receipt["manifest"], label="input URL manifest receipt"
+    )
     manifest_bucket, manifest_key = _s3_parts(
         remote["input_url_manifest_s3_uri"], label="input_url_manifest_s3_uri"
     )
@@ -267,7 +286,9 @@ def _validate_input_url_receipt(
         manifest = validate_url_manifest(json.loads(manifest_bytes))
     except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as error:
         raise LaunchPacketError("input URL manifest is invalid") from error
-    manifest_controller = _mapping(manifest["controller"], label="URL manifest controller")
+    manifest_controller = _mapping(
+        manifest["controller"], label="URL manifest controller"
+    )
     for field, expected in (
         ("account_id", durability["account_id"]),
         ("bucket", manifest_bucket),
@@ -328,17 +349,13 @@ def _validate_input_url_receipt(
     ).lstrip("/")
     expected_key_hashes = {
         f"{model_prefix.rstrip('/')}/manifest.json": remote["model_manifest_sha256"],
-        f"{model_prefix.rstrip('/')}/_COMPLETE.json": remote[
-            "model_completion_sha256"
-        ],
+        f"{model_prefix.rstrip('/')}/_COMPLETE.json": remote["model_completion_sha256"],
         frozen_archive_key: remote["frozen_inputs_tar_sha256"],
         f"{str(Path(frozen_archive_key).parent)}/_COMPLETE.json": remote[
             "frozen_inputs_completion_sha256"
         ],
         f"{pixmo_prefix.rstrip('/')}/manifest.json": remote["pixmo_manifest_sha256"],
-        f"{pixmo_prefix.rstrip('/')}/_COMPLETE.json": remote[
-            "pixmo_completion_sha256"
-        ],
+        f"{pixmo_prefix.rstrip('/')}/_COMPLETE.json": remote["pixmo_completion_sha256"],
         pixmo_archive_key: remote["pixmo_tar_sha256"],
     }
     for key, expected in expected_key_hashes.items():
@@ -358,7 +375,9 @@ def _validate_input_url_receipt(
         parsed = urlsplit(url)
         key = unquote(parsed.path).lstrip("/")
         if key not in objects:
-            raise LaunchPacketError("input URL manifest references an unattested object")
+            raise LaunchPacketError(
+                "input URL manifest references an unattested object"
+            )
         _bound_s3_url(
             url,
             bucket=manifest_bucket,
@@ -371,18 +390,25 @@ def _validate_input_url_receipt(
     host_key = host_gate.get("key")
     if not isinstance(host_key, str) or host_key not in objects:
         raise LaunchPacketError("host gate object is not attested")
-    if (
-        host_gate.get("sha256") != objects[host_key].get("sha256")
-        or host_gate.get("bytes") != objects[host_key].get("bytes")
-    ):
+    if host_gate.get("sha256") != objects[host_key].get("sha256") or host_gate.get(
+        "bytes"
+    ) != objects[host_key].get("bytes"):
         raise LaunchPacketError("host gate object binding differs")
-    bootstrap_url = _read_regular_bytes(
-        Path(str(controller["input_url_manifest_url_file"])),
-        label="input URL manifest bootstrap",
-    ).decode().strip()
-    host_gate_url = _read_regular_bytes(
-        Path(str(controller["host_gate_url_file"])), label="host gate URL"
-    ).decode().strip()
+    bootstrap_url = (
+        _read_regular_bytes(
+            Path(str(controller["input_url_manifest_url_file"])),
+            label="input URL manifest bootstrap",
+        )
+        .decode()
+        .strip()
+    )
+    host_gate_url = (
+        _read_regular_bytes(
+            Path(str(controller["host_gate_url_file"])), label="host gate URL"
+        )
+        .decode()
+        .strip()
+    )
     _bound_s3_url(
         bootstrap_url,
         bucket=manifest_bucket,
@@ -442,7 +468,9 @@ def _validate_complete_runtime(packet: Mapping[str, Any], packet_dir: Path) -> N
         or re.fullmatch(r"sha256:[0-9a-f]{64}", image_digest) is None
         or not image.endswith("@" + image_digest)
     ):
-        raise LaunchPacketError("runtime image and image_digest must identify the same bytes")
+        raise LaunchPacketError(
+            "runtime image and image_digest must identify the same bytes"
+        )
     offer_id = runtime.get("offer_id")
     if not isinstance(offer_id, str) or not offer_id.isdigit():
         raise LaunchPacketError("launch requires one exact numeric offer_id")
@@ -496,6 +524,13 @@ def _validate_complete_runtime(packet: Mapping[str, Any], packet_dir: Path) -> N
         "--artifact-put-url-file": str(
             packet["controller_prerequisites"]["artifact_put_url_file"]
         ),
+        "--artifact-put-receipt": str(
+            packet["controller_prerequisites"]["artifact_put_receipt_path"]
+        ),
+        "--artifact-put-receipt-sha256": str(
+            packet["controller_prerequisites"]["artifact_put_receipt_sha256"]
+        ),
+        "--approved-at": str(approval["approved_at"]),
         "--host-gate-url-file": str(
             packet["controller_prerequisites"]["host_gate_url_file"]
         ),
@@ -519,9 +554,13 @@ def _validate_complete_runtime(packet: Mapping[str, Any], packet_dir: Path) -> N
             raise LaunchPacketError(f"{flag} differs from its frozen packet field")
     remote = commands["remote"]
     if not isinstance(remote, str) or str(runtime["image_digest"]) not in remote:
-        raise LaunchPacketError("remote command is not bound to the runtime image digest")
+        raise LaunchPacketError(
+            "remote command is not bound to the runtime image digest"
+        )
     if flag_value("--remote-command") != remote:
-        raise LaunchPacketError("lifecycle remote command differs from the frozen template")
+        raise LaunchPacketError(
+            "lifecycle remote command differs from the frozen template"
+        )
 
     def command_flag(command_name: str, flag: str) -> str:
         command = commands.get(command_name)
@@ -548,7 +587,9 @@ def _validate_complete_runtime(packet: Mapping[str, Any], packet_dir: Path) -> N
     try:
         receipt = json.loads(receipt_path.read_text())
     except (OSError, json.JSONDecodeError) as error:
-        raise LaunchPacketError("bucket versioning receipt is not readable JSON") from error
+        raise LaunchPacketError(
+            "bucket versioning receipt is not readable JSON"
+        ) from error
     expected_receipt = {
         "format": "tinylora_step5_bucket_versioning_receipt_v1",
         "bucket": durability.get("bucket"),
@@ -556,13 +597,16 @@ def _validate_complete_runtime(packet: Mapping[str, Any], packet_dir: Path) -> N
         "account_id": durability.get("account_id"),
         "status": "Enabled",
     }
-    if not isinstance(expected_receipt["account_id"], str) or re.fullmatch(
-        r"[0-9]{12}", expected_receipt["account_id"]
-    ) is None:
+    if (
+        not isinstance(expected_receipt["account_id"], str)
+        or re.fullmatch(r"[0-9]{12}", expected_receipt["account_id"]) is None
+    ):
         raise LaunchPacketError("durability account_id must be an AWS account ID")
-    if not isinstance(expected_receipt["region"], str) or re.fullmatch(
-        r"[a-z]{2}(?:-gov)?-[a-z]+-[0-9]", expected_receipt["region"]
-    ) is None:
+    if (
+        not isinstance(expected_receipt["region"], str)
+        or re.fullmatch(r"[a-z]{2}(?:-gov)?-[a-z]+-[0-9]", expected_receipt["region"])
+        is None
+    ):
         raise LaunchPacketError("durability region must be an AWS region")
     if not isinstance(receipt, Mapping) or set(receipt) != {
         *expected_receipt,
@@ -581,13 +625,18 @@ def _validate_complete_runtime(packet: Mapping[str, Any], packet_dir: Path) -> N
         raise LaunchPacketError(
             "bucket versioning checked_at must be an ISO timestamp"
         ) from error
-    if checked.tzinfo is None or not checked <= parsed <= checked + timedelta(minutes=30):
+    if checked.tzinfo is None or not checked <= parsed <= checked + timedelta(
+        minutes=30
+    ):
         raise LaunchPacketError(
             "bucket versioning receipt must precede approval by at most 30 minutes"
         )
     _validate_s3(durability.get("artifact_uri"), label="artifact_uri")
     _validate_s3(durability.get("checkpoint_prefix"), label="checkpoint_prefix")
-    _sha256(durability.get("checkpoint_controller_key_id"), label="checkpoint_controller_key_id")
+    _sha256(
+        durability.get("checkpoint_controller_key_id"),
+        label="checkpoint_controller_key_id",
+    )
 
     if command_flag("versioning_receipt", "--bucket") != durability["bucket"]:
         raise LaunchPacketError("versioning receipt command bucket differs")
@@ -601,6 +650,14 @@ def _validate_complete_runtime(packet: Mapping[str, Any], packet_dir: Path) -> N
         raise LaunchPacketError("artifact preparation bucket differs")
     if command_flag("artifact_upload_preparation", "--key") != artifact_key:
         raise LaunchPacketError("artifact preparation key differs")
+    for flag, expected in (
+        ("--region", durability["region"]),
+        ("--account-id", durability["account_id"]),
+        ("--approved-at", approval["approved_at"]),
+        ("--expires-in", "21600"),
+    ):
+        if command_flag("artifact_upload_preparation", flag) != expected:
+            raise LaunchPacketError(f"artifact preparation {flag} differs")
     input_manifest_bucket, input_manifest_key = str(
         packet["remote_inputs"]["input_url_manifest_s3_uri"]
     )[5:].split("/", 1)
@@ -610,6 +667,7 @@ def _validate_complete_runtime(packet: Mapping[str, Any], packet_dir: Path) -> N
         ("--region", durability["region"]),
         ("--manifest-bucket", input_manifest_bucket),
         ("--manifest-key", input_manifest_key),
+        ("--expires-in", "21600"),
     ):
         if command_flag(input_command, flag) != expected:
             raise LaunchPacketError(f"input URL preparation {flag} differs")
@@ -620,16 +678,60 @@ def _validate_complete_runtime(packet: Mapping[str, Any], packet_dir: Path) -> N
     if packet_input.resolve() != expected_packet.resolve():
         raise LaunchPacketError("input URL preparation packet path differs")
 
-    controller = _mapping(packet.get("controller_prerequisites"), label="controller_prerequisites")
+    controller = _mapping(
+        packet.get("controller_prerequisites"), label="controller_prerequisites"
+    )
     artifact_url_output = Path(
         command_flag("artifact_upload_preparation", "--url-file")
     )
     if not artifact_url_output.is_absolute():
         artifact_url_output = Path.cwd() / artifact_url_output
-    if artifact_url_output.resolve() != Path(
-        str(controller["artifact_put_url_file"])
-    ).resolve():
+    if (
+        artifact_url_output.resolve()
+        != Path(str(controller["artifact_put_url_file"])).resolve()
+    ):
         raise LaunchPacketError("artifact preparation URL file differs")
+    artifact_receipt_output = Path(
+        command_flag("artifact_upload_preparation", "--receipt")
+    )
+    if not artifact_receipt_output.is_absolute():
+        artifact_receipt_output = Path.cwd() / artifact_receipt_output
+    artifact_receipt_path = Path(str(controller["artifact_put_receipt_path"]))
+    if artifact_receipt_output.resolve() != artifact_receipt_path.resolve():
+        raise LaunchPacketError("artifact preparation receipt file differs")
+    artifact_receipt_hash = _sha256(
+        controller.get("artifact_put_receipt_sha256"),
+        label="artifact_put_receipt_sha256",
+    )
+    artifact_receipt_bytes = _read_regular_bytes(
+        artifact_receipt_path, label="artifact PUT receipt"
+    )
+    if hashlib.sha256(artifact_receipt_bytes).hexdigest() != artifact_receipt_hash:
+        raise LaunchPacketError("artifact PUT receipt hash differs")
+    try:
+        artifact_receipt = json.loads(artifact_receipt_bytes)
+        if not isinstance(artifact_receipt, Mapping):
+            raise ValueError("receipt is not an object")
+        verified_artifact_receipt = validate_artifact_put_receipt(
+            artifact_receipt,
+            url_bytes=_read_regular_bytes(
+                Path(str(controller["artifact_put_url_file"])),
+                label="artifact PUT URL",
+            ),
+            expected_receipt_sha256=artifact_receipt_hash,
+            expected_durable_uri=str(durability["artifact_uri"]),
+            expected_approved_at=str(approval["approved_at"]),
+            now=parsed,
+            max_approval_age_seconds=3600,
+        )
+    except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as error:
+        raise LaunchPacketError("artifact PUT receipt is invalid") from error
+    if (
+        verified_artifact_receipt.get("account_id") != durability["account_id"]
+        or verified_artifact_receipt.get("endpoint", {}).get("region")
+        != durability["region"]
+    ):
+        raise LaunchPacketError("artifact PUT receipt account or region differs")
     for flag, controller_field in (
         ("--manifest-output", "input_url_manifest_output_path"),
         ("--url-file", "input_url_manifest_url_file"),
@@ -652,15 +754,40 @@ def _validate_complete_runtime(packet: Mapping[str, Any], packet_dir: Path) -> N
         controller.get("controller_public_key_sha256"),
         label="controller_public_key_sha256",
     )
-    if _regular_file_sha256(public_path, label="controller public key") != expected_public_hash:
+    if (
+        _regular_file_sha256(public_path, label="controller public key")
+        != expected_public_hash
+    ):
         raise LaunchPacketError("controller public key hash differs")
     for path, label in (
         (private_path, "controller private key"),
-        (Path(str(controller.get("input_url_manifest_url_file", ""))), "input URL manifest secret"),
-        (Path(str(controller.get("artifact_put_url_file", ""))), "artifact PUT URL secret"),
+        (
+            Path(str(controller.get("input_url_controller_receipt_path", ""))),
+            "input URL controller receipt",
+        ),
+        (
+            Path(str(controller.get("input_url_manifest_output_path", ""))),
+            "input URL manifest",
+        ),
+        (
+            Path(str(controller.get("input_url_manifest_url_file", ""))),
+            "input URL manifest secret",
+        ),
+        (
+            Path(str(controller.get("artifact_put_url_file", ""))),
+            "artifact PUT URL secret",
+        ),
+        (
+            Path(str(controller.get("artifact_put_receipt_path", ""))),
+            "artifact PUT receipt",
+        ),
         (Path(str(controller.get("host_gate_url_file", ""))), "host gate URL secret"),
     ):
-        if path.is_symlink() or not path.is_file() or path.stat().st_mode & 0o077:
+        if (
+            path.is_symlink()
+            or not path.is_file()
+            or stat.S_IMODE(path.stat().st_mode) != 0o600
+        ):
             raise LaunchPacketError(f"{label} must be a 0600 regular file")
 
 
@@ -697,6 +824,7 @@ def validate_launch_packet(
     )
     if set(controller_contracts) != {
         "artifact_upload_preparation",
+        "artifact_presigner",
         "checkpoint_controller",
         "input_url_controller",
         "input_url_preparation",
@@ -768,9 +896,14 @@ def validate_launch_packet(
     if not argv_wrapper.is_absolute():
         argv_wrapper = packet_dir.parent / argv_wrapper
     if argv_wrapper.resolve() != wrapper_path.resolve():
-        raise LaunchPacketError("lifecycle_argv wrapper differs from controller contract")
+        raise LaunchPacketError(
+            "lifecycle_argv wrapper differs from controller contract"
+        )
     all_command_text = "\n".join(
-        [*(str(commands[name]) for name in expected_commands - {"lifecycle_argv"}), *lifecycle]
+        [
+            *(str(commands[name]) for name in expected_commands - {"lifecycle_argv"}),
+            *lifecycle,
+        ]
     )
     if re.search(r"(?:^|\s)--execute(?:\s|$)", all_command_text):
         raise LaunchPacketError("launch packet must contain zero --execute flags")
@@ -792,7 +925,9 @@ def validate_launch_packet(
         raise LaunchPacketError("remaining_substitutions must be sorted and unique")
     observed = sorted(_collect_placeholders(value))
     if declared != observed:
-        raise LaunchPacketError("remaining_substitutions differ from packet placeholders")
+        raise LaunchPacketError(
+            "remaining_substitutions differ from packet placeholders"
+        )
     launch_ready = not observed
     if launch_ready:
         _validate_complete_runtime(value, packet_dir)

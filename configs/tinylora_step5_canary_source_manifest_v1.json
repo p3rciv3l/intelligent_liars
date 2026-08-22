@@ -1,7 +1,7 @@
 {
   "files": [
     {"path": "configs/tinylora_step5_canary_expected_artifacts_v1.json", "sha256": "5448ea1c83a8d48b31b9f5cd326409b3b013cd4f9ec5ff9f0917d441d8606916"},
-    {"path": "pyproject.toml", "sha256": "1c4e4b98c38708fc2fcabf709ffefa7652201f30cf56d571fb4d99dccfdb2bb5"},
+    {"path": "pyproject.toml", "sha256": "c6857b8fc190bf24d4a7552e0b138c97cd43c0b4d6a0fc23ecc50a0450649eaa"},
     {"path": "scripts/diagnose_tinylora_step5_canary.py", "sha256": "e9e2e12630692c7e31b7084e7a28fd2b9a7534d1463d7eb56e24b0e4e693466b"},
     {"path": "scripts/finalize_tinylora_step5_artifacts.py", "sha256": "83e97253123da68ca9e3278a1a053faa700514aaa50bd9d29930c44f11095022"},
     {"path": "scripts/hydrate_tinylora_step5_inputs.py", "sha256": "83b1e7f5674d20725ec884e3dd4ec6dba856ef42effe9789f8bc7460764d42d1"},
@@ -18,6 +18,7 @@
     {"path": "src/intelligent_liars/rollouts.py", "sha256": "59183bead0ee4072ee3f956c743f549294ef89f9a130cbd9d51b8f6b79ed1763"},
     {"path": "src/intelligent_liars/standalone_models.py", "sha256": "f1fa46bb1ec74f8781625a8f8d319ccffb08277edb683cae4c0ee0d9ae7589f9"},
     {"path": "src/intelligent_liars/step5_artifact_finalize.py", "sha256": "4642ccfdc2dcd9de6580f1fdcbc1039271ce0eeac82323db7e78a3c67195281b"},
+    {"path": "src/intelligent_liars/step5_artifact_presigner.py", "sha256": "80cad69d9b135775f5b4557740521ecba40a51f781566430a0fe7f9d7be296bc"},
     {"path": "src/intelligent_liars/step5_artifact_store.py", "sha256": "226db1359660f9decb6989906536885089799c8b3cf53a54db9b0936f1ee3931"},
     {"path": "src/intelligent_liars/step5_checkpoint_bridge.py", "sha256": "9d6c87b0d6679af1c4738c7a26aa58c4d5a4dda6ff6284e6f1399e7ccf1f547e"},
     {"path": "src/intelligent_liars/step5_input_hydration.py", "sha256": "907657dbe928d472c604d7ee9b5975d94b5773a9a169b6ceebc57b4dbf30d30b"},

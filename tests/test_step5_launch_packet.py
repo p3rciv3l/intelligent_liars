@@ -5,10 +5,12 @@ import hashlib
 import json
 import subprocess
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
 
+from intelligent_liars.step5_artifact_presigner import build_receipt, canonical_bytes
 from intelligent_liars.step5_launch_packet import (
     LaunchPacketError,
     canonical_sha256,
@@ -42,6 +44,7 @@ def _packet(tmp_path: Path) -> dict[str, object]:
     private_key = tmp_path / "private.pem"
     input_secret = tmp_path / "input.url"
     artifact_secret = tmp_path / "artifact.url"
+    artifact_receipt = tmp_path / "artifact-receipt.json"
     host_gate_secret = tmp_path / "host-gate.url"
     versioning_receipt = tmp_path / "versioning.json"
     for path, content in (
@@ -66,6 +69,10 @@ def _packet(tmp_path: Path) -> dict[str, object]:
         },
         "controller_contracts": {
             "artifact_upload_preparation": {
+                "path": str(source),
+                "sha256": source_sha,
+            },
+            "artifact_presigner": {
                 "path": str(source),
                 "sha256": source_sha,
             },
@@ -128,7 +135,9 @@ def _packet(tmp_path: Path) -> dict[str, object]:
         "commands": {
             "artifact_upload_preparation": (
                 "prepare --bucket bucket --key artifacts/canary.tar "
-                f"--url-file {artifact_secret}"
+                "--region ${AWS_REGION} --account-id ${AWS_ACCOUNT_ID} "
+                "--approved-at ${APPROVED_AT} "
+                f"--url-file {artifact_secret} --receipt {artifact_receipt} --expires-in 21600"
             ),
             "versioning_receipt": (
                 f"capture --bucket bucket --output {versioning_receipt}"
@@ -141,7 +150,7 @@ def _packet(tmp_path: Path) -> dict[str, object]:
                 "--manifest-bucket bucket --manifest-key controller/input.json "
                 f"--manifest-output {tmp_path / 'input.json'} "
                 f"--url-file {input_secret} --host-gate-url-file {host_gate_secret} "
-                f"--receipt {tmp_path / 'input-receipt.json'}"
+                f"--receipt {tmp_path / 'input-receipt.json'} --expires-in 21600"
             ),
             "diagnostic": "python scripts/diagnose_tinylora_step5_canary.py",
             "software_recovery": "python scripts/validate_tinylora_step5_launch_packet.py --packet configs/packet.json --allow-incomplete",
@@ -164,6 +173,12 @@ def _packet(tmp_path: Path) -> dict[str, object]:
                 str(input_secret),
                 "--artifact-put-url-file",
                 str(artifact_secret),
+                "--artifact-put-receipt",
+                str(artifact_receipt),
+                "--artifact-put-receipt-sha256",
+                "${ARTIFACT_PUT_RECEIPT_SHA256}",
+                "--approved-at",
+                "${APPROVED_AT}",
                 "--expected-durable-uri",
                 "s3://bucket/artifacts/canary.tar",
                 "--host-gate-url-file",
@@ -196,9 +211,13 @@ def _packet(tmp_path: Path) -> dict[str, object]:
         "controller_prerequisites": {
             "controller_public_key_path": str(public_key),
             "checkpoint_controller_script_path": str(inventory),
-            "controller_public_key_sha256": hashlib.sha256(public_key.read_bytes()).hexdigest(),
+            "controller_public_key_sha256": hashlib.sha256(
+                public_key.read_bytes()
+            ).hexdigest(),
             "controller_private_key_path": str(private_key),
             "input_url_manifest_url_file": str(input_secret),
+            "artifact_put_receipt_path": str(artifact_receipt),
+            "artifact_put_receipt_sha256": "${ARTIFACT_PUT_RECEIPT_SHA256}",
             "artifact_put_url_file": str(artifact_secret),
             "host_gate_url_file": str(host_gate_secret),
             "input_url_controller_receipt_path": str(tmp_path / "input-receipt.json"),
@@ -209,6 +228,7 @@ def _packet(tmp_path: Path) -> dict[str, object]:
             "APPROVED_AT",
             "APPROVED_HOURLY_PRICE_USD",
             "APPROVED_MAX_COST_USD",
+            "ARTIFACT_PUT_RECEIPT_SHA256",
             "AWS_ACCOUNT_ID",
             "AWS_REGION",
             "BUCKET_VERSIONING_RECEIPT_SHA256",
@@ -285,7 +305,9 @@ def _write_input_controller_outputs(packet: dict[str, object]) -> str:
             "archive_url": url(keys["pixmo_archive"]),
         },
     }
-    manifest_bytes = (json.dumps(manifest, sort_keys=True, separators=(",", ":")) + "\n").encode()
+    manifest_bytes = (
+        json.dumps(manifest, sort_keys=True, separators=(",", ":")) + "\n"
+    ).encode()
     manifest_path = Path(controller["input_url_manifest_output_path"])
     manifest_path.write_bytes(manifest_bytes)
     host_key = keys["model_file"]
@@ -326,6 +348,34 @@ def _write_input_controller_outputs(packet: dict[str, object]) -> str:
     return hashlib.sha256(receipt_path.read_bytes()).hexdigest()
 
 
+def _write_artifact_controller_outputs(packet: dict[str, object]) -> str:
+    controller = packet["controller_prerequisites"]  # type: ignore[assignment]
+    date_query = (
+        "X-Amz-Algorithm=AWS4-HMAC-SHA256"
+        "&X-Amz-Credential=ASIATESTACCESSKEY1%2F20260822%2Fus-west-2%2Fs3%2Faws4_request"
+        "&X-Amz-Date=20260822T195600Z&X-Amz-Expires=21600"
+        "&X-Amz-SignedHeaders=host%3Bif-none-match&X-Amz-Signature=" + "b" * 64
+    )
+    url = f"https://bucket.s3.us-west-2.amazonaws.com/artifacts/canary.tar?{date_query}"
+    receipt = build_receipt(
+        url=url,
+        bucket="bucket",
+        key="artifacts/canary.tar",
+        region="us-west-2",
+        account_id="123456789012",
+        approved_at="2026-08-22T20:00:00Z",
+        generated_at=datetime(2026, 8, 22, 19, 56, tzinfo=timezone.utc),
+        expiry_seconds=21600,
+    )
+    url_path = Path(controller["artifact_put_url_file"])
+    receipt_path = Path(controller["artifact_put_receipt_path"])
+    url_path.write_text(url + "\n")
+    receipt_path.write_bytes(canonical_bytes(receipt))
+    url_path.chmod(0o600)
+    receipt_path.chmod(0o600)
+    return hashlib.sha256(receipt_path.read_bytes()).hexdigest()
+
+
 def test_incomplete_packet_is_valid_but_not_launch_ready(tmp_path: Path):
     result = validate_launch_packet(_packet(tmp_path), packet_dir=tmp_path)
     assert result["valid"] is True
@@ -355,6 +405,7 @@ def test_packet_rejects_changed_local_contract(tmp_path: Path):
 def test_complete_packet_requires_digest_and_exact_cost_approval(tmp_path: Path):
     packet = _packet(tmp_path)
     input_receipt_sha = _write_input_controller_outputs(packet)
+    artifact_receipt_sha = _write_artifact_controller_outputs(packet)
     receipt_path = Path(packet["durability"]["bucket_versioning_receipt_path"])  # type: ignore[index]
     receipt_sha = _write_json(
         receipt_path,
@@ -375,6 +426,7 @@ def test_complete_packet_requires_digest_and_exact_cost_approval(tmp_path: Path)
         "${GPU_VRAM_GIB}": 24,
         "${APPROVED_HOURLY_PRICE_USD}": 0.25,
         "${APPROVED_MAX_COST_USD}": 1.50,
+        "${ARTIFACT_PUT_RECEIPT_SHA256}": artifact_receipt_sha,
         "${APPROVED_AT}": "2026-08-22T20:00:00Z",
         "${AWS_ACCOUNT_ID}": "123456789012",
         "${AWS_REGION}": "us-west-2",
@@ -401,12 +453,25 @@ def test_complete_packet_requires_digest_and_exact_cost_approval(tmp_path: Path)
     complete = replace(copy.deepcopy(packet))
     assert isinstance(complete, dict)
     complete["commands"]["lifecycle_argv"] = [  # type: ignore[index]
-        str(item) for item in complete["commands"]["lifecycle_argv"]  # type: ignore[index]
+        str(item)
+        for item in complete["commands"]["lifecycle_argv"]  # type: ignore[index]
     ]
     complete["remaining_substitutions"] = []
     complete["packet_sha256"] = canonical_sha256(complete)
     result = validate_launch_packet(complete, packet_dir=tmp_path)
     assert result["launch_ready"] is True
+
+    artifact_url_path = Path(
+        complete["controller_prerequisites"]["artifact_put_url_file"]  # type: ignore[index]
+    )
+    artifact_url = artifact_url_path.read_text()
+    artifact_url_path.write_text(
+        artifact_url.replace("artifacts/canary.tar", "wrong.tar")
+    )
+    with pytest.raises(LaunchPacketError, match="artifact PUT receipt is invalid"):
+        validate_launch_packet(complete, packet_dir=tmp_path)
+    artifact_url_path.write_text(artifact_url)
+    artifact_url_path.chmod(0o600)
 
     manifest_path = Path(
         complete["controller_prerequisites"]["input_url_manifest_output_path"]  # type: ignore[index]
@@ -416,6 +481,10 @@ def test_complete_packet_requires_digest_and_exact_cost_approval(tmp_path: Path)
     with pytest.raises(LaunchPacketError, match="manifest hash"):
         validate_launch_packet(complete, packet_dir=tmp_path)
     manifest_path.write_bytes(manifest_bytes)
+    manifest_path.chmod(0o644)
+    with pytest.raises(LaunchPacketError, match="input URL manifest must be a 0600"):
+        validate_launch_packet(complete, packet_dir=tmp_path)
+    manifest_path.chmod(0o600)
 
     host_url_path = Path(
         complete["controller_prerequisites"]["host_gate_url_file"]  # type: ignore[index]
@@ -452,7 +521,7 @@ def test_complete_packet_requires_digest_and_exact_cost_approval(tmp_path: Path)
     ] = refreshed_bucket_sha
     complete["approval"]["approved_at"] = "2026-08-22T20:25:00Z"  # type: ignore[index]
     complete["packet_sha256"] = canonical_sha256(complete)
-    with pytest.raises(LaunchPacketError, match="not fresh"):
+    with pytest.raises(LaunchPacketError, match="approved-at"):
         validate_launch_packet(complete, packet_dir=tmp_path)
     complete["approval"]["approved_at"] = "2026-08-22T20:00:00Z"  # type: ignore[index]
 
@@ -465,6 +534,7 @@ def test_complete_packet_requires_digest_and_exact_cost_approval(tmp_path: Path)
 def test_complete_packet_rejects_command_field_drift(tmp_path: Path):
     packet = _packet(tmp_path)
     input_receipt_sha = _write_input_controller_outputs(packet)
+    artifact_receipt_sha = _write_artifact_controller_outputs(packet)
     receipt_path = Path(packet["durability"]["bucket_versioning_receipt_path"])  # type: ignore[index]
     receipt_sha = _write_json(
         receipt_path,
@@ -501,13 +571,30 @@ def test_complete_packet_rejects_command_field_drift(tmp_path: Path):
     packet["controller_prerequisites"][  # type: ignore[index]
         "input_url_controller_receipt_sha256"
     ] = input_receipt_sha
+    packet["controller_prerequisites"][  # type: ignore[index]
+        "artifact_put_receipt_sha256"
+    ] = artifact_receipt_sha
     packet["remote_inputs"]["plan_s3_uri"] = "s3://bucket/plan"  # type: ignore[index]
     packet["remote_inputs"]["probe_s3_uri"] = "s3://bucket/probe"  # type: ignore[index]
     packet["commands"]["remote"] = "run --runtime sha256:" + "a" * 64  # type: ignore[index]
-    packet["commands"]["input_url_preparation"] = packet["commands"][  # type: ignore[index]
-        "input_url_preparation"
-    ].replace("${AWS_ACCOUNT_ID}", "123456789012").replace(  # type: ignore[union-attr]
-        "${AWS_REGION}", "us-west-2"
+    packet["commands"]["input_url_preparation"] = (
+        packet["commands"][  # type: ignore[index]
+            "input_url_preparation"
+        ]
+        .replace("${AWS_ACCOUNT_ID}", "123456789012")
+        .replace(  # type: ignore[union-attr]
+            "${AWS_REGION}", "us-west-2"
+        )
+    )
+    packet["commands"]["artifact_upload_preparation"] = (
+        packet["commands"][  # type: ignore[index]
+            "artifact_upload_preparation"
+        ]
+        .replace("${AWS_ACCOUNT_ID}", "123456789012")
+        .replace(  # type: ignore[union-attr]
+            "${AWS_REGION}", "us-west-2"
+        )
+        .replace("${APPROVED_AT}", "2026-08-22T20:00:00Z")
     )
     packet["commands"]["lifecycle_argv"] = [  # type: ignore[index]
         "python",
@@ -528,6 +615,12 @@ def test_complete_packet_rejects_command_field_drift(tmp_path: Path):
         packet["controller_prerequisites"]["input_url_manifest_url_file"],  # type: ignore[index]
         "--artifact-put-url-file",
         packet["controller_prerequisites"]["artifact_put_url_file"],  # type: ignore[index]
+        "--artifact-put-receipt",
+        packet["controller_prerequisites"]["artifact_put_receipt_path"],  # type: ignore[index]
+        "--artifact-put-receipt-sha256",
+        artifact_receipt_sha,
+        "--approved-at",
+        "2026-08-22T20:00:00Z",
         "--expected-durable-uri",
         packet["durability"]["artifact_uri"],  # type: ignore[index]
         "--host-gate-url-file",
@@ -561,6 +654,7 @@ def test_packet_hash_detects_tampering(tmp_path: Path):
 def test_complete_packet_rejects_fabricated_versioning_receipt(tmp_path: Path):
     packet = _packet(tmp_path)
     input_receipt_sha = _write_input_controller_outputs(packet)
+    artifact_receipt_sha = _write_artifact_controller_outputs(packet)
     receipt_path = Path(packet["durability"]["bucket_versioning_receipt_path"])  # type: ignore[index]
     receipt_sha = _write_json(
         receipt_path,
@@ -599,11 +693,26 @@ def test_complete_packet_rejects_fabricated_versioning_receipt(tmp_path: Path):
     packet["controller_prerequisites"][  # type: ignore[index]
         "input_url_controller_receipt_sha256"
     ] = input_receipt_sha
+    packet["controller_prerequisites"][  # type: ignore[index]
+        "artifact_put_receipt_sha256"
+    ] = artifact_receipt_sha
     packet["commands"]["remote"] = "run sha256:" + "a" * 64  # type: ignore[index]
-    packet["commands"]["input_url_preparation"] = packet["commands"][  # type: ignore[index]
-        "input_url_preparation"
-    ].replace("${AWS_ACCOUNT_ID}", "123456789012").replace(  # type: ignore[union-attr]
-        "${AWS_REGION}", "us-west-2"
+    packet["commands"]["input_url_preparation"] = (
+        packet["commands"][  # type: ignore[index]
+            "input_url_preparation"
+        ]
+        .replace("${AWS_ACCOUNT_ID}", "123456789012")
+        .replace(  # type: ignore[union-attr]
+            "${AWS_REGION}", "us-west-2"
+        )
+    )
+    packet["commands"]["artifact_upload_preparation"] = (
+        packet["commands"][  # type: ignore[index]
+            "artifact_upload_preparation"
+        ]
+        .replace("${AWS_ACCOUNT_ID}", "123456789012")
+        .replace("${AWS_REGION}", "us-west-2")  # type: ignore[union-attr]
+        .replace("${APPROVED_AT}", "2026-08-22T20:00:00Z")
     )
     lifecycle = packet["commands"]["lifecycle_argv"]  # type: ignore[index]
     for marker, replacement in (
@@ -612,6 +721,8 @@ def test_complete_packet_rejects_fabricated_versioning_receipt(tmp_path: Path):
         ("${RUNTIME_IMAGE_DIGEST}", "sha256:" + "a" * 64),
         ("${APPROVED_HOURLY_PRICE_USD}", "0.25"),
         ("${APPROVED_MAX_COST_USD}", "1.5"),
+        ("${APPROVED_AT}", "2026-08-22T20:00:00Z"),
+        ("${ARTIFACT_PUT_RECEIPT_SHA256}", artifact_receipt_sha),
     ):
         lifecycle = [str(item).replace(marker, replacement) for item in lifecycle]
     remote_index = lifecycle.index("--remote-command") + 1
