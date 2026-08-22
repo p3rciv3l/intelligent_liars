@@ -23,6 +23,7 @@ from uuid import uuid4
 
 import numpy as np
 import torch
+from safetensors.torch import save_file
 
 from intelligent_liars.durable_checkpoints import (
     CheckpointGeneration,
@@ -213,6 +214,17 @@ def read_jsonl(path: Path) -> list[dict[str, Any]]:
     return [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
 
 
+def canonical_json_sha256(value: Any) -> str:
+    return hashlib.sha256(
+        json.dumps(
+            value,
+            sort_keys=True,
+            separators=(",", ":"),
+            allow_nan=False,
+        ).encode()
+    ).hexdigest()
+
+
 def schedule_sha256(rows: list[dict[str, Any]]) -> str:
     """Bind resume identity to the exact ordered training-record schedule."""
     payload = [
@@ -223,14 +235,7 @@ def schedule_sha256(rows: list[dict[str, Any]]) -> str:
         }
         for row in rows
     ]
-    return hashlib.sha256(
-        json.dumps(
-            payload,
-            sort_keys=True,
-            separators=(",", ":"),
-            allow_nan=False,
-        ).encode()
-    ).hexdigest()
+    return canonical_json_sha256(payload)
 
 
 def atomic_json(path: Path, payload: dict[str, Any]) -> None:
@@ -324,6 +329,69 @@ def _validated_durability_receipt(
     return normalized
 
 
+def _write_safe_adapter_artifact(
+    source_dir: Path,
+    *,
+    state: Mapping[str, Any],
+    identity: Mapping[str, Any],
+) -> None:
+    """Write the tensor-only adapter and evaluator identity metadata."""
+    raw_adapter_state = state.get("adapter_state")
+    if not isinstance(raw_adapter_state, Mapping) or not raw_adapter_state:
+        raise CheckpointIntegrityError(
+            "Checkpoint lacks a nonempty adapter tensor inventory"
+        )
+    tensors: dict[str, torch.Tensor] = {}
+    for name, value in raw_adapter_state.items():
+        if not isinstance(name, str) or not name or not isinstance(value, torch.Tensor):
+            raise CheckpointIntegrityError("Checkpoint adapter inventory is invalid")
+        if value.is_sparse or value.is_complex() or not torch.isfinite(value).all():
+            raise CheckpointIntegrityError(f"Invalid adapter tensor: {name}")
+        tensors[name] = value.detach().cpu().contiguous()
+
+    arm = identity.get("arm")
+    model = identity.get("model")
+    if not isinstance(arm, Mapping) or not isinstance(arm.get("name"), str):
+        raise CheckpointIntegrityError("Checkpoint identity lacks an adapter arm")
+    if not isinstance(model, Mapping) or not all(
+        isinstance(model.get(field), str) and model.get(field)
+        for field in ("model_id", "revision")
+    ):
+        raise CheckpointIntegrityError("Checkpoint identity lacks an exact model")
+    required_identity_fields = (
+        "plan_sha256",
+        "training_seed",
+        "projection_seed",
+        "basis_sha256",
+    )
+    if any(field not in identity for field in required_identity_fields):
+        raise CheckpointIntegrityError(
+            "Checkpoint identity is incomplete for adapter evaluation"
+        )
+
+    adapter_path = source_dir / "adapter_state.safetensors"
+    save_file(tensors, str(adapter_path))
+    metadata = {
+        "format": "tinylora_step5_adapter_state_v1",
+        "arm_name": arm["name"],
+        "arm": dict(arm),
+        "plan_sha256": identity["plan_sha256"],
+        "model": {
+            "model_id": model["model_id"],
+            "revision": model["revision"],
+        },
+        "training_seed": identity["training_seed"],
+        "projection_seed": identity["projection_seed"],
+        "basis_sha256": identity["basis_sha256"],
+        "optimizer_steps": int(state["optimizer_steps"]),
+        "tensor_names": sorted(tensors),
+        "adapter_state_sha256": file_sha256(adapter_path),
+        "checkpoint_identity": dict(identity),
+        "checkpoint_identity_sha256": canonical_json_sha256(identity),
+    }
+    atomic_json(source_dir / "adapter_metadata.json", metadata)
+
+
 def publish_checkpoint_generation(
     *,
     checkpoint_root: Path,
@@ -361,6 +429,11 @@ def publish_checkpoint_generation(
         ) as temporary:
             source_dir = Path(temporary)
             torch.save(state, source_dir / "step5_state.pt")
+            _write_safe_adapter_artifact(
+                source_dir,
+                state=state,
+                identity=identity,
+            )
             generation = create_checkpoint_generation(
                 checkpoint_root,
                 identity=identity,

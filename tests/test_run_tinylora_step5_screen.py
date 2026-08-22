@@ -9,6 +9,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 import torch
+from safetensors.torch import load_file
 
 
 SCRIPT = Path(__file__).parents[1] / "scripts" / "run_tinylora_step5_screen.py"
@@ -116,6 +117,25 @@ def _durability_receipt(
     }
 
 
+def _checkpoint_identity() -> dict[str, object]:
+    return {
+        "plan_sha256": "1" * 64,
+        "probe_sha256": "4" * 64,
+        "code_sha256": "5" * 64,
+        "arm": {
+            "name": "tiny-test",
+            "adapter": "tinylora",
+            "svd_rank": 3,
+            "projection_dim": 13,
+            "train_layers": [21],
+        },
+        "model": {"model_id": "test/model", "revision": "2" * 40},
+        "training_seed": 17,
+        "projection_seed": 23,
+        "basis_sha256": "3" * 64,
+    }
+
+
 def _train(
     model: _ScalarModel,
     checkpoint_root: Path,
@@ -147,7 +167,7 @@ def _train(
         checkpoint_every=1,
         checkpoint_minutes=100.0,
         checkpoint_root=checkpoint_root,
-        identity={"run": "same"},
+        identity=_checkpoint_identity(),
         durability_verifier=durability_verifier,
     )
 
@@ -226,13 +246,54 @@ def test_train_arm_retains_only_two_verified_generations(tmp_path: Path, monkeyp
     assert pointer["generation_id"] == result["durable_checkpoint"]["generation_id"]
 
 
+def test_final_generation_contains_safe_evaluation_adapter(tmp_path: Path, monkeypatch):
+    monkeypatch.setattr(MODULE, "_behavior_loss", _fake_behavior_loss)
+    checkpoint_root = tmp_path / "evaluation-adapter-store"
+    model = _ScalarModel()
+    result = _train(model, checkpoint_root, max_steps=1)
+    generation_id = result["durable_checkpoint"]["generation_id"]
+    generation_path = checkpoint_root / "generations" / generation_id
+
+    adapter_state = load_file(str(generation_path / "adapter_state.safetensors"))
+    assert set(adapter_state) == {"adapter"}
+    assert adapter_state["adapter"].item() == pytest.approx(model.adapter.item())
+    metadata = json.loads((generation_path / "adapter_metadata.json").read_text())
+    identity = _checkpoint_identity()
+    assert metadata == {
+        "format": "tinylora_step5_adapter_state_v1",
+        "arm_name": "tiny-test",
+        "arm": identity["arm"],
+        "plan_sha256": "1" * 64,
+        "model": {"model_id": "test/model", "revision": "2" * 40},
+        "training_seed": 17,
+        "projection_seed": 23,
+        "basis_sha256": "3" * 64,
+        "optimizer_steps": 1,
+        "tensor_names": ["adapter"],
+        "adapter_state_sha256": MODULE.file_sha256(
+            generation_path / "adapter_state.safetensors"
+        ),
+        "checkpoint_identity": identity,
+        "checkpoint_identity_sha256": MODULE.canonical_json_sha256(identity),
+    }
+    manifest = json.loads((generation_path / "manifest.json").read_text())
+    assert {entry["path"] for entry in manifest["files"]} == {
+        "adapter_metadata.json",
+        "adapter_state.safetensors",
+        "step5_state.pt",
+    }
+
+
 def test_checkpoint_publication_rejects_step_regression(tmp_path: Path):
     checkpoint_root = tmp_path / "regression-store"
-    identity = {"run": "same"}
+    identity = _checkpoint_identity()
     MODULE.publish_checkpoint_generation(
         checkpoint_root=checkpoint_root,
         identity=identity,
-        state={"optimizer_steps": 3},
+        state={
+            "optimizer_steps": 3,
+            "adapter_state": {"adapter": torch.tensor(3.0)},
+        },
         durability_verifier=MODULE.local_smoke_durability_verifier,
     )
 
@@ -240,7 +301,10 @@ def test_checkpoint_publication_rejects_step_regression(tmp_path: Path):
         MODULE.publish_checkpoint_generation(
             checkpoint_root=checkpoint_root,
             identity=identity,
-            state={"optimizer_steps": 2},
+            state={
+                "optimizer_steps": 2,
+                "adapter_state": {"adapter": torch.tensor(2.0)},
+            },
             durability_verifier=MODULE.local_smoke_durability_verifier,
         )
 
