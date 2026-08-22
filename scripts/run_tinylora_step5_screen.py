@@ -5,19 +5,32 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import fcntl
 import hashlib
 import json
 import math
 import os
 import random
+import shlex
+import subprocess
+import tempfile
 import time
 from collections import defaultdict
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 import numpy as np
 import torch
 
+from intelligent_liars.durable_checkpoints import (
+    CheckpointGeneration,
+    CheckpointIntegrityError,
+    advance_latest_checkpoint,
+    create_checkpoint_generation,
+    resolve_latest_checkpoint,
+)
 from intelligent_liars.models import ModelLoadConfig, load_model_and_processor
 from intelligent_liars.standalone_models import (
     TinyLoRATrainingConfig,
@@ -50,6 +63,8 @@ OBJECTIVE_CONFIGURATION = {
     "preservation_kl_weight": 0.5,
     "preservation_alignment": "causal_assistant_tokens",
 }
+DURABILITY_RECEIPT_FORMAT = "tinylora_step5_checkpoint_durability_receipt_v1"
+CheckpointDurabilityVerifier = Callable[[CheckpointGeneration], Mapping[str, Any]]
 
 
 def parse_args() -> argparse.Namespace:
@@ -75,6 +90,18 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--development-per-objective", type=int, default=0)
     parser.add_argument("--seed", type=int, default=20260822)
     parser.add_argument("--projection-seed", type=int, default=42)
+    parser.add_argument(
+        "--runtime-image-digest",
+        help="Immutable sha256:<64 hex> runtime image digest; required in train mode.",
+    )
+    parser.add_argument(
+        "--durability-verifier-command",
+        help=(
+            "External checkpoint uploader/verifier command. It receives generation "
+            "identity in STEP5_CHECKPOINT_* environment variables and must emit one "
+            "matching JSON durability receipt on stdout. Required in train mode."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -102,6 +129,20 @@ def validate_numeric_args(args: argparse.Namespace) -> None:
             raise ValueError(f"{name.replace('_', '-')} must be positive and finite")
 
 
+def validate_durability_args(args: argparse.Namespace) -> None:
+    """Require a real external durability verifier for candidate training."""
+    if args.mode == "train" and not args.durability_verifier_command:
+        raise ValueError("train mode requires --durability-verifier-command")
+    image_digest = args.runtime_image_digest
+    if args.mode == "train" and (
+        not isinstance(image_digest, str)
+        or len(image_digest) != 71
+        or not image_digest.startswith("sha256:")
+        or any(character not in "0123456789abcdef" for character in image_digest[7:])
+    ):
+        raise ValueError("train mode requires an immutable --runtime-image-digest")
+
+
 def seed_all(seed: int) -> None:
     """Seed every stochastic library used by adapter setup and training."""
     random.seed(seed)
@@ -126,6 +167,8 @@ def build_checkpoint_identity(
     max_length: int,
     gradient_accumulation: int,
     learning_rate: float,
+    runtime_image_digest: str,
+    schedule_sha256: str,
 ) -> dict[str, Any]:
     """Bind a resumable checkpoint to its complete training contract."""
     return {
@@ -142,12 +185,52 @@ def build_checkpoint_identity(
         "max_length": max_length,
         "gradient_accumulation": gradient_accumulation,
         "learning_rate": learning_rate,
+        "runtime": {
+            "image_digest": runtime_image_digest,
+            "torch_version": torch.__version__,
+            "cuda_version": torch.version.cuda,
+            "device_topology": "exactly_one_visible_cuda_gpu",
+        },
+        "optimizer": {
+            "name": "torch.optim.AdamW",
+            "betas": [0.9, 0.999],
+            "eps": 1e-8,
+            "weight_decay": 0.01,
+            "foreach": False,
+        },
+        "scheduler": {"name": "none"},
+        "rng": "python_random_numpy_pytorch_cpu_and_visible_cuda",
+        "sampler": {
+            "name": "preservation_interleaved_schedule_v1",
+            "schedule_sha256": schedule_sha256,
+        },
+        "checkpoint_schema": "tinylora_step5_checkpoint_v2",
         "objective": OBJECTIVE_CONFIGURATION,
     }
 
 
 def read_jsonl(path: Path) -> list[dict[str, Any]]:
     return [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
+
+
+def schedule_sha256(rows: list[dict[str, Any]]) -> str:
+    """Bind resume identity to the exact ordered training-record schedule."""
+    payload = [
+        {
+            "record_id": row["record_id"],
+            "kind": row["kind"],
+            "objective": row["objective"],
+        }
+        for row in rows
+    ]
+    return hashlib.sha256(
+        json.dumps(
+            payload,
+            sort_keys=True,
+            separators=(",", ":"),
+            allow_nan=False,
+        ).encode()
+    ).hexdigest()
 
 
 def atomic_json(path: Path, payload: dict[str, Any]) -> None:
@@ -157,24 +240,158 @@ def atomic_json(path: Path, payload: dict[str, Any]) -> None:
     os.replace(temporary, path)
 
 
-def atomic_torch_save(path: Path, payload: dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    if path.exists() and "optimizer_steps" in payload:
-        existing = torch.load(path, map_location="cpu", weights_only=False)
-        existing_steps = int(existing.get("optimizer_steps", -1))
-        replacement_steps = int(payload["optimizer_steps"])
-        if replacement_steps < existing_steps:
-            raise ValueError(
-                "Refusing checkpoint step regression: "
-                f"{replacement_steps} < {existing_steps}"
+def local_smoke_durability_verifier(
+    generation: CheckpointGeneration,
+) -> dict[str, Any]:
+    """Accept local bytes only for non-candidate smoke tests."""
+    return {
+        "format": DURABILITY_RECEIPT_FORMAT,
+        "generation_id": generation.generation_id,
+        "manifest_sha256": generation.manifest_sha256,
+        "object_ref": generation.path.resolve().as_uri(),
+        "verified": True,
+    }
+
+
+def command_durability_verifier(command: str) -> CheckpointDurabilityVerifier:
+    """Build a transport-neutral verifier backed by an operator command."""
+    arguments = shlex.split(command)
+    if not arguments:
+        raise ValueError("durability verifier command cannot be empty")
+
+    def verify(generation: CheckpointGeneration) -> Mapping[str, Any]:
+        environment = os.environ.copy()
+        environment.update(
+            {
+                "STEP5_CHECKPOINT_GENERATION_DIR": str(generation.path.resolve()),
+                "STEP5_CHECKPOINT_GENERATION_ID": generation.generation_id,
+                "STEP5_CHECKPOINT_MANIFEST_SHA256": generation.manifest_sha256,
+            }
+        )
+        completed = subprocess.run(
+            arguments,
+            check=True,
+            capture_output=True,
+            text=True,
+            env=environment,
+        )
+        try:
+            receipt = json.loads(completed.stdout)
+        except json.JSONDecodeError as exc:
+            raise CheckpointIntegrityError(
+                "Durability verifier did not emit one JSON receipt"
+            ) from exc
+        if not isinstance(receipt, dict):
+            raise CheckpointIntegrityError(
+                "Durability verifier receipt must be a JSON object"
             )
-        if existing.get("identity") != payload.get("identity"):
-            raise ValueError(
-                "Refusing to replace a checkpoint with a different identity"
+        return receipt
+
+    return verify
+
+
+def _validated_durability_receipt(
+    generation: CheckpointGeneration,
+    receipt: Mapping[str, Any],
+) -> dict[str, Any]:
+    required = {
+        "format",
+        "generation_id",
+        "manifest_sha256",
+        "object_ref",
+        "verified",
+    }
+    if set(receipt) != required:
+        raise CheckpointIntegrityError(
+            "Durability receipt fields do not match the required contract"
+        )
+    normalized = dict(receipt)
+    if normalized["format"] != DURABILITY_RECEIPT_FORMAT:
+        raise CheckpointIntegrityError("Unsupported durability receipt format")
+    if (
+        normalized["generation_id"] != generation.generation_id
+        or normalized["manifest_sha256"] != generation.manifest_sha256
+    ):
+        raise CheckpointIntegrityError(
+            "Durability receipt does not match the checkpoint generation"
+        )
+    if not isinstance(normalized["object_ref"], str) or not normalized["object_ref"]:
+        raise CheckpointIntegrityError("Durability receipt object_ref is invalid")
+    if normalized["verified"] is not True:
+        raise CheckpointIntegrityError(
+            f"Checkpoint durability verification rejected {generation.generation_id}"
+        )
+    return normalized
+
+
+def publish_checkpoint_generation(
+    *,
+    checkpoint_root: Path,
+    identity: dict[str, Any],
+    state: dict[str, Any],
+    durability_verifier: CheckpointDurabilityVerifier,
+) -> CheckpointGeneration:
+    """Publish, externally verify, and advance one immutable generation."""
+    checkpoint_root.parent.mkdir(parents=True, exist_ok=True)
+    step = int(state["optimizer_steps"])
+    lock_path = checkpoint_root.parent / f".{checkpoint_root.name}.publication.lock"
+    with lock_path.open("a+b") as lock:
+        fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+        latest_pointer = checkpoint_root / "latest.json"
+        if latest_pointer.exists():
+            latest = resolve_latest_checkpoint(
+                checkpoint_root,
+                expected_identity=identity,
             )
-    temporary = path.with_suffix(path.suffix + ".tmp")
-    torch.save(payload, temporary)
-    os.replace(temporary, path)
+            latest_state = torch.load(
+                latest.path / "step5_state.pt",
+                map_location="cpu",
+                weights_only=False,
+            )
+            latest_step = int(latest_state.get("optimizer_steps", -1))
+            if step <= latest_step:
+                raise CheckpointIntegrityError(
+                    "Refusing checkpoint step regression: "
+                    f"new step {step} <= latest step {latest_step}"
+                )
+
+        generation_id = f"step-{step:06d}-{uuid4().hex[:12]}"
+        with tempfile.TemporaryDirectory(
+            prefix=".step5-checkpoint-", dir=checkpoint_root.parent
+        ) as temporary:
+            source_dir = Path(temporary)
+            torch.save(state, source_dir / "step5_state.pt")
+            generation = create_checkpoint_generation(
+                checkpoint_root,
+                identity=identity,
+                generation_id=generation_id,
+                source_dir=source_dir,
+            )
+
+        accepted_receipt: dict[str, Any] | None = None
+
+        def verify(candidate: CheckpointGeneration) -> bool:
+            nonlocal accepted_receipt
+            accepted_receipt = _validated_durability_receipt(
+                candidate, durability_verifier(candidate)
+            )
+            receipt_path = (
+                checkpoint_root / "receipts" / f"{candidate.generation_id}.json"
+            )
+            atomic_json(receipt_path, accepted_receipt)
+            return True
+
+        generation = advance_latest_checkpoint(
+            checkpoint_root,
+            generation.generation_id,
+            identity=identity,
+            durable_verifier=verify,
+        )
+        if accepted_receipt is None:
+            raise CheckpointIntegrityError(
+                "Durability verifier did not return a receipt"
+            )
+        return generation
 
 
 def load_probe(path: Path) -> tuple[int, torch.Tensor, float, dict[str, Any]]:
@@ -477,15 +694,25 @@ def train_arm(
     learning_rate: float,
     checkpoint_every: int,
     checkpoint_minutes: float,
-    checkpoint_path: Path,
+    checkpoint_root: Path,
     identity: dict[str, Any],
+    durability_verifier: CheckpointDurabilityVerifier,
 ) -> dict[str, Any]:
     optimizer = torch.optim.AdamW(parameters, lr=learning_rate, foreach=False)
     optimizer_steps = 0
     next_example = 0
     history: list[dict[str, Any]] = []
-    if checkpoint_path.exists():
-        state = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
+    latest_pointer = checkpoint_root / "latest.json"
+    if latest_pointer.exists():
+        latest = resolve_latest_checkpoint(
+            checkpoint_root,
+            expected_identity=identity,
+        )
+        state = torch.load(
+            latest.path / "step5_state.pt",
+            map_location="cpu",
+            weights_only=False,
+        )
         if state.get("format") != "tinylora_step5_checkpoint_v2":
             raise ValueError("Unsupported Step 5 checkpoint format")
         if state.get("identity") != identity:
@@ -608,9 +835,11 @@ def train_arm(
             or time.monotonic() - last_checkpoint >= checkpoint_minutes * 60
         )
         if checkpoint_due:
-            atomic_torch_save(
-                checkpoint_path,
-                {
+            publish_checkpoint_generation(
+                checkpoint_root=checkpoint_root,
+                identity=identity,
+                durability_verifier=durability_verifier,
+                state={
                     "format": "tinylora_step5_checkpoint_v2",
                     "identity": identity,
                     "optimizer_steps": optimizer_steps,
@@ -630,10 +859,34 @@ def train_arm(
                 },
             )
             last_checkpoint = time.monotonic()
+    final_generation = resolve_latest_checkpoint(
+        checkpoint_root,
+        expected_identity=identity,
+    )
+    final_state = torch.load(
+        final_generation.path / "step5_state.pt",
+        map_location="cpu",
+        weights_only=False,
+    )
+    if int(final_state.get("optimizer_steps", -1)) != max_steps:
+        raise CheckpointIntegrityError(
+            "Final durable checkpoint does not match the completed training budget"
+        )
+    receipt_path = (
+        checkpoint_root / "receipts" / f"{final_generation.generation_id}.json"
+    )
+    try:
+        receipt = json.loads(receipt_path.read_text())
+    except (OSError, json.JSONDecodeError) as exc:
+        raise CheckpointIntegrityError(
+            "Final checkpoint lacks a readable durability receipt"
+        ) from exc
+    receipt = _validated_durability_receipt(final_generation, receipt)
     return {
         "optimizer_steps": optimizer_steps,
         "training_examples_consumed": next_example,
         "history_tail": history[-50:],
+        "durable_checkpoint": receipt,
     }
 
 
@@ -772,6 +1025,7 @@ def evaluate_arm(
 def main() -> int:
     args = parse_args()
     validate_numeric_args(args)
+    validate_durability_args(args)
     if not torch.cuda.is_available() or torch.cuda.device_count() != 1:
         raise RuntimeError("Each Step 5 arm requires exactly one visible CUDA GPU")
     if args.mode == "smoke" and args.max_steps > 2:
@@ -858,6 +1112,7 @@ def main() -> int:
     code_digest = hashlib.sha256()
     for code_path in (
         Path(__file__).resolve(),
+        Path(__file__).parents[1] / "src/intelligent_liars/durable_checkpoints.py",
         Path(__file__).parents[1] / "src/intelligent_liars/tinylora_pilot.py",
         Path(__file__).parents[1] / "src/intelligent_liars/tinylora_step5.py",
     ):
@@ -876,6 +1131,10 @@ def main() -> int:
         max_length=args.max_length,
         gradient_accumulation=args.gradient_accumulation,
         learning_rate=args.learning_rate,
+        runtime_image_digest=(
+            args.runtime_image_digest or "local-smoke-image-unpinned"
+        ),
+        schedule_sha256=schedule_sha256(schedule),
     )
     if args.mode == "reachability":
         result = run_reachability(
@@ -913,6 +1172,11 @@ def main() -> int:
         values = torch.tensor(scores)
         q1, q3 = torch.quantile(values, torch.tensor([0.25, 0.75]))
         desired_delta = 0.5 * max(float((q3 - q1) / 1.349), 0.1)
+        durability_verifier = (
+            command_durability_verifier(args.durability_verifier_command)
+            if args.durability_verifier_command
+            else local_smoke_durability_verifier
+        )
         training = train_arm(
             model=model,
             processor=bundle.processor,
@@ -928,8 +1192,9 @@ def main() -> int:
             learning_rate=args.learning_rate,
             checkpoint_every=args.checkpoint_every,
             checkpoint_minutes=args.checkpoint_minutes,
-            checkpoint_path=args.output_dir / "step5_state.pt",
+            checkpoint_root=args.output_dir / "checkpoint_store",
             identity=identity,
+            durability_verifier=durability_verifier,
         )
         evaluation = evaluate_arm(
             model=model,

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import importlib.util
+import json
 import random
 from pathlib import Path
 
@@ -73,6 +74,8 @@ def test_checkpoint_identity_records_budget_code_objective_and_basis():
         max_length=128,
         gradient_accumulation=2,
         learning_rate=1e-4,
+        runtime_image_digest="sha256:" + "5" * 64,
+        schedule_sha256="6" * 64,
     )
     assert identity["mode"] == "train"
     assert identity["budget"] == {"max_steps": 10}
@@ -81,6 +84,9 @@ def test_checkpoint_identity_records_budget_code_objective_and_basis():
     assert identity["objective"] == MODULE.OBJECTIVE_CONFIGURATION
     assert identity["training_seed"] == 7
     assert identity["projection_seed"] == 9
+    assert identity["runtime"]["image_digest"] == "sha256:" + "5" * 64
+    assert identity["sampler"]["schedule_sha256"] == "6" * 64
+    assert identity["checkpoint_schema"] == "tinylora_step5_checkpoint_v2"
 
 
 class _ScalarModel(torch.nn.Module):
@@ -95,12 +101,30 @@ def _fake_behavior_loss(*, model: _ScalarModel, **_kwargs: object):
     return loss, hidden, torch.full((1, 1), -100), hidden
 
 
+def _durability_receipt(
+    generation,
+    *,
+    verified: bool = True,
+    generation_id: str | None = None,
+) -> dict[str, object]:
+    return {
+        "format": MODULE.DURABILITY_RECEIPT_FORMAT,
+        "generation_id": generation_id or generation.generation_id,
+        "manifest_sha256": generation.manifest_sha256,
+        "object_ref": "s3://example/checkpoint",
+        "verified": verified,
+    }
+
+
 def _train(
     model: _ScalarModel,
-    checkpoint: Path,
+    checkpoint_root: Path,
     *,
     max_steps: int = 4,
+    durability_verifier=None,
 ) -> dict[str, object]:
+    if durability_verifier is None:
+        durability_verifier = MODULE.local_smoke_durability_verifier
     return MODULE.train_arm(
         model=model,
         processor=None,
@@ -122,30 +146,40 @@ def _train(
         learning_rate=0.1,
         checkpoint_every=1,
         checkpoint_minutes=100.0,
-        checkpoint_path=checkpoint,
+        checkpoint_root=checkpoint_root,
         identity={"run": "same"},
+        durability_verifier=durability_verifier,
     )
 
 
 def test_train_arm_resume_is_numerically_equivalent_on_cpu(tmp_path: Path, monkeypatch):
     monkeypatch.setattr(MODULE, "_behavior_loss", _fake_behavior_loss)
     uninterrupted = _ScalarModel()
-    _train(uninterrupted, tmp_path / "uninterrupted.pt")
+    _train(uninterrupted, tmp_path / "uninterrupted-store")
 
     interrupted = _ScalarModel()
-    real_save = MODULE.atomic_torch_save
+    real_publish = MODULE.publish_checkpoint_generation
 
-    def stop_after_second_checkpoint(path: Path, payload: dict[str, object]) -> None:
-        real_save(path, payload)
-        if payload["optimizer_steps"] == 2:
+    def stop_after_second_checkpoint(**kwargs: object):
+        generation = real_publish(**kwargs)
+        state = torch.load(
+            generation.path / "step5_state.pt",
+            map_location="cpu",
+            weights_only=False,
+        )
+        if state["optimizer_steps"] == 2:
             raise RuntimeError("simulated interruption")
+        return generation
 
-    monkeypatch.setattr(MODULE, "atomic_torch_save", stop_after_second_checkpoint)
+    monkeypatch.setattr(
+        MODULE, "publish_checkpoint_generation", stop_after_second_checkpoint
+    )
     with pytest.raises(RuntimeError, match="simulated interruption"):
-        _train(interrupted, tmp_path / "resumed.pt")
-    monkeypatch.setattr(MODULE, "atomic_torch_save", real_save)
-    result = _train(interrupted, tmp_path / "resumed.pt")
+        _train(interrupted, tmp_path / "resumed")
+    monkeypatch.setattr(MODULE, "publish_checkpoint_generation", real_publish)
+    result = _train(interrupted, tmp_path / "resumed")
     assert result["optimizer_steps"] == 4
+    assert result["durable_checkpoint"]["verified"] is True
     assert interrupted.adapter.item() == pytest.approx(
         uninterrupted.adapter.item(), rel=0, abs=1e-8
     )
@@ -154,17 +188,111 @@ def test_train_arm_resume_is_numerically_equivalent_on_cpu(tmp_path: Path, monke
 def test_resume_rejects_checkpoint_beyond_requested_budget(tmp_path: Path, monkeypatch):
     monkeypatch.setattr(MODULE, "_behavior_loss", _fake_behavior_loss)
     model = _ScalarModel()
-    _train(model, tmp_path / "state.pt", max_steps=2)
+    _train(model, tmp_path / "budget-store", max_steps=2)
     with pytest.raises(ValueError, match="exceeds requested budget"):
-        _train(_ScalarModel(), tmp_path / "state.pt", max_steps=1)
+        _train(_ScalarModel(), tmp_path / "budget-store", max_steps=1)
 
 
-def test_checkpoint_writer_rejects_step_regression(tmp_path: Path):
-    path = tmp_path / "state.pt"
-    common = {"identity": {"run": "same"}}
-    MODULE.atomic_torch_save(path, {**common, "optimizer_steps": 3})
-    with pytest.raises(ValueError, match="step regression"):
-        MODULE.atomic_torch_save(path, {**common, "optimizer_steps": 2})
+def test_rejected_durability_receipt_blocks_completion_and_latest(
+    tmp_path: Path, monkeypatch
+):
+    monkeypatch.setattr(MODULE, "_behavior_loss", _fake_behavior_loss)
+
+    def reject(generation):
+        return _durability_receipt(generation, verified=False)
+
+    checkpoint_root = tmp_path / "rejected"
+    with pytest.raises(MODULE.CheckpointIntegrityError, match="durability"):
+        _train(
+            _ScalarModel(),
+            checkpoint_root,
+            max_steps=1,
+            durability_verifier=reject,
+        )
+    assert not (checkpoint_root / "latest.json").exists()
+    assert not list((checkpoint_root / "receipts").glob("*.json"))
+
+
+def test_train_arm_retains_only_two_verified_generations(tmp_path: Path, monkeypatch):
+    monkeypatch.setattr(MODULE, "_behavior_loss", _fake_behavior_loss)
+    checkpoint_root = tmp_path / "retained"
+    result = _train(_ScalarModel(), checkpoint_root, max_steps=4)
+
+    assert result["durable_checkpoint"]["verified"] is True
+    generations = sorted((checkpoint_root / "generations").iterdir())
+    assert len(generations) == 2
+    assert all((path / "step5_state.pt").is_file() for path in generations)
+    pointer = json.loads((checkpoint_root / "latest.json").read_text())
+    assert pointer["generation_id"] == result["durable_checkpoint"]["generation_id"]
+
+
+def test_checkpoint_publication_rejects_step_regression(tmp_path: Path):
+    checkpoint_root = tmp_path / "regression-store"
+    identity = {"run": "same"}
+    MODULE.publish_checkpoint_generation(
+        checkpoint_root=checkpoint_root,
+        identity=identity,
+        state={"optimizer_steps": 3},
+        durability_verifier=MODULE.local_smoke_durability_verifier,
+    )
+
+    with pytest.raises(MODULE.CheckpointIntegrityError, match="step regression"):
+        MODULE.publish_checkpoint_generation(
+            checkpoint_root=checkpoint_root,
+            identity=identity,
+            state={"optimizer_steps": 2},
+            durability_verifier=MODULE.local_smoke_durability_verifier,
+        )
+
+
+def test_resume_cannot_complete_when_final_receipt_is_missing(
+    tmp_path: Path, monkeypatch
+):
+    monkeypatch.setattr(MODULE, "_behavior_loss", _fake_behavior_loss)
+    checkpoint_root = tmp_path / "missing-receipt"
+    result = _train(_ScalarModel(), checkpoint_root, max_steps=1)
+    generation_id = result["durable_checkpoint"]["generation_id"]
+    (checkpoint_root / "receipts" / f"{generation_id}.json").unlink()
+
+    with pytest.raises(MODULE.CheckpointIntegrityError, match="lacks.*receipt"):
+        _train(_ScalarModel(), checkpoint_root, max_steps=1)
+
+
+def test_receipt_must_bind_exact_generation_identity(tmp_path: Path, monkeypatch):
+    monkeypatch.setattr(MODULE, "_behavior_loss", _fake_behavior_loss)
+
+    def wrong_generation(generation):
+        return _durability_receipt(generation, generation_id="wrong")
+
+    with pytest.raises(MODULE.CheckpointIntegrityError, match="does not match"):
+        _train(
+            _ScalarModel(),
+            tmp_path / "wrong-receipt",
+            max_steps=1,
+            durability_verifier=wrong_generation,
+        )
+
+
+def test_train_mode_requires_external_durability_verifier():
+    with pytest.raises(ValueError, match="durability-verifier-command"):
+        MODULE.validate_durability_args(
+            argparse.Namespace(
+                mode="train",
+                durability_verifier_command=None,
+                runtime_image_digest=None,
+            )
+        )
+
+
+def test_train_mode_requires_immutable_runtime_image_digest():
+    with pytest.raises(ValueError, match="runtime-image-digest"):
+        MODULE.validate_durability_args(
+            argparse.Namespace(
+                mode="train",
+                durability_verifier_command="uploader",
+                runtime_image_digest="latest",
+            )
+        )
 
 
 def test_train_arm_rejects_nonfinite_loss_before_optimizer_step(
@@ -182,4 +310,4 @@ def test_train_arm_rejects_nonfinite_loss_before_optimizer_step(
 
     monkeypatch.setattr(MODULE, "_behavior_loss", nonfinite_loss)
     with pytest.raises(FloatingPointError, match="Non-finite loss"):
-        _train(_ScalarModel(), tmp_path / "state.pt", max_steps=1)
+        _train(_ScalarModel(), tmp_path / "nonfinite-store", max_steps=1)
