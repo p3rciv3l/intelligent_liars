@@ -35,12 +35,17 @@ read-only source access and package-write access. The workflow publishes:
 ghcr.io/p3rciv3l/intelligent_liars/tinylora-step5:sha-<full-source-commit>
 ```
 
-It also records the registry digest, attaches BuildKit SBOM and provenance
-attestations, and uploads a checksummed evidence bundle to the workflow run.
-Select the intended source commit in GitHub, dispatch the workflow, and use the
-resulting digest-qualified reference from `image-reference.txt`. Do not treat a
-successful CPU-only image build as GPU qualification, and do not use the tag by
-itself for a rented host.
+The workflow never knowingly overwrites that commit-addressed tag. If an earlier
+attempt pushed successfully but failed while recording evidence, a rerun reuses
+the existing image only after its embedded source revision matches the selected
+commit. Ambiguous registry failures and mismatches stop publication. It also
+records the registry digest, attaches BuildKit SBOM and provenance attestations,
+and uploads a checksummed evidence bundle to the workflow run. Select the
+intended source commit in GitHub, dispatch the workflow, and use the resulting
+digest-qualified reference from `image-reference.txt`; the digest, unlike a
+registry tag, is the immutable runtime identity. Do not treat a successful
+CPU-only image build as GPU qualification, and do not use the tag by itself for
+a rented host.
 
 For a local build that is not pushed:
 

@@ -26,6 +26,9 @@ jobs:
           ref: ${{ github.sha }}
           persist-credentials: false
 
+      - name: Validate publication contract
+        run: ruby .github/workflows/test_publish_tinylora_step5.rb
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
 
@@ -36,17 +39,58 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Reject an existing commit tag
+      - name: Resolve commit-addressed tag
+        id: tag
         run: |
           set -euo pipefail
-          if docker buildx imagetools inspect \
-            "${IMAGE_REPOSITORY}:${IMAGE_TAG}" >/dev/null 2>&1; then
-            echo "Refusing to overwrite immutable tag ${IMAGE_REPOSITORY}:${IMAGE_TAG}" >&2
-            exit 1
+          tag_ref="${IMAGE_REPOSITORY}:${IMAGE_TAG}"
+          error_file="$(mktemp)"
+          trap 'rm -f "$error_file"' EXIT
+
+          set +e
+          inspect_output="$(docker buildx imagetools inspect "$tag_ref" 2>"$error_file")"
+          inspect_status=$?
+          set -e
+
+          if [[ $inspect_status -eq 0 ]]; then
+            existing_digest="$(awk '$1 == "Digest:" { print $2; exit }' <<<"$inspect_output")"
+            if ! grep -Eq '^sha256:[0-9a-f]{64}$' <<<"$existing_digest"; then
+              echo "Could not resolve a valid digest for existing tag $tag_ref" >&2
+              exit 1
+            fi
+            existing_revision="$(
+              docker buildx imagetools inspect "$tag_ref" \
+                --format '{{ json .Image }}' \
+                | jq -er '
+                    [
+                      .. | objects
+                      | (.config?.Labels? // .Config?.Labels? // empty)
+                      | ."org.opencontainers.image.revision"? // empty
+                    ]
+                    | unique
+                    | select(length == 1)
+                    | .[0]
+                  '
+            )"
+            if [[ "$existing_revision" != "${{ github.sha }}" ]]; then
+              echo "Refusing mismatched existing tag $tag_ref" >&2
+              exit 1
+            fi
+            printf '%s\n' 'should_build=false' >> "$GITHUB_OUTPUT"
+            printf '%s\n' "existing_digest=$existing_digest" >> "$GITHUB_OUTPUT"
+            exit 0
           fi
 
-      - name: Build, attest, and push immutable image
+          if ! grep -Eqi 'manifest unknown|name unknown|not found' "$error_file"; then
+            echo "Registry lookup failed ambiguously; refusing to publish" >&2
+            sed -n '1,20p' "$error_file" >&2
+            exit 1
+          fi
+          printf '%s\n' 'should_build=true' >> "$GITHUB_OUTPUT"
+
+      - name: Build, attest, and push commit-addressed image
         id: build
+        if: steps.tag.outputs.should_build == 'true'
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
           context: docker/tinylora-step5
@@ -68,10 +112,12 @@ jobs:
         id: evidence
         env:
           BUILD_DIGEST: ${{ steps.build.outputs.digest }}
+          EXISTING_DIGEST: ${{ steps.tag.outputs.existing_digest }}
           BUILD_METADATA: ${{ steps.build.outputs.metadata }}
           SOURCE_SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
+          BUILD_DIGEST="${BUILD_DIGEST:-$EXISTING_DIGEST}"
           if ! grep -Eq '^sha256:[0-9a-f]{64}$' <<<"$BUILD_DIGEST"; then
             echo "Invalid image digest: $BUILD_DIGEST" >&2
             exit 1
@@ -82,7 +128,23 @@ jobs:
           printf '%s\n' "$image_ref" > publish-evidence/image-reference.txt
           printf '%s\n' "$BUILD_DIGEST" > publish-evidence/image-digest.txt
           printf '%s\n' "$SOURCE_SHA" > publish-evidence/source-commit.txt
-          printf '%s\n' "$BUILD_METADATA" > publish-evidence/build-metadata.json
+          if [[ -n "$BUILD_METADATA" ]]; then
+            printf '%s\n' "$BUILD_METADATA" > publish-evidence/build-metadata.json
+          else
+            jq -n \
+              --arg source_commit "$SOURCE_SHA" \
+              --arg image_digest "$BUILD_DIGEST" \
+              '{recovered_existing_image: true, source_commit: $source_commit, image_digest: $image_digest}' \
+              > publish-evidence/build-metadata.json
+          fi
+
+          tag_ref="${IMAGE_REPOSITORY}:${IMAGE_TAG}"
+          tag_inspect="$(docker buildx imagetools inspect "$tag_ref")"
+          tag_digest="$(awk '$1 == "Digest:" { print $2; exit }' <<<"$tag_inspect")"
+          if [[ "$tag_digest" != "$BUILD_DIGEST" ]]; then
+            echo "Commit tag no longer resolves to the expected digest" >&2
+            exit 1
+          fi
 
           docker buildx imagetools inspect "$image_ref" --raw \
             > publish-evidence/image-index.json
@@ -117,6 +179,7 @@ jobs:
             echo
             echo "- Immutable image: \`$IMAGE_REF\`"
             echo "- Source commit: \`${{ github.sha }}\`"
+            echo '- The commit-addressed tag was created without overwriting an existing tag.'
             echo '- BuildKit provenance and SBOM attestations are attached to the registry image.'
             echo '- A checksummed copy of the digest, image index, SBOM, provenance, and build metadata is attached to this workflow run.'
           } >> "$GITHUB_STEP_SUMMARY"
