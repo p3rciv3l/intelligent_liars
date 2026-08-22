@@ -111,7 +111,11 @@ def directional_margin_loss(
 ) -> torch.Tensor:
     """Penalize target-condition probe movement below a calibrated positive delta."""
     movement = student_scores.float() - base_scores.float().detach()
-    return F.relu(torch.as_tensor(desired_delta, device=movement.device) - movement).square().mean()
+    return (
+        F.relu(torch.as_tensor(desired_delta, device=movement.device) - movement)
+        .square()
+        .mean()
+    )
 
 
 def preservation_kl_loss(
@@ -143,16 +147,34 @@ def topk_preservation_targets(
     *,
     top_k: int = 64,
     temperature: float = 1.0,
+    required_token_ids: torch.Tensor | None = None,
 ) -> tuple[torch.Tensor, torch.Tensor]:
-    """Compress frozen-base logits into a renormalized top-k distribution."""
+    """Compress base logits into top-k buckets plus all omitted probability mass."""
     if temperature <= 0:
         raise ValueError("KL temperature must be positive")
     if top_k < 2 or top_k > base_logits.shape[-1]:
         raise ValueError("top_k must be between 2 and the vocabulary size")
-    values, indices = torch.topk(base_logits, k=top_k, dim=-1)
-    probabilities = F.softmax(values.float() / temperature, dim=-1).to(
-        dtype=base_logits.dtype
+    scaled = base_logits / temperature
+    _values, indices = torch.topk(scaled, k=top_k, dim=-1)
+    if required_token_ids is not None:
+        required = required_token_ids.to(device=indices.device, dtype=indices.dtype)
+        if required.shape != indices.shape[:-1]:
+            raise ValueError(
+                "required_token_ids must match the logits token dimensions"
+            )
+        valid = (required >= 0) & (required < base_logits.shape[-1])
+        present = (indices == required.unsqueeze(-1)).any(dim=-1)
+        replace = valid & ~present
+        indices = indices.clone()
+        indices[..., -1] = torch.where(replace, required, indices[..., -1])
+    selected = torch.gather(scaled, dim=-1, index=indices).float()
+    log_normalizer = torch.logsumexp(scaled, dim=-1, keepdim=True).float()
+    selected_probabilities = torch.exp(selected - log_normalizer)
+    other = (1.0 - selected_probabilities.sum(dim=-1, keepdim=True)).clamp_min(
+        torch.finfo(selected_probabilities.dtype).tiny
     )
+    probabilities = torch.cat((selected_probabilities, other), dim=-1)
+    probabilities = probabilities / probabilities.sum(dim=-1, keepdim=True)
     return indices, probabilities
 
 
@@ -164,10 +186,30 @@ def topk_preservation_kl_loss(
     *,
     temperature: float = 1.0,
 ) -> torch.Tensor:
-    """Memory-bounded KL over the frozen base model's retained top-k support."""
-    selected_student = torch.gather(student_logits, dim=-1, index=base_indices)
-    student_log_probabilities = F.log_softmax(
-        selected_student.float() / temperature,
+    """Forward KL over retained tokens plus an aggregate omitted-token bucket."""
+    if temperature <= 0:
+        raise ValueError("KL temperature must be positive")
+    if base_probabilities.shape[:-1] != base_indices.shape[:-1]:
+        raise ValueError("Base probability and index token dimensions differ")
+    if base_probabilities.shape[-1] != base_indices.shape[-1] + 1:
+        raise ValueError("Base probabilities must include the all-other-tokens bucket")
+    scaled_student = student_logits / temperature
+    selected_student = torch.gather(
+        scaled_student,
+        dim=-1,
+        index=base_indices,
+    ).float()
+    log_normalizer = torch.logsumexp(
+        scaled_student,
+        dim=-1,
+        keepdim=True,
+    ).float()
+    selected_log_probabilities = selected_student - log_normalizer
+    retained_mass = torch.exp(selected_log_probabilities).sum(dim=-1, keepdim=True)
+    epsilon = torch.finfo(selected_log_probabilities.dtype).eps
+    other_log_probability = torch.log1p(-retained_mass.clamp(max=1.0 - epsilon))
+    student_log_probabilities = torch.cat(
+        (selected_log_probabilities, other_log_probability),
         dim=-1,
     )
     token_kl = F.kl_div(
@@ -178,6 +220,82 @@ def topk_preservation_kl_loss(
     weights = attention_mask.to(dtype=token_kl.dtype)
     denominator = weights.sum().clamp_min(1)
     return (token_kl * weights).sum() / denominator * (temperature**2)
+
+
+def causal_preservation_targets(
+    base_logits: torch.Tensor,
+    labels: torch.Tensor,
+    *,
+    top_k: int = 64,
+    temperature: float = 1.0,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Build compressed base targets for assistant next-token positions only."""
+    if base_logits.shape[:2] != labels.shape:
+        raise ValueError("Base logits and labels are not token-aligned")
+    if base_logits.shape[1] < 2:
+        raise ValueError("Causal preservation requires at least two token positions")
+    shifted_labels = labels[:, 1:]
+    indices, probabilities = topk_preservation_targets(
+        base_logits[:, :-1, :],
+        top_k=top_k,
+        temperature=temperature,
+        required_token_ids=shifted_labels,
+    )
+    return indices, probabilities, shifted_labels != -100
+
+
+def sequence_log_probability(
+    logits: torch.Tensor,
+    labels: torch.Tensor,
+) -> torch.Tensor:
+    """Return token-averaged assistant log probability for each sequence."""
+    if logits.shape[:2] != labels.shape:
+        raise ValueError("Logits and labels are not token-aligned")
+    shifted_logits = logits[:, :-1, :]
+    shifted_labels = labels[:, 1:]
+    mask = shifted_labels != -100
+    token_log_probabilities = -F.cross_entropy(
+        shifted_logits.transpose(1, 2),
+        shifted_labels,
+        reduction="none",
+        ignore_index=-100,
+    ).float()
+    token_counts = mask.sum(dim=-1)
+    if torch.any(token_counts == 0):
+        raise ValueError("Every sequence must contain at least one assistant token")
+    return (token_log_probabilities * mask).sum(dim=-1) / token_counts
+
+
+def paired_reference_improvement_loss(
+    preferred_log_probability: torch.Tensor,
+    alternative_log_probability: torch.Tensor,
+    *,
+    base_preferred: torch.Tensor,
+    base_alternative: torch.Tensor,
+    required_improvement: float = 0.0,
+) -> torch.Tensor:
+    """Prefer a paired margin improvement relative to the frozen base model."""
+    shapes = {
+        preferred_log_probability.shape,
+        alternative_log_probability.shape,
+        base_preferred.shape,
+        base_alternative.shape,
+    }
+    if len(shapes) != 1:
+        raise ValueError("Student and base paired log probabilities must match")
+    tensors = (
+        preferred_log_probability,
+        alternative_log_probability,
+        base_preferred,
+        base_alternative,
+    )
+    if not all(torch.isfinite(value).all() for value in tensors):
+        raise ValueError("Paired log probabilities must be finite")
+    student_margin = (
+        preferred_log_probability.float() - alternative_log_probability.float()
+    )
+    base_margin = base_preferred.float().detach() - base_alternative.float().detach()
+    return F.softplus(required_improvement - (student_margin - base_margin)).mean()
 
 
 @dataclass(frozen=True)
@@ -198,6 +316,14 @@ def summarize_rows(rows: Iterable[dict[str, Any]]) -> dict[str, Any]:
     return {
         "records": len(materialized),
         "groups": len({str(row["split_group_id"]) for row in materialized}),
-        "objectives": dict(sorted(Counter(row["objective"] for row in materialized).items())),
-        "families": dict(sorted(Counter(row.get("family", "preservation") for row in materialized).items())),
+        "objectives": dict(
+            sorted(Counter(row["objective"] for row in materialized).items())
+        ),
+        "families": dict(
+            sorted(
+                Counter(
+                    row.get("family", "preservation") for row in materialized
+                ).items()
+            )
+        ),
     }
