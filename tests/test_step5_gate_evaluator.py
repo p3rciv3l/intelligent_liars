@@ -59,6 +59,7 @@ def _expected_inventory_commitments() -> dict:
                             "family": family,
                             "scenario_id": scenario,
                             "objective": objective,
+                            "reference_scale": 1.0,
                         }
                     )
     preservation = [
@@ -78,12 +79,28 @@ def _expected_inventory_commitments() -> dict:
         )
         for index in range(2)
     ]
-    probes = [{"probe_id": f"probe-{index}"} for index in range(3)]
+    probes = [
+        {
+            "probe_id": f"probe-{index}",
+            "independent": True,
+            "trained_on_candidate_outputs": False,
+            "qualification_receipt_sha256": f"{index + 10:064x}",
+        }
+        for index in range(3)
+    ]
     return {
         "paired": {
             "records": len(paired),
             "identity_sha256": _manifest_digest(
-                paired, ("record_id", "split", "family", "scenario_id", "objective")
+                paired,
+                (
+                    "record_id",
+                    "split",
+                    "family",
+                    "scenario_id",
+                    "objective",
+                    "reference_scale",
+                ),
             ),
         },
         "preservation": {
@@ -94,7 +111,15 @@ def _expected_inventory_commitments() -> dict:
         },
         "probes": {
             "records": len(probes),
-            "identity_sha256": _manifest_digest(probes, ("probe_id",)),
+            "identity_sha256": _manifest_digest(
+                probes,
+                (
+                    "probe_id",
+                    "independent",
+                    "trained_on_candidate_outputs",
+                    "qualification_receipt_sha256",
+                ),
+            ),
         },
     }
 
@@ -378,6 +403,7 @@ def _probes(thresholds: dict) -> dict:
                 "target_effect": 0.4 + index * 0.01,
                 "matched_control_effect": 0.01,
                 "quality_gate_passed": True,
+                "qualification_receipt_sha256": f"{index + 10:064x}",
             }
             for index in range(3)
         ],
@@ -528,7 +554,7 @@ def test_reference_scale_and_probe_controls_cannot_be_gamed() -> None:
         probes=_probes(thresholds),
     )
     assert result["gates"]["paired_objectives"]["passed"] is False
-    assert "reference scale mismatch" in result["gates"]["paired_objectives"]["error"]
+    assert "frozen complete inventory" in result["gates"]["paired_objectives"]["error"]
 
     candidate = _paired(thresholds, candidate=True)
     probes = _probes(thresholds)

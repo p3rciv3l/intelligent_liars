@@ -279,6 +279,15 @@ def _vision_requests(rows: Sequence[Mapping[str, Any]]) -> list[InferenceRequest
 
 def _safety_requests(rows: Sequence[Mapping[str, Any]]) -> list[InferenceRequest]:
     _unique_ids(rows, name=SAFETY_SPLIT)
+    expected_ids = {f"xstest.{index:03d}" for index in range(1, 451)}
+    observed_ids = {str(row.get("record_id", "")) for row in rows}
+    if observed_ids != expected_ids:
+        missing = sorted(expected_ids - observed_ids)
+        extra = sorted(observed_ids - expected_ids)
+        raise InferenceContractError(
+            "XSTest inventory must contain exactly xstest.001 through xstest.450; "
+            f"missing={missing[:5]}, extra={extra[:5]}"
+        )
     requests: list[InferenceRequest] = []
     for row in sorted(rows, key=lambda item: str(item["record_id"])):
         prompt = row.get("prompt")
@@ -304,6 +313,13 @@ def _safety_requests(rows: Sequence[Mapping[str, Any]]) -> list[InferenceRequest
                     "xstest_type": row["xstest_type"],
                 },
             )
+        )
+    behavior_counts = Counter(
+        request.metadata["expected_behavior"] for request in requests
+    )
+    if behavior_counts != Counter({"comply": 250, "refuse": 200}):
+        raise InferenceContractError(
+            "XSTest inventory must contain 250 comply and 200 refuse prompts"
         )
     return requests
 

@@ -517,7 +517,14 @@ def _paired_gate(
         raise _GateEvidenceError(
             "base and candidate paired record IDs do not exactly match"
         )
-    identity_fields = ("record_id", "split", "family", "scenario_id", "objective")
+    identity_fields = (
+        "record_id",
+        "split",
+        "family",
+        "scenario_id",
+        "objective",
+        "reference_scale",
+    )
     for name, rows in (("base", base_rows), ("candidate", candidate_rows)):
         if (
             len(rows) != inventory_commitment["records"]
@@ -777,7 +784,9 @@ def _preservation_gate(
 
 
 def _safety_gate(
-    receipt: Mapping[str, Any], rules: Mapping[str, Any]
+    receipt: Mapping[str, Any],
+    rules: Mapping[str, Any],
+    base_model_identity: str,
 ) -> dict[str, Any]:
     try:
         score_sha = _require_sha(
@@ -822,8 +831,7 @@ def _safety_gate(
         base_score.get("format") != "tinylora_xstest_score_v1"
         or base_score.get("status") != "complete"
         or base_score.get("source_plan_sha256") != receipt.get("plan_sha256")
-        or not str(base_score.get("model_identity", "")).strip()
-        or base_score.get("model_identity") == receipt.get("model_identity")
+        or base_score.get("model_identity") != base_model_identity
     ):
         raise _GateEvidenceError("base XSTest score provenance is invalid")
     records = _integer(score.get("records"), "XSTest records")
@@ -879,7 +887,15 @@ def _probe_gate(
         raise _GateEvidenceError("probe ensemble is smaller than the frozen minimum")
     if (
         len(rows) != inventory_commitment["records"]
-        or _inventory_digest(rows, ("probe_id",))
+        or _inventory_digest(
+            rows,
+            (
+                "probe_id",
+                "independent",
+                "trained_on_candidate_outputs",
+                "qualification_receipt_sha256",
+            ),
+        )
         != inventory_commitment["identity_sha256"]
     ):
         raise _GateEvidenceError(
@@ -896,6 +912,13 @@ def _probe_gate(
         if not probe_id or probe_id in seen:
             raise _GateEvidenceError("probe IDs must be nonempty and unique")
         seen.add(probe_id)
+        try:
+            _require_sha(
+                raw.get("qualification_receipt_sha256"),
+                f"{probe_id}.qualification_receipt_sha256",
+            )
+        except GateEvaluationError as error:
+            raise _GateEvidenceError(str(error)) from error
         if (
             raw.get("independent") is not True
             or raw.get("trained_on_candidate_outputs") is not False
@@ -959,12 +982,16 @@ def evaluate_step5_gates(
     base_threshold_commitment = _bind_base_threshold_registry(
         frozen, base_threshold_registry
     )
-    _bind_receipt(
+    base_identity = _bind_receipt(
         base_paired,
         expected_format=PAIRED_FORMAT,
         thresholds=frozen,
         name="base paired inventory",
     )
+    if base_threshold_registry.get("base_model_revision") != base_identity:
+        raise GateEvaluationError(
+            "base paired inventory model does not match the frozen base model revision"
+        )
     candidate_identity = _bind_receipt(
         candidate_paired,
         expected_format=PAIRED_FORMAT,
@@ -1023,7 +1050,10 @@ def evaluate_step5_gates(
                 frozen["inventory_commitments"]["preservation"],
             ),
         ),
-        ("safety", lambda: _safety_gate(safety, frozen["rules"]["safety"])),
+        (
+            "safety",
+            lambda: _safety_gate(safety, frozen["rules"]["safety"], base_identity),
+        ),
         (
             "probe_selectivity",
             lambda: _probe_gate(
