@@ -135,10 +135,10 @@
     },
     "source_manifest": {
       "path": "tinylora_step5_canary_source_manifest_v1.json",
-      "sha256": "6de1fa615e4e9487c7554bf503a42b52991b644313472836f4b3d810de95378e"
+      "sha256": "99588e35d44dc927cc98abc6b30c08c9ac397972dac60c59ad5e9a25926ebee7"
     }
   },
-  "packet_sha256": "c35aab38b05564a4094e337bde8e7c2d3fdd4cdab89efffe27c14bccf4b94cfa",
+  "packet_sha256": "c67e4f00b5ce9fe74b71c2382d0f010e794008e4dc1e806f1a656dd3d3aa4030",
   "remaining_substitutions": [
     "APPROVED_AT",
     "APPROVED_HOURLY_PRICE_USD",
@@ -149,6 +149,7 @@
     "BUCKET_VERSIONING_STATUS",
     "GPU_NAME",
     "GPU_VRAM_GIB",
+    "INPUT_URL_CONTROLLER_RECEIPT_SHA256",
     "OFFER_ID",
     "RUNTIME_IMAGE",
     "RUNTIME_IMAGE_DIGEST"
@@ -158,7 +159,7 @@
     "frozen_inputs_tar_sha256": "09009258f4b2422aa12e547568536d9f5e15d14afc64e23ce8f86c33d1000439",
     "model_completion_sha256": "4ccd7c940e1a72800d0153e809edab69e91c7cdd4d79627a1bb98076a0ef7275",
     "model_manifest_sha256": "6ec207494fed0658ebaf31f1083f77110caae45f8c2392354e767ef54c78dd07",
-    "model_s3_prefix": "s3://intelligent-liars-osworld-29a36b2b927f4078b2ac95ca83ec9c21/model-cache/v1/qwen--qwen3-vl-8b-thinking/92f3c4b4feadd3a016ef468d103bb5f58b2a2c6b/bbca6a8b09a56f0c538887b82b9594b0c0945c5fbcde54f39eda153a9f64eda8/",
+    "model_s3_prefix": "s3://intelligent-liars-osworld-29a36b2b927f4078b2ac95ca83ec9c21/model-cache/v2/qwen--qwen3-vl-8b-thinking/92f3c4b4feadd3a016ef468d103bb5f58b2a2c6b/bbca6a8b09a56f0c538887b82b9594b0c0945c5fbcde54f39eda153a9f64eda8/sha256meta/",
     "input_url_manifest_s3_uri": "s3://intelligent-liars-osworld-29a36b2b927f4078b2ac95ca83ec9c21/step5-controller/v1/step5-canary-v1/attempt-1/input-url-manifest.json",
     "pixmo_completion_sha256": "a68b54be7e5a46014d8f6c97e8e7e1e527898c02c9e0b2542f7129ba72d9f876",
     "pixmo_manifest_sha256": "b1bcd5034e3751a58d531ef2897bfa49b8da0a3c848a9bb976e2f08f2ad19226",
@@ -186,6 +187,7 @@
     "controller_public_key_sha256": "5471e885e6389e854edd61c1056cee589a703d70760e9127a182cd928de8f56d",
     "host_gate_url_file": "/Users/student/Desktop/ai/intelligent_liars/artifacts/step5-canary-v1/host-gate.url",
     "input_url_controller_receipt_path": "/Users/student/Desktop/ai/intelligent_liars/artifacts/step5-canary-v1/input-url-controller-receipt.json",
+    "input_url_controller_receipt_sha256": "${INPUT_URL_CONTROLLER_RECEIPT_SHA256}",
     "input_url_manifest_output_path": "/Users/student/Desktop/ai/intelligent_liars/artifacts/step5-canary-v1/input-url-manifest.json",
     "input_url_manifest_url_file": "/Users/student/Desktop/ai/intelligent_liars/artifacts/step5-canary-v1/input-url-manifest.url"
   },

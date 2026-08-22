@@ -10,12 +10,17 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import os
 import re
 import shlex
+import stat
 from collections.abc import Mapping, Sequence
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
+from urllib.parse import parse_qs, unquote, urlsplit
+
+from intelligent_liars.step5_input_hydration import validate_url_manifest
 
 
 PACKET_FORMAT = "tinylora_step5_canary_launch_packet_v1"
@@ -49,6 +54,77 @@ def _regular_file_sha256(path: Path, *, label: str) -> str:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def _read_regular_bytes(path: Path, *, label: str) -> bytes:
+    try:
+        descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+    except OSError as error:
+        raise LaunchPacketError(f"{label} must be a regular non-symlink file") from error
+    try:
+        metadata = os.fstat(descriptor)
+        if not stat.S_ISREG(metadata.st_mode):
+            raise LaunchPacketError(f"{label} must be a regular non-symlink file")
+        with os.fdopen(descriptor, "rb", closefd=False) as handle:
+            return handle.read()
+    finally:
+        os.close(descriptor)
+
+
+def _canonical_bytes(value: Mapping[str, Any]) -> bytes:
+    return (json.dumps(value, sort_keys=True, separators=(",", ":")) + "\n").encode()
+
+
+def _bound_s3_url(
+    url: str,
+    *,
+    bucket: str,
+    key: str,
+    region: str,
+    approval_time: datetime,
+) -> None:
+    parsed = urlsplit(url)
+    expected_hosts = {
+        f"{bucket}.s3.{region}.amazonaws.com",
+        f"{bucket}.s3-{region}.amazonaws.com",
+    }
+    if region == "us-east-1":
+        expected_hosts.add(f"{bucket}.s3.amazonaws.com")
+    if (
+        parsed.scheme != "https"
+        or parsed.hostname not in expected_hosts
+        or unquote(parsed.path).lstrip("/") != key
+    ):
+        raise LaunchPacketError("protected URL does not identify its frozen S3 object")
+    query = parse_qs(parsed.query)
+    try:
+        if query["X-Amz-Algorithm"] != ["AWS4-HMAC-SHA256"]:
+            raise ValueError("unsupported SigV4 algorithm")
+        credential = query["X-Amz-Credential"][0].split("/")
+        signed_headers = query["X-Amz-SignedHeaders"][0].split(";")
+        signature = query["X-Amz-Signature"][0]
+        signed = datetime.strptime(query["X-Amz-Date"][0], "%Y%m%dT%H%M%SZ").replace(
+            tzinfo=timezone.utc
+        )
+        expires = int(query["X-Amz-Expires"][0])
+    except (KeyError, IndexError, TypeError, ValueError) as error:
+        raise LaunchPacketError("protected URL lacks a complete SigV4 binding") from error
+    if (
+        len(credential) != 5
+        or re.fullmatch(r"[A-Z0-9]{16,128}", credential[0]) is None
+        or credential[1] != signed.strftime("%Y%m%d")
+        or credential[2] != region
+        or credential[3:] != ["s3", "aws4_request"]
+        or signed_headers != sorted(set(signed_headers))
+        or "host" not in signed_headers
+        or any(re.fullmatch(r"[a-z0-9-]+", header) is None for header in signed_headers)
+        or re.fullmatch(r"[0-9a-fA-F]{64}", signature) is None
+    ):
+        raise LaunchPacketError("protected URL has an invalid SigV4 credential scope")
+    if not 60 <= expires <= 604800 or not signed <= approval_time < signed + timedelta(
+        seconds=expires
+    ):
+        raise LaunchPacketError("protected URL is not fresh at approval time")
 
 
 def _mapping(value: Any, *, label: str) -> Mapping[str, Any]:
@@ -102,6 +178,225 @@ def _validate_s3(value: Any, *, label: str, allow_placeholder: bool = False) -> 
         return
     if not isinstance(value, str) or _S3_URI.fullmatch(value) is None:
         raise LaunchPacketError(f"{label} must be an exact s3:// URI")
+
+
+def _s3_parts(value: Any, *, label: str) -> tuple[str, str]:
+    _validate_s3(value, label=label)
+    bucket, key = str(value)[5:].split("/", 1)
+    return bucket, key
+
+
+def _validate_input_url_receipt(
+    packet: Mapping[str, Any],
+    *,
+    approval_time: datetime,
+    controller: Mapping[str, Any],
+) -> None:
+    durability = _mapping(packet["durability"], label="durability")
+    remote = _mapping(packet["remote_inputs"], label="remote_inputs")
+    receipt_path = Path(str(controller["input_url_controller_receipt_path"]))
+    receipt_bytes = _read_regular_bytes(receipt_path, label="input URL controller receipt")
+    expected_hash = _sha256(
+        controller.get("input_url_controller_receipt_sha256"),
+        label="input_url_controller_receipt_sha256",
+    )
+    if hashlib.sha256(receipt_bytes).hexdigest() != expected_hash:
+        raise LaunchPacketError("input URL controller receipt hash differs")
+    try:
+        receipt = json.loads(receipt_bytes)
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise LaunchPacketError("input URL controller receipt is not JSON") from error
+    receipt_fields = {
+        "account_id",
+        "content_sha256",
+        "created_at",
+        "expires_at",
+        "expiry_seconds",
+        "format",
+        "host_gate",
+        "manifest",
+        "objects",
+        "region",
+    }
+    if not isinstance(receipt, Mapping) or set(receipt) != receipt_fields:
+        raise LaunchPacketError("input URL controller receipt fields differ")
+    content = {key: value for key, value in receipt.items() if key != "content_sha256"}
+    if hashlib.sha256(_canonical_bytes(content)).hexdigest() != receipt["content_sha256"]:
+        raise LaunchPacketError("input URL controller receipt commitment differs")
+    if (
+        receipt["format"] != "tinylora_step5_input_url_controller_receipt_v1"
+        or receipt["account_id"] != durability["account_id"]
+        or receipt["region"] != durability["region"]
+    ):
+        raise LaunchPacketError("input URL controller identity differs")
+    try:
+        created = datetime.fromisoformat(str(receipt["created_at"]).replace("Z", "+00:00"))
+        expires = datetime.fromisoformat(str(receipt["expires_at"]).replace("Z", "+00:00"))
+    except ValueError as error:
+        raise LaunchPacketError("input URL controller timestamps are invalid") from error
+    expiry_seconds = receipt["expiry_seconds"]
+    if (
+        created.tzinfo is None
+        or expires.tzinfo is None
+        or not isinstance(expiry_seconds, int)
+        or not 60 <= expiry_seconds <= 604800
+        or created + timedelta(seconds=expiry_seconds) != expires
+        or not created <= approval_time <= created + timedelta(minutes=30)
+        or approval_time >= expires
+    ):
+        raise LaunchPacketError("input URL controller receipt is not fresh at approval")
+
+    manifest_descriptor = _mapping(receipt["manifest"], label="input URL manifest receipt")
+    manifest_bucket, manifest_key = _s3_parts(
+        remote["input_url_manifest_s3_uri"], label="input_url_manifest_s3_uri"
+    )
+    if manifest_descriptor != {
+        "bucket": manifest_bucket,
+        "key": manifest_key,
+        "sha256": manifest_descriptor.get("sha256"),
+    }:
+        raise LaunchPacketError("input URL manifest receipt binding differs")
+    manifest_hash = _sha256(
+        manifest_descriptor.get("sha256"), label="input URL manifest sha256"
+    )
+    manifest_path = Path(str(controller["input_url_manifest_output_path"]))
+    manifest_bytes = _read_regular_bytes(manifest_path, label="input URL manifest")
+    if hashlib.sha256(manifest_bytes).hexdigest() != manifest_hash:
+        raise LaunchPacketError("input URL manifest hash differs from receipt")
+    try:
+        manifest = validate_url_manifest(json.loads(manifest_bytes))
+    except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as error:
+        raise LaunchPacketError("input URL manifest is invalid") from error
+    manifest_controller = _mapping(manifest["controller"], label="URL manifest controller")
+    for field, expected in (
+        ("account_id", durability["account_id"]),
+        ("bucket", manifest_bucket),
+        ("region", durability["region"]),
+        ("manifest_key", manifest_key),
+        ("created_at", receipt["created_at"]),
+        ("expires_at", receipt["expires_at"]),
+        ("expiry_seconds", expiry_seconds),
+    ):
+        if manifest_controller.get(field) != expected:
+            raise LaunchPacketError(f"input URL manifest controller {field} differs")
+
+    objects_value = receipt["objects"]
+    if not isinstance(objects_value, list) or not objects_value:
+        raise LaunchPacketError("input URL controller objects are missing")
+    objects: dict[str, Mapping[str, Any]] = {}
+    for item_value in objects_value:
+        item = _mapping(item_value, label="input URL controller object")
+        key = item.get("key")
+        if not isinstance(key, str) or key in objects:
+            raise LaunchPacketError("input URL controller object keys differ")
+        _sha256(item.get("sha256"), label="input URL controller object sha256")
+        if not isinstance(item.get("bytes"), int) or item["bytes"] < 0:
+            raise LaunchPacketError("input URL controller object size differs")
+        objects[key] = item
+
+    expected_hashes = {
+        str(remote[name])
+        for name in (
+            "model_manifest_sha256",
+            "model_completion_sha256",
+            "frozen_inputs_tar_sha256",
+            "frozen_inputs_completion_sha256",
+            "pixmo_tar_sha256",
+            "pixmo_manifest_sha256",
+            "pixmo_completion_sha256",
+        )
+    }
+    observed_hashes = {str(item["sha256"]) for item in objects.values()}
+    if not expected_hashes <= observed_hashes:
+        raise LaunchPacketError("input URL controller objects omit frozen hashes")
+
+    model_bucket, model_prefix = _s3_parts(
+        remote["model_s3_prefix"], label="model_s3_prefix"
+    )
+    frozen_bucket, frozen_archive_key = _s3_parts(
+        remote["plan_s3_uri"], label="plan_s3_uri"
+    )
+    pixmo_bucket, pixmo_prefix = _s3_parts(
+        remote["pixmo_s3_prefix"], label="pixmo_s3_prefix"
+    )
+    if {model_bucket, frozen_bucket, pixmo_bucket, manifest_bucket} != {
+        manifest_bucket
+    }:
+        raise LaunchPacketError("input URL controller buckets differ")
+    pixmo_archive_key = unquote(
+        urlsplit(str(manifest["pixmo"]["archive_url"])).path
+    ).lstrip("/")
+    expected_key_hashes = {
+        f"{model_prefix.rstrip('/')}/manifest.json": remote["model_manifest_sha256"],
+        f"{model_prefix.rstrip('/')}/_COMPLETE.json": remote[
+            "model_completion_sha256"
+        ],
+        frozen_archive_key: remote["frozen_inputs_tar_sha256"],
+        f"{str(Path(frozen_archive_key).parent)}/_COMPLETE.json": remote[
+            "frozen_inputs_completion_sha256"
+        ],
+        f"{pixmo_prefix.rstrip('/')}/manifest.json": remote["pixmo_manifest_sha256"],
+        f"{pixmo_prefix.rstrip('/')}/_COMPLETE.json": remote[
+            "pixmo_completion_sha256"
+        ],
+        pixmo_archive_key: remote["pixmo_tar_sha256"],
+    }
+    for key, expected in expected_key_hashes.items():
+        if key not in objects or objects[key].get("sha256") != expected:
+            raise LaunchPacketError(f"input URL controller hash differs for {key}")
+
+    def manifest_urls(value: Any) -> list[str]:
+        if isinstance(value, str):
+            return [value]
+        if isinstance(value, Mapping):
+            return [url for item in value.values() for url in manifest_urls(item)]
+        return []
+
+    for url in manifest_urls(
+        {key: manifest[key] for key in ("model", "frozen_inputs", "pixmo")}
+    ):
+        parsed = urlsplit(url)
+        key = unquote(parsed.path).lstrip("/")
+        if key not in objects:
+            raise LaunchPacketError("input URL manifest references an unattested object")
+        _bound_s3_url(
+            url,
+            bucket=manifest_bucket,
+            key=key,
+            region=str(durability["region"]),
+            approval_time=approval_time,
+        )
+
+    host_gate = _mapping(receipt["host_gate"], label="host gate receipt")
+    host_key = host_gate.get("key")
+    if not isinstance(host_key, str) or host_key not in objects:
+        raise LaunchPacketError("host gate object is not attested")
+    if (
+        host_gate.get("sha256") != objects[host_key].get("sha256")
+        or host_gate.get("bytes") != objects[host_key].get("bytes")
+    ):
+        raise LaunchPacketError("host gate object binding differs")
+    bootstrap_url = _read_regular_bytes(
+        Path(str(controller["input_url_manifest_url_file"])),
+        label="input URL manifest bootstrap",
+    ).decode().strip()
+    host_gate_url = _read_regular_bytes(
+        Path(str(controller["host_gate_url_file"])), label="host gate URL"
+    ).decode().strip()
+    _bound_s3_url(
+        bootstrap_url,
+        bucket=manifest_bucket,
+        key=manifest_key,
+        region=str(durability["region"]),
+        approval_time=approval_time,
+    )
+    _bound_s3_url(
+        host_gate_url,
+        bucket=manifest_bucket,
+        key=host_key,
+        region=str(durability["region"]),
+        approval_time=approval_time,
+    )
 
 
 def _validate_local_contracts(value: Any, packet_dir: Path) -> None:
@@ -346,6 +641,11 @@ def _validate_complete_runtime(packet: Mapping[str, Any], packet_dir: Path) -> N
             output = packet_dir.parent / output
         if output.resolve() != Path(str(controller[controller_field])).resolve():
             raise LaunchPacketError(f"input URL preparation {flag} output differs")
+    _validate_input_url_receipt(
+        packet,
+        approval_time=parsed,
+        controller=controller,
+    )
     public_path = Path(str(controller.get("controller_public_key_path", "")))
     private_path = Path(str(controller.get("controller_private_key_path", "")))
     expected_public_hash = _sha256(

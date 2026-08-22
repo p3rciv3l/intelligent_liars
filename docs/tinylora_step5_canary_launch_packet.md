@@ -24,7 +24,7 @@ three-arm bounded screen and it does not claim the later seven scoring receipts.
 The model cache is fixed at:
 
 ```text
-s3://intelligent-liars-osworld-29a36b2b927f4078b2ac95ca83ec9c21/model-cache/v1/qwen--qwen3-vl-8b-thinking/92f3c4b4feadd3a016ef468d103bb5f58b2a2c6b/bbca6a8b09a56f0c538887b82b9594b0c0945c5fbcde54f39eda153a9f64eda8/
+s3://intelligent-liars-osworld-29a36b2b927f4078b2ac95ca83ec9c21/model-cache/v2/qwen--qwen3-vl-8b-thinking/92f3c4b4feadd3a016ef468d103bb5f58b2a2c6b/bbca6a8b09a56f0c538887b82b9594b0c0945c5fbcde54f39eda153a9f64eda8/sha256meta/
 ```
 
 The portable image bundle is fixed at:
@@ -120,6 +120,12 @@ artifact preparation command does the same for the final PUT URL. These
 protected files must exist at the frozen controller paths before the complete
 validator will pass; they are deterministic launch preparation, not ad hoc
 operator substitutions.
+
+The complete validator reads the exact presigner receipt and generated manifest
+bytes, verifies their commitments, and binds the account, region, bucket,
+manifest key, attested object hashes, host-gate object, and SigV4 validity window
+to the approval time. A completed same-host hydration is receipt-verified before
+the protected URL is opened, so recovery remains possible after that URL expires.
 
 The validator reports `launch_ready: false` and exits 2 while any substitution
 remains. `--allow-incomplete` changes only that reporting exit code for CI; it

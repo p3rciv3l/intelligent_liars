@@ -18,6 +18,7 @@ wheels/
 .env.*
 !.env.example
 .secrets/
+.local/step5-checkpoint-controller/
 
 # Generated experiment artifacts
 data/*

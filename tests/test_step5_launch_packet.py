@@ -98,9 +98,16 @@ def _packet(tmp_path: Path) -> dict[str, object]:
             },
         },
         "remote_inputs": {
+            "frozen_inputs_completion_sha256": "d" * 64,
+            "frozen_inputs_tar_sha256": "c" * 64,
             "input_url_manifest_s3_uri": "s3://bucket/controller/input.json",
+            "model_completion_sha256": "b" * 64,
+            "model_manifest_sha256": "a" * 64,
             "model_s3_prefix": "s3://bucket/model-cache/revision/content",
+            "pixmo_completion_sha256": "9" * 64,
+            "pixmo_manifest_sha256": "f" * 64,
             "pixmo_s3_prefix": "s3://bucket/assets/pixmo/content",
+            "pixmo_tar_sha256": "e" * 64,
             "plan_s3_uri": "${PLAN_S3_URI}",
             "probe_s3_uri": "${PROBE_S3_URI}",
         },
@@ -195,6 +202,7 @@ def _packet(tmp_path: Path) -> dict[str, object]:
             "artifact_put_url_file": str(artifact_secret),
             "host_gate_url_file": str(host_gate_secret),
             "input_url_controller_receipt_path": str(tmp_path / "input-receipt.json"),
+            "input_url_controller_receipt_sha256": "${INPUT_URL_CONTROLLER_RECEIPT_SHA256}",
             "input_url_manifest_output_path": str(tmp_path / "input.json"),
         },
         "remaining_substitutions": [
@@ -206,6 +214,7 @@ def _packet(tmp_path: Path) -> dict[str, object]:
             "BUCKET_VERSIONING_RECEIPT_SHA256",
             "GPU_NAME",
             "GPU_VRAM_GIB",
+            "INPUT_URL_CONTROLLER_RECEIPT_SHA256",
             "OFFER_ID",
             "PLAN_S3_URI",
             "PROBE_S3_URI",
@@ -215,6 +224,106 @@ def _packet(tmp_path: Path) -> dict[str, object]:
     }
     packet["packet_sha256"] = canonical_sha256(packet)
     return packet
+
+
+def _write_input_controller_outputs(packet: dict[str, object]) -> str:
+    controller = packet["controller_prerequisites"]  # type: ignore[assignment]
+    remote = packet["remote_inputs"]  # type: ignore[assignment]
+    date_query = (
+        "X-Amz-Algorithm=AWS4-HMAC-SHA256"
+        "&X-Amz-Credential=ASIATESTACCESSKEY1%2F20260822%2Fus-west-2%2Fs3%2Faws4_request"
+        "&X-Amz-Date=20260822T195000Z&X-Amz-Expires=21600"
+        "&X-Amz-SignedHeaders=host&X-Amz-Signature=" + "a" * 64
+    )
+
+    def url(key: str) -> str:
+        return f"https://bucket.s3.us-west-2.amazonaws.com/{key}?{date_query}"
+
+    keys = {
+        "model_manifest": "model-cache/revision/content/manifest.json",
+        "model_completion": "model-cache/revision/content/_COMPLETE.json",
+        "model_file": "model-cache/revision/content/files/shard.bin",
+        "frozen_archive": "step5/plan.tar",
+        "frozen_completion": "step5/_COMPLETE.json",
+        "pixmo_archive": "assets/pixmo/content/archive.tar",
+        "pixmo_manifest": "assets/pixmo/content/manifest.json",
+        "pixmo_completion": "assets/pixmo/content/_COMPLETE.json",
+    }
+    hashes = {
+        keys["model_manifest"]: remote["model_manifest_sha256"],
+        keys["model_completion"]: remote["model_completion_sha256"],
+        keys["model_file"]: "8" * 64,
+        keys["frozen_archive"]: remote["frozen_inputs_tar_sha256"],
+        keys["frozen_completion"]: remote["frozen_inputs_completion_sha256"],
+        keys["pixmo_archive"]: remote["pixmo_tar_sha256"],
+        keys["pixmo_manifest"]: remote["pixmo_manifest_sha256"],
+        keys["pixmo_completion"]: remote["pixmo_completion_sha256"],
+    }
+    manifest = {
+        "controller": {
+            "account_id": "123456789012",
+            "bucket": "bucket",
+            "created_at": "2026-08-22T19:50:00Z",
+            "expires_at": "2026-08-23T01:50:00Z",
+            "expiry_seconds": 21600,
+            "manifest_key": "controller/input.json",
+            "region": "us-west-2",
+        },
+        "format": "tinylora_step5_input_url_manifest_v2",
+        "model": {
+            "completion_url": url(keys["model_completion"]),
+            "manifest_url": url(keys["model_manifest"]),
+            "file_urls": {"shard.bin": url(keys["model_file"])},
+        },
+        "frozen_inputs": {
+            "completion_url": url(keys["frozen_completion"]),
+            "archive_url": url(keys["frozen_archive"]),
+        },
+        "pixmo": {
+            "completion_url": url(keys["pixmo_completion"]),
+            "manifest_url": url(keys["pixmo_manifest"]),
+            "archive_url": url(keys["pixmo_archive"]),
+        },
+    }
+    manifest_bytes = (json.dumps(manifest, sort_keys=True, separators=(",", ":")) + "\n").encode()
+    manifest_path = Path(controller["input_url_manifest_output_path"])
+    manifest_path.write_bytes(manifest_bytes)
+    host_key = keys["model_file"]
+    receipt = {
+        "account_id": "123456789012",
+        "created_at": "2026-08-22T19:50:00Z",
+        "expires_at": "2026-08-23T01:50:00Z",
+        "expiry_seconds": 21600,
+        "format": "tinylora_step5_input_url_controller_receipt_v1",
+        "host_gate": {"bytes": 1, "key": host_key, "sha256": hashes[host_key]},
+        "manifest": {
+            "bucket": "bucket",
+            "key": "controller/input.json",
+            "sha256": hashlib.sha256(manifest_bytes).hexdigest(),
+        },
+        "objects": [
+            {"bytes": 1, "key": key, "sha256": digest, "verification": "head_sha256"}
+            for key, digest in sorted(hashes.items())
+        ],
+        "region": "us-west-2",
+    }
+    receipt["content_sha256"] = hashlib.sha256(
+        (json.dumps(receipt, sort_keys=True, separators=(",", ":")) + "\n").encode()
+    ).hexdigest()
+    receipt_path = Path(controller["input_url_controller_receipt_path"])
+    receipt_path.write_text(json.dumps(receipt, indent=2, sort_keys=True) + "\n")
+    Path(controller["input_url_manifest_url_file"]).write_text(
+        url("controller/input.json") + "\n"
+    )
+    Path(controller["host_gate_url_file"]).write_text(url(host_key) + "\n")
+    for path in (
+        receipt_path,
+        manifest_path,
+        Path(controller["input_url_manifest_url_file"]),
+        Path(controller["host_gate_url_file"]),
+    ):
+        path.chmod(0o600)
+    return hashlib.sha256(receipt_path.read_bytes()).hexdigest()
 
 
 def test_incomplete_packet_is_valid_but_not_launch_ready(tmp_path: Path):
@@ -245,6 +354,7 @@ def test_packet_rejects_changed_local_contract(tmp_path: Path):
 
 def test_complete_packet_requires_digest_and_exact_cost_approval(tmp_path: Path):
     packet = _packet(tmp_path)
+    input_receipt_sha = _write_input_controller_outputs(packet)
     receipt_path = Path(packet["durability"]["bucket_versioning_receipt_path"])  # type: ignore[index]
     receipt_sha = _write_json(
         receipt_path,
@@ -269,6 +379,7 @@ def test_complete_packet_requires_digest_and_exact_cost_approval(tmp_path: Path)
         "${AWS_ACCOUNT_ID}": "123456789012",
         "${AWS_REGION}": "us-west-2",
         "${BUCKET_VERSIONING_RECEIPT_SHA256}": receipt_sha,
+        "${INPUT_URL_CONTROLLER_RECEIPT_SHA256}": input_receipt_sha,
         "${PLAN_S3_URI}": "s3://bucket/step5/plan.tar",
         "${PROBE_S3_URI}": "s3://bucket/step5/probe.tar",
     }
@@ -297,6 +408,54 @@ def test_complete_packet_requires_digest_and_exact_cost_approval(tmp_path: Path)
     result = validate_launch_packet(complete, packet_dir=tmp_path)
     assert result["launch_ready"] is True
 
+    manifest_path = Path(
+        complete["controller_prerequisites"]["input_url_manifest_output_path"]  # type: ignore[index]
+    )
+    manifest_bytes = manifest_path.read_bytes()
+    manifest_path.write_text("{}\n")
+    with pytest.raises(LaunchPacketError, match="manifest hash"):
+        validate_launch_packet(complete, packet_dir=tmp_path)
+    manifest_path.write_bytes(manifest_bytes)
+
+    host_url_path = Path(
+        complete["controller_prerequisites"]["host_gate_url_file"]  # type: ignore[index]
+    )
+    host_url = host_url_path.read_text()
+    host_url_path.write_text(
+        host_url.replace("model-cache/revision/content/files/shard.bin", "wrong.bin")
+    )
+    with pytest.raises(LaunchPacketError, match="frozen S3 object"):
+        validate_launch_packet(complete, packet_dir=tmp_path)
+    host_url_path.write_text(host_url)
+
+    unsigned_host_url = host_url.split("?", 1)[0] + (
+        "?X-Amz-Date=20260822T195000Z&X-Amz-Expires=21600\n"
+    )
+    host_url_path.write_text(unsigned_host_url)
+    with pytest.raises(LaunchPacketError, match="complete SigV4"):
+        validate_launch_packet(complete, packet_dir=tmp_path)
+    host_url_path.write_text(host_url)
+
+    refreshed_bucket_sha = _write_json(
+        receipt_path,
+        {
+            "account_id": "123456789012",
+            "bucket": "bucket",
+            "checked_at": "2026-08-22T20:00:00Z",
+            "format": "tinylora_step5_bucket_versioning_receipt_v1",
+            "region": "us-west-2",
+            "status": "Enabled",
+        },
+    )
+    complete["durability"][  # type: ignore[index]
+        "bucket_versioning_receipt_sha256"
+    ] = refreshed_bucket_sha
+    complete["approval"]["approved_at"] = "2026-08-22T20:25:00Z"  # type: ignore[index]
+    complete["packet_sha256"] = canonical_sha256(complete)
+    with pytest.raises(LaunchPacketError, match="not fresh"):
+        validate_launch_packet(complete, packet_dir=tmp_path)
+    complete["approval"]["approved_at"] = "2026-08-22T20:00:00Z"  # type: ignore[index]
+
     complete["runtime"]["image"] = "ghcr.io/example/step5:latest"  # type: ignore[index]
     complete["packet_sha256"] = canonical_sha256(complete)
     with pytest.raises(LaunchPacketError, match="immutable runtime image"):
@@ -305,6 +464,7 @@ def test_complete_packet_requires_digest_and_exact_cost_approval(tmp_path: Path)
 
 def test_complete_packet_rejects_command_field_drift(tmp_path: Path):
     packet = _packet(tmp_path)
+    input_receipt_sha = _write_input_controller_outputs(packet)
     receipt_path = Path(packet["durability"]["bucket_versioning_receipt_path"])  # type: ignore[index]
     receipt_sha = _write_json(
         receipt_path,
@@ -338,6 +498,9 @@ def test_complete_packet_rejects_command_field_drift(tmp_path: Path):
             "region": "us-west-2",
         }
     )
+    packet["controller_prerequisites"][  # type: ignore[index]
+        "input_url_controller_receipt_sha256"
+    ] = input_receipt_sha
     packet["remote_inputs"]["plan_s3_uri"] = "s3://bucket/plan"  # type: ignore[index]
     packet["remote_inputs"]["probe_s3_uri"] = "s3://bucket/probe"  # type: ignore[index]
     packet["commands"]["remote"] = "run --runtime sha256:" + "a" * 64  # type: ignore[index]
@@ -397,6 +560,7 @@ def test_packet_hash_detects_tampering(tmp_path: Path):
 
 def test_complete_packet_rejects_fabricated_versioning_receipt(tmp_path: Path):
     packet = _packet(tmp_path)
+    input_receipt_sha = _write_input_controller_outputs(packet)
     receipt_path = Path(packet["durability"]["bucket_versioning_receipt_path"])  # type: ignore[index]
     receipt_sha = _write_json(
         receipt_path,
@@ -432,6 +596,9 @@ def test_complete_packet_rejects_fabricated_versioning_receipt(tmp_path: Path):
             "region": "us-west-2",
         }
     )
+    packet["controller_prerequisites"][  # type: ignore[index]
+        "input_url_controller_receipt_sha256"
+    ] = input_receipt_sha
     packet["commands"]["remote"] = "run sha256:" + "a" * 64  # type: ignore[index]
     packet["commands"]["input_url_preparation"] = packet["commands"][  # type: ignore[index]
         "input_url_preparation"
