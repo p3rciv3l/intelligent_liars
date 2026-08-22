@@ -63,6 +63,14 @@ def write_json(path: Path, payload: Mapping[str, Any]) -> None:
     os.replace(temporary, destination)
 
 
+def canonical_jsonl_sha256(rows: Iterable[Mapping[str, Any]]) -> str:
+    """Hash rows using the exact canonical encoding produced by ``write_jsonl``."""
+    digest = hashlib.sha256()
+    for row in rows:
+        digest.update((json.dumps(dict(row), sort_keys=True) + "\n").encode())
+    return digest.hexdigest()
+
+
 def _require_sha256(value: str, *, field: str) -> None:
     if _SHA256.fullmatch(value) is None:
         raise ValueError(f"{field} must be a lowercase SHA-256 digest")
@@ -218,7 +226,14 @@ def score_response_inventory(
     """Score complete external comply/refuse judgments; never infer missing labels."""
     _require_sha256(source_plan_sha256, field="source_plan_sha256")
     _require_sha256(response_inventory_sha256, field="response_inventory_sha256")
-    inventory = _index_unique(inventory_rows, name="response inventory")
+    materialized_inventory = [dict(row) for row in inventory_rows]
+    actual_inventory_sha256 = canonical_jsonl_sha256(materialized_inventory)
+    if actual_inventory_sha256 != response_inventory_sha256:
+        raise ValueError(
+            "response inventory hash mismatch: supplied hash does not identify the "
+            "scored inventory"
+        )
+    inventory = _index_unique(materialized_inventory, name="response inventory")
     labels = _index_unique(label_rows, name="label")
     _validate_response_inventory(inventory, source_plan_sha256=source_plan_sha256)
     if set(labels) != set(inventory):

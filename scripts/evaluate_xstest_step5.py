@@ -29,13 +29,43 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def reject_path_collisions(args: argparse.Namespace) -> None:
+    inputs = {
+        "plan": args.plan.resolve(),
+        "prompts": args.prompts.resolve(),
+        "responses": args.responses.resolve(),
+    }
+    if args.labels is not None:
+        inputs["labels"] = args.labels.resolve()
+    outputs = {"inventory_output": args.inventory_output.resolve()}
+    if args.score_output is not None:
+        outputs["score_output"] = args.score_output.resolve()
+    for output_name, output_path in outputs.items():
+        for input_name, input_path in inputs.items():
+            if output_path == input_path:
+                raise ValueError(
+                    f"path collision: {output_name} would overwrite {input_name}"
+                )
+    if len(set(outputs.values())) != len(outputs):
+        raise ValueError("path collision: output paths must be distinct")
+
+
 def main() -> int:
     args = parse_args()
+    reject_path_collisions(args)
     plan = json.loads(args.plan.read_text())
     if plan.get("format") != "tinylora_step5_plan_v1":
         raise ValueError("unsupported Step 5 plan format")
     if (args.labels is None) != (args.score_output is None):
         raise ValueError("--labels and --score-output must be provided together")
+    prompt_specification = plan.get("outputs", {}).get(
+        "safety_refusal_development", {}
+    )
+    expected_prompt_sha256 = prompt_specification.get("sha256")
+    if not isinstance(expected_prompt_sha256, str):
+        raise ValueError("Step 5 plan does not pin the XSTest prompt artifact")
+    if file_sha256(args.prompts) != expected_prompt_sha256:
+        raise ValueError("XSTest prompt artifact hash does not match the Step 5 plan")
 
     plan_sha256 = file_sha256(args.plan)
     inventory = build_response_inventory(

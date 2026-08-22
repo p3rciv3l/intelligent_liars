@@ -11,15 +11,13 @@ import pytest
 
 from intelligent_liars.safety_refusal_eval import (
     build_response_inventory,
+    canonical_jsonl_sha256,
     score_response_inventory,
     write_jsonl,
 )
 
 
 PLAN_SHA256 = "a" * 64
-INVENTORY_SHA256 = "b" * 64
-
-
 def _prompts() -> list[dict[str, str]]:
     rows = []
     for index in range(1, 451):
@@ -47,8 +45,9 @@ def _responses() -> list[dict[str, str]]:
 def _labels(
     inventory: list[dict[str, str]],
     *,
-    inventory_sha256: str = INVENTORY_SHA256,
+    inventory_sha256: str | None = None,
 ) -> list[dict[str, str]]:
+    inventory_sha256 = inventory_sha256 or canonical_jsonl_sha256(inventory)
     return [
         {
             "record_id": row["record_id"],
@@ -114,7 +113,7 @@ def test_score_reports_safe_and_unsafe_failures_separately() -> None:
         inventory,
         labels,
         source_plan_sha256=PLAN_SHA256,
-        response_inventory_sha256=INVENTORY_SHA256,
+        response_inventory_sha256=canonical_jsonl_sha256(inventory),
     )
 
     assert score["status"] == "complete"
@@ -156,6 +155,7 @@ def test_score_fails_closed_for_incomplete_or_unbound_labels(mutate, message) ->
         model_identity="candidate-a/seed-1",
     )
     labels = _labels(inventory)
+    inventory_sha256 = canonical_jsonl_sha256(inventory)
     mutate(labels)
 
     with pytest.raises(ValueError, match=message):
@@ -163,7 +163,27 @@ def test_score_fails_closed_for_incomplete_or_unbound_labels(mutate, message) ->
             inventory,
             labels,
             source_plan_sha256=PLAN_SHA256,
-            response_inventory_sha256=INVENTORY_SHA256,
+            response_inventory_sha256=inventory_sha256,
+        )
+
+
+def test_score_rejects_old_labels_after_response_changes() -> None:
+    inventory = build_response_inventory(
+        _prompts(),
+        _responses(),
+        source_plan_sha256=PLAN_SHA256,
+        model_identity="candidate-a/seed-1",
+    )
+    old_inventory_sha256 = canonical_jsonl_sha256(inventory)
+    labels = _labels(inventory, inventory_sha256=old_inventory_sha256)
+    inventory[0]["response"] = "changed response"
+
+    with pytest.raises(ValueError, match="response inventory hash mismatch"):
+        score_response_inventory(
+            inventory,
+            labels,
+            source_plan_sha256=PLAN_SHA256,
+            response_inventory_sha256=old_inventory_sha256,
         )
 
 
@@ -180,9 +200,21 @@ def test_cli_writes_inventory_then_scores_external_labels(tmp_path: Path) -> Non
         **os.environ,
         "PYTHONPATH": str(repository_root / "src"),
     }
-    plan.write_text('{"format":"tinylora_step5_plan_v1"}\n')
     write_jsonl(prompts, _prompts())
     write_jsonl(responses, _responses())
+    prompt_sha256 = hashlib.sha256(prompts.read_bytes()).hexdigest()
+    plan.write_text(
+        json.dumps(
+            {
+                "format": "tinylora_step5_plan_v1",
+                "outputs": {
+                    "safety_refusal_development": {"sha256": prompt_sha256}
+                },
+            },
+            sort_keys=True,
+        )
+        + "\n"
+    )
 
     inventory_run = subprocess.run(
         [
@@ -251,3 +283,61 @@ def test_cli_writes_inventory_then_scores_external_labels(tmp_path: Path) -> Non
     assert score["accuracy"] == 1.0
     assert score["source_plan_sha256"] == source_plan_sha256
     assert score["response_inventory_sha256"] == inventory_sha256
+
+    altered_prompts = tmp_path / "altered-prompts.jsonl"
+    altered_rows = _prompts()
+    altered_rows[0]["prompt"] = "altered prompt"
+    write_jsonl(altered_prompts, altered_rows)
+    altered_run = subprocess.run(
+        [
+            sys.executable,
+            str(script),
+            "--plan",
+            str(plan),
+            "--prompts",
+            str(altered_prompts),
+            "--responses",
+            str(responses),
+            "--model-identity",
+            "candidate-a/seed-1",
+            "--inventory-output",
+            str(tmp_path / "altered-inventory.jsonl"),
+        ],
+        cwd=repository_root,
+        env=environment,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert altered_run.returncode != 0
+    assert "prompt artifact hash does not match" in altered_run.stderr
+
+    labels_before = labels_path.read_bytes()
+    collision_run = subprocess.run(
+        [
+            sys.executable,
+            str(script),
+            "--plan",
+            str(plan),
+            "--prompts",
+            str(prompts),
+            "--responses",
+            str(responses),
+            "--model-identity",
+            "candidate-a/seed-1",
+            "--inventory-output",
+            str(labels_path),
+            "--labels",
+            str(labels_path),
+            "--score-output",
+            str(tmp_path / "collision-score.json"),
+        ],
+        cwd=repository_root,
+        env=environment,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert collision_run.returncode != 0
+    assert "path collision" in collision_run.stderr
+    assert labels_path.read_bytes() == labels_before
