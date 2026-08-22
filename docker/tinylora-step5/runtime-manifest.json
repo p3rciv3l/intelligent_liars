@@ -1,0 +1,65 @@
+{
+  "schema_version": 1,
+  "runtime_id": "tinylora-step5-cu121-torch251-fa283-r1",
+  "intended_workload": "bounded Step 5 TinyLoRA candidate screening only",
+  "large_run_enabled": false,
+  "platform": {
+    "architecture": "linux/amd64",
+    "python_major_minor": "3.11",
+    "cuda": "12.1",
+    "minimum_compute_capability": [8, 0],
+    "minimum_gpu_memory_gib": 23.0
+  },
+  "base_image": {
+    "repository": "pytorch/pytorch",
+    "tag": "2.5.1-cuda12.1-cudnn9-devel",
+    "digest": "sha256:e8e63dd7baca894ba11fe1ba48a52a550793c8974f89b533d697784dd20a4dc0",
+    "reference": "pytorch/pytorch:2.5.1-cuda12.1-cudnn9-devel@sha256:e8e63dd7baca894ba11fe1ba48a52a550793c8974f89b533d697784dd20a4dc0"
+  },
+  "python_packages": {
+    "accelerate": "1.10.1",
+    "datasets": "4.0.0",
+    "einops": "0.8.1",
+    "hf-transfer": "0.1.9",
+    "huggingface-hub": "1.5.0",
+    "liger-kernel": "0.8.2",
+    "numpy": "1.26.4",
+    "pillow": "11.3.0",
+    "pyyaml": "6.0.2",
+    "qwen-vl-utils": "0.0.14",
+    "safetensors": "0.8.0",
+    "torch": "2.5.1+cu121",
+    "transformers": "5.15.1",
+    "flash-attn": "2.8.3"
+  },
+  "flash_attention_wheel": {
+    "filename": "flash_attn-2.8.3+cu12torch2.5cxx11abiFALSE-cp311-cp311-linux_x86_64.whl",
+    "url": "https://github.com/Dao-AILab/flash-attention/releases/download/v2.8.3/flash_attn-2.8.3%2Bcu12torch2.5cxx11abiFALSE-cp311-cp311-linux_x86_64.whl",
+    "sha256": "ca5a5614530bad3bcaf936917d53a6d60c9057d1218030efe3ca588cb4f4ebb6",
+    "python": "cp311",
+    "cuda_family": "cu12",
+    "torch_family": "torch2.5",
+    "cxx11_abi": false
+  },
+  "build_inputs": {
+    "requirements.in": "16267348e83261387536b70fd605bb5ff10b0244e101bf957297618eb61f8ec2",
+    "requirements.lock": "4a63c7c9e53e32f88aabf08c189ffff1be49c216ecd9db2b1fc122ae35c7422f"
+  },
+  "cache_policy": {
+    "root": "/workspace/cache",
+    "minimum_free_gib": 80.0,
+    "model_cache": "/workspace/cache/huggingface/hub",
+    "torch_cache": "/workspace/cache/torch",
+    "require_writable": true,
+    "embed_model_weights_in_image": false,
+    "model_revision_must_be_pinned_by_run": true
+  },
+  "required_runtime_checks": [
+    "nvidia_driver_accepts_cuda_12_1",
+    "gpu_compute_capability",
+    "gpu_memory",
+    "bf16_cuda_matmul",
+    "flash_attention_2_cuda_kernel",
+    "cache_writable_and_free_space"
+  ]
+}

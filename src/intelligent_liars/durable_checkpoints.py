@@ -230,7 +230,7 @@ def advance_latest_checkpoint(
     generation_id: str,
     *,
     identity: Mapping[str, Any],
-    durable_verifier: DurableVerifier | None = None,
+    durable_verifier: DurableVerifier,
 ) -> CheckpointGeneration:
     """Verify durability, atomically advance latest, then retain two generations."""
 
@@ -242,7 +242,7 @@ def advance_latest_checkpoint(
         expected_identity=normalized_identity,
         expected_generation_id=generation_id,
     )
-    if durable_verifier is not None and durable_verifier(generation) is not True:
+    if durable_verifier(generation) is not True:
         raise CheckpointIntegrityError(
             f"Checkpoint durability verification rejected generation {generation_id}"
         )

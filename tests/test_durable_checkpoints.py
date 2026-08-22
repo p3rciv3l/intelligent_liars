@@ -83,7 +83,12 @@ def test_corruption_blocks_latest_pointer_advance(tmp_path: Path):
     (generation.path / "adapter.safetensors").write_bytes(b"two")
 
     with pytest.raises(CheckpointIntegrityError, match="SHA-256 mismatch"):
-        advance_latest_checkpoint(root, generation.generation_id, identity=IDENTITY)
+        advance_latest_checkpoint(
+            root,
+            generation.generation_id,
+            identity=IDENTITY,
+            durable_verifier=lambda _generation: True,
+        )
 
     assert not (root / "latest.json").exists()
 
@@ -151,7 +156,12 @@ def test_identity_mismatch_cannot_reuse_root_or_resolve_latest(tmp_path: Path):
         generation_id="step-000025",
         source_dir=_source(tmp_path, b"one"),
     )
-    advance_latest_checkpoint(root, generation.generation_id, identity=IDENTITY)
+    advance_latest_checkpoint(
+        root,
+        generation.generation_id,
+        identity=IDENTITY,
+        durable_verifier=lambda _generation: True,
+    )
     other_identity = {**IDENTITY, "seed": 99}
 
     with pytest.raises(CheckpointIdentityMismatch, match="identity mismatch"):
@@ -174,7 +184,12 @@ def test_unverified_generation_is_never_pruned(tmp_path: Path):
             generation_id=f"step-{number:06d}",
             source_dir=_source(tmp_path, str(number).encode()),
         )
-        advance_latest_checkpoint(root, generation.generation_id, identity=IDENTITY)
+        advance_latest_checkpoint(
+            root,
+            generation.generation_id,
+            identity=IDENTITY,
+            durable_verifier=lambda _generation: True,
+        )
     unverified = create_checkpoint_generation(
         root,
         identity=IDENTITY,
@@ -188,7 +203,12 @@ def test_unverified_generation_is_never_pruned(tmp_path: Path):
         source_dir=_source(tmp_path, b"four"),
     )
 
-    advance_latest_checkpoint(root, fourth.generation_id, identity=IDENTITY)
+    advance_latest_checkpoint(
+        root,
+        fourth.generation_id,
+        identity=IDENTITY,
+        durable_verifier=lambda _generation: True,
+    )
 
     assert unverified.path.exists()
     assert (root / "generations" / "step-000002").exists()
@@ -205,9 +225,19 @@ def test_undeclared_file_and_tampered_latest_pointer_fail_closed(tmp_path: Path)
     )
     (generation.path / "undeclared.bin").write_bytes(b"surprise")
     with pytest.raises(CheckpointIntegrityError, match="inventory mismatch"):
-        advance_latest_checkpoint(root, generation.generation_id, identity=IDENTITY)
+        advance_latest_checkpoint(
+            root,
+            generation.generation_id,
+            identity=IDENTITY,
+            durable_verifier=lambda _generation: True,
+        )
     (generation.path / "undeclared.bin").unlink()
-    advance_latest_checkpoint(root, generation.generation_id, identity=IDENTITY)
+    advance_latest_checkpoint(
+        root,
+        generation.generation_id,
+        identity=IDENTITY,
+        durable_verifier=lambda _generation: True,
+    )
 
     pointer_path = root / "latest.json"
     pointer = json.loads(pointer_path.read_text())
