@@ -11,8 +11,9 @@ import hashlib
 import json
 import math
 import re
+import shlex
 from collections.abc import Mapping, Sequence
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -135,7 +136,7 @@ def _validate_local_contracts(value: Any, packet_dir: Path) -> None:
             raise LaunchPacketError(f"{name} has an unsupported format")
 
 
-def _validate_complete_runtime(packet: Mapping[str, Any]) -> None:
+def _validate_complete_runtime(packet: Mapping[str, Any], packet_dir: Path) -> None:
     runtime = _mapping(packet["runtime"], label="runtime")
     image = runtime.get("image")
     if not isinstance(image, str) or _IMAGE.fullmatch(image) is None:
@@ -200,6 +201,22 @@ def _validate_complete_runtime(packet: Mapping[str, Any]) -> None:
         "--artifact-put-url-file": str(
             packet["controller_prerequisites"]["artifact_put_url_file"]
         ),
+        "--host-gate-url-file": str(
+            packet["controller_prerequisites"]["host_gate_url_file"]
+        ),
+        "--checkpoint-controller-script-sha256": str(
+            packet["controller_contracts"]["checkpoint_controller"]["sha256"]
+        ),
+        "--checkpoint-controller-script": str(
+            packet["controller_prerequisites"]["checkpoint_controller_script_path"]
+        ),
+        "--checkpoint-bucket": str(packet["durability"]["bucket"]),
+        "--checkpoint-prefix": str(packet["durability"]["checkpoint_prefix"]).split(
+            "/", 3
+        )[-1],
+        "--checkpoint-controller-private-key": str(
+            packet["controller_prerequisites"]["controller_private_key_path"]
+        ),
         "--expected-durable-uri": str(packet["durability"]["artifact_uri"]),
     }
     for flag, expected in expected_flags.items():
@@ -211,18 +228,124 @@ def _validate_complete_runtime(packet: Mapping[str, Any]) -> None:
     if flag_value("--remote-command") != remote:
         raise LaunchPacketError("lifecycle remote command differs from the frozen template")
 
+    def command_flag(command_name: str, flag: str) -> str:
+        command = commands.get(command_name)
+        if not isinstance(command, str):
+            raise LaunchPacketError(f"{command_name} must be a command string")
+        tokens = shlex.split(command)
+        positions = [index for index, item in enumerate(tokens) if item == flag]
+        if len(positions) != 1 or positions[0] + 1 >= len(tokens):
+            raise LaunchPacketError(f"{command_name} requires exactly one {flag}")
+        return tokens[positions[0] + 1]
+
     durability = _mapping(packet.get("durability"), label="durability")
     if durability.get("bucket_versioning_status") != "Enabled":
         raise LaunchPacketError("launch requires verified S3 bucket versioning Enabled")
-    _sha256(
+    expected_receipt_hash = _sha256(
         durability.get("bucket_versioning_receipt_sha256"),
         label="bucket_versioning_receipt_sha256",
     )
+    receipt_path = Path(str(durability.get("bucket_versioning_receipt_path", "")))
+    if _regular_file_sha256(receipt_path, label="bucket versioning receipt") != (
+        expected_receipt_hash
+    ):
+        raise LaunchPacketError("bucket versioning receipt hash differs")
+    try:
+        receipt = json.loads(receipt_path.read_text())
+    except (OSError, json.JSONDecodeError) as error:
+        raise LaunchPacketError("bucket versioning receipt is not readable JSON") from error
+    expected_receipt = {
+        "format": "tinylora_step5_bucket_versioning_receipt_v1",
+        "bucket": durability.get("bucket"),
+        "region": durability.get("region"),
+        "account_id": durability.get("account_id"),
+        "status": "Enabled",
+    }
+    if not isinstance(expected_receipt["account_id"], str) or re.fullmatch(
+        r"[0-9]{12}", expected_receipt["account_id"]
+    ) is None:
+        raise LaunchPacketError("durability account_id must be an AWS account ID")
+    if not isinstance(expected_receipt["region"], str) or re.fullmatch(
+        r"[a-z]{2}(?:-gov)?-[a-z]+-[0-9]", expected_receipt["region"]
+    ) is None:
+        raise LaunchPacketError("durability region must be an AWS region")
+    if not isinstance(receipt, Mapping) or set(receipt) != {
+        *expected_receipt,
+        "checked_at",
+    }:
+        raise LaunchPacketError("bucket versioning receipt fields differ")
+    for field, expected in expected_receipt.items():
+        if receipt.get(field) != expected:
+            raise LaunchPacketError(f"bucket versioning receipt {field} differs")
+    checked_at = receipt.get("checked_at")
+    if not isinstance(checked_at, str):
+        raise LaunchPacketError("bucket versioning checked_at must be an ISO timestamp")
+    try:
+        checked = datetime.fromisoformat(checked_at.replace("Z", "+00:00"))
+    except ValueError as error:
+        raise LaunchPacketError(
+            "bucket versioning checked_at must be an ISO timestamp"
+        ) from error
+    if checked.tzinfo is None or not checked <= parsed <= checked + timedelta(minutes=30):
+        raise LaunchPacketError(
+            "bucket versioning receipt must precede approval by at most 30 minutes"
+        )
     _validate_s3(durability.get("artifact_uri"), label="artifact_uri")
     _validate_s3(durability.get("checkpoint_prefix"), label="checkpoint_prefix")
     _sha256(durability.get("checkpoint_controller_key_id"), label="checkpoint_controller_key_id")
 
+    if command_flag("versioning_receipt", "--bucket") != durability["bucket"]:
+        raise LaunchPacketError("versioning receipt command bucket differs")
+    receipt_output = Path(command_flag("versioning_receipt", "--output"))
+    if not receipt_output.is_absolute():
+        receipt_output = Path.cwd() / receipt_output
+    if receipt_output.resolve() != receipt_path.resolve():
+        raise LaunchPacketError("versioning receipt command output differs")
+    artifact_bucket, artifact_key = str(durability["artifact_uri"])[5:].split("/", 1)
+    if command_flag("artifact_upload_preparation", "--bucket") != artifact_bucket:
+        raise LaunchPacketError("artifact preparation bucket differs")
+    if command_flag("artifact_upload_preparation", "--key") != artifact_key:
+        raise LaunchPacketError("artifact preparation key differs")
+    input_manifest_bucket, input_manifest_key = str(
+        packet["remote_inputs"]["input_url_manifest_s3_uri"]
+    )[5:].split("/", 1)
+    input_command = "input_url_preparation"
+    for flag, expected in (
+        ("--account-id", durability["account_id"]),
+        ("--region", durability["region"]),
+        ("--manifest-bucket", input_manifest_bucket),
+        ("--manifest-key", input_manifest_key),
+    ):
+        if command_flag(input_command, flag) != expected:
+            raise LaunchPacketError(f"input URL preparation {flag} differs")
+    packet_input = Path(command_flag(input_command, "--packet"))
+    if not packet_input.is_absolute():
+        packet_input = packet_dir.parent / packet_input
+    expected_packet = packet_dir / "tinylora_step5_canary_launch_packet_v1.json"
+    if packet_input.resolve() != expected_packet.resolve():
+        raise LaunchPacketError("input URL preparation packet path differs")
+
     controller = _mapping(packet.get("controller_prerequisites"), label="controller_prerequisites")
+    artifact_url_output = Path(
+        command_flag("artifact_upload_preparation", "--url-file")
+    )
+    if not artifact_url_output.is_absolute():
+        artifact_url_output = Path.cwd() / artifact_url_output
+    if artifact_url_output.resolve() != Path(
+        str(controller["artifact_put_url_file"])
+    ).resolve():
+        raise LaunchPacketError("artifact preparation URL file differs")
+    for flag, controller_field in (
+        ("--manifest-output", "input_url_manifest_output_path"),
+        ("--url-file", "input_url_manifest_url_file"),
+        ("--host-gate-url-file", "host_gate_url_file"),
+        ("--receipt", "input_url_controller_receipt_path"),
+    ):
+        output = Path(command_flag(input_command, flag))
+        if not output.is_absolute():
+            output = packet_dir.parent / output
+        if output.resolve() != Path(str(controller[controller_field])).resolve():
+            raise LaunchPacketError(f"input URL preparation {flag} output differs")
     public_path = Path(str(controller.get("controller_public_key_path", "")))
     private_path = Path(str(controller.get("controller_private_key_path", "")))
     expected_public_hash = _sha256(
@@ -235,6 +358,7 @@ def _validate_complete_runtime(packet: Mapping[str, Any]) -> None:
         (private_path, "controller private key"),
         (Path(str(controller.get("input_url_manifest_url_file", ""))), "input URL manifest secret"),
         (Path(str(controller.get("artifact_put_url_file", ""))), "artifact PUT URL secret"),
+        (Path(str(controller.get("host_gate_url_file", ""))), "host gate URL secret"),
     ):
         if path.is_symlink() or not path.is_file() or path.stat().st_mode & 0o077:
             raise LaunchPacketError(f"{label} must be a 0600 regular file")
@@ -274,6 +398,10 @@ def validate_launch_packet(
     if set(controller_contracts) != {
         "artifact_upload_preparation",
         "checkpoint_controller",
+        "input_url_controller",
+        "input_url_preparation",
+        "lifecycle_wrapper",
+        "versioning_receipt",
     }:
         raise LaunchPacketError("controller_contracts inventory differs")
     for name, descriptor_value in controller_contracts.items():
@@ -294,6 +422,10 @@ def validate_launch_packet(
         if name.endswith("_sha256"):
             _sha256(item, label=name)
     _validate_s3(remote_inputs.get("model_s3_prefix"), label="model_s3_prefix")
+    _validate_s3(
+        remote_inputs.get("input_url_manifest_s3_uri"),
+        label="input_url_manifest_s3_uri",
+    )
     _validate_s3(remote_inputs.get("pixmo_s3_prefix"), label="pixmo_s3_prefix")
     _validate_s3(
         remote_inputs.get("plan_s3_uri"),
@@ -309,7 +441,8 @@ def validate_launch_packet(
     commands = _mapping(value.get("commands"), label="commands")
     expected_commands = {
         "artifact_upload_preparation",
-        "checkpoint_controller",
+        "input_url_preparation",
+        "versioning_receipt",
         "remote",
         "host_qualification",
         "diagnostic",
@@ -323,6 +456,19 @@ def validate_launch_packet(
         isinstance(item, str) and item for item in lifecycle
     ):
         raise LaunchPacketError("lifecycle_argv must be a nonempty string list")
+    if len(lifecycle) < 2:
+        raise LaunchPacketError("lifecycle_argv must name its controller and wrapper")
+    wrapper_descriptor = _mapping(
+        controller_contracts["lifecycle_wrapper"], label="lifecycle_wrapper"
+    )
+    wrapper_path = Path(str(wrapper_descriptor["path"]))
+    if not wrapper_path.is_absolute():
+        wrapper_path = packet_dir / wrapper_path
+    argv_wrapper = Path(lifecycle[1])
+    if not argv_wrapper.is_absolute():
+        argv_wrapper = packet_dir.parent / argv_wrapper
+    if argv_wrapper.resolve() != wrapper_path.resolve():
+        raise LaunchPacketError("lifecycle_argv wrapper differs from controller contract")
     all_command_text = "\n".join(
         [*(str(commands[name]) for name in expected_commands - {"lifecycle_argv"}), *lifecycle]
     )
@@ -349,7 +495,7 @@ def validate_launch_packet(
         raise LaunchPacketError("remaining_substitutions differ from packet placeholders")
     launch_ready = not observed
     if launch_ready:
-        _validate_complete_runtime(value)
+        _validate_complete_runtime(value, packet_dir)
     return {
         "format": "tinylora_step5_canary_launch_validation_v1",
         "valid": True,

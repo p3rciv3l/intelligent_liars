@@ -42,11 +42,14 @@ def _packet(tmp_path: Path) -> dict[str, object]:
     private_key = tmp_path / "private.pem"
     input_secret = tmp_path / "input.url"
     artifact_secret = tmp_path / "artifact.url"
+    host_gate_secret = tmp_path / "host-gate.url"
+    versioning_receipt = tmp_path / "versioning.json"
     for path, content in (
         (public_key, "public\n"),
         (private_key, "private\n"),
         (input_secret, "https://example.test/input?signed=yes\n"),
         (artifact_secret, "https://example.test/output?signed=yes\n"),
+        (host_gate_secret, "https://example.test/gate?signed=yes\n"),
     ):
         path.write_text(content)
         path.chmod(0o600)
@@ -70,6 +73,22 @@ def _packet(tmp_path: Path) -> dict[str, object]:
                 "path": str(inventory),
                 "sha256": inventory_sha,
             },
+            "input_url_controller": {
+                "path": str(inventory),
+                "sha256": inventory_sha,
+            },
+            "input_url_preparation": {
+                "path": str(inventory),
+                "sha256": inventory_sha,
+            },
+            "lifecycle_wrapper": {
+                "path": str(inventory),
+                "sha256": inventory_sha,
+            },
+            "versioning_receipt": {
+                "path": str(inventory),
+                "sha256": inventory_sha,
+            },
         },
         "local_contracts": {
             "source_manifest": {"path": str(source), "sha256": source_sha},
@@ -79,6 +98,7 @@ def _packet(tmp_path: Path) -> dict[str, object]:
             },
         },
         "remote_inputs": {
+            "input_url_manifest_s3_uri": "s3://bucket/controller/input.json",
             "model_s3_prefix": "s3://bucket/model-cache/revision/content",
             "pixmo_s3_prefix": "s3://bucket/assets/pixmo/content",
             "plan_s3_uri": "${PLAN_S3_URI}",
@@ -99,15 +119,28 @@ def _packet(tmp_path: Path) -> dict[str, object]:
             "approved_at": "${APPROVED_AT}",
         },
         "commands": {
-            "artifact_upload_preparation": "prepare artifact upload",
-            "checkpoint_controller": "run checkpoint controller",
+            "artifact_upload_preparation": (
+                "prepare --bucket bucket --key artifacts/canary.tar "
+                f"--url-file {artifact_secret}"
+            ),
+            "versioning_receipt": (
+                f"capture --bucket bucket --output {versioning_receipt}"
+            ),
             "remote": "python scripts/run_tinylora_step5_screen.py --mode prerequisites --runtime-image-digest ${RUNTIME_IMAGE_DIGEST}",
             "host_qualification": "python scripts/qualify_vast_step5_host.py --download-url-env STEP5_HOST_GATE_URL",
+            "input_url_preparation": (
+                f"prepare --packet {tmp_path / 'tinylora_step5_canary_launch_packet_v1.json'} "
+                "--account-id ${AWS_ACCOUNT_ID} --region ${AWS_REGION} "
+                "--manifest-bucket bucket --manifest-key controller/input.json "
+                f"--manifest-output {tmp_path / 'input.json'} "
+                f"--url-file {input_secret} --host-gate-url-file {host_gate_secret} "
+                f"--receipt {tmp_path / 'input-receipt.json'}"
+            ),
             "diagnostic": "python scripts/diagnose_tinylora_step5_canary.py",
             "software_recovery": "python scripts/validate_tinylora_step5_launch_packet.py --packet configs/packet.json --allow-incomplete",
             "lifecycle_argv": [
                 "python",
-                "scripts/run_vast_step5_instance.py",
+                str(inventory),
                 "--offer-id",
                 "${OFFER_ID}",
                 "--image",
@@ -126,28 +159,51 @@ def _packet(tmp_path: Path) -> dict[str, object]:
                 str(artifact_secret),
                 "--expected-durable-uri",
                 "s3://bucket/artifacts/canary.tar",
+                "--host-gate-url-file",
+                str(host_gate_secret),
+                "--checkpoint-controller-script",
+                str(inventory),
+                "--checkpoint-controller-script-sha256",
+                inventory_sha,
+                "--checkpoint-bucket",
+                "bucket",
+                "--checkpoint-prefix",
+                "checkpoints/canary",
+                "--checkpoint-controller-private-key",
+                str(private_key),
                 "--remote-command",
                 "python scripts/run_tinylora_step5_screen.py --mode prerequisites --runtime-image-digest ${RUNTIME_IMAGE_DIGEST}",
             ],
         },
         "durability": {
+            "account_id": "${AWS_ACCOUNT_ID}",
             "artifact_uri": "s3://bucket/artifacts/canary.tar",
+            "bucket": "bucket",
             "bucket_versioning_status": "Enabled",
-            "bucket_versioning_receipt_sha256": "7" * 64,
+            "bucket_versioning_receipt_path": str(versioning_receipt),
+            "bucket_versioning_receipt_sha256": "${BUCKET_VERSIONING_RECEIPT_SHA256}",
             "checkpoint_controller_key_id": "8" * 64,
             "checkpoint_prefix": "s3://bucket/checkpoints/canary",
+            "region": "${AWS_REGION}",
         },
         "controller_prerequisites": {
             "controller_public_key_path": str(public_key),
+            "checkpoint_controller_script_path": str(inventory),
             "controller_public_key_sha256": hashlib.sha256(public_key.read_bytes()).hexdigest(),
             "controller_private_key_path": str(private_key),
             "input_url_manifest_url_file": str(input_secret),
             "artifact_put_url_file": str(artifact_secret),
+            "host_gate_url_file": str(host_gate_secret),
+            "input_url_controller_receipt_path": str(tmp_path / "input-receipt.json"),
+            "input_url_manifest_output_path": str(tmp_path / "input.json"),
         },
         "remaining_substitutions": [
             "APPROVED_AT",
             "APPROVED_HOURLY_PRICE_USD",
             "APPROVED_MAX_COST_USD",
+            "AWS_ACCOUNT_ID",
+            "AWS_REGION",
+            "BUCKET_VERSIONING_RECEIPT_SHA256",
             "GPU_NAME",
             "GPU_VRAM_GIB",
             "OFFER_ID",
@@ -189,6 +245,18 @@ def test_packet_rejects_changed_local_contract(tmp_path: Path):
 
 def test_complete_packet_requires_digest_and_exact_cost_approval(tmp_path: Path):
     packet = _packet(tmp_path)
+    receipt_path = Path(packet["durability"]["bucket_versioning_receipt_path"])  # type: ignore[index]
+    receipt_sha = _write_json(
+        receipt_path,
+        {
+            "account_id": "123456789012",
+            "bucket": "bucket",
+            "checked_at": "2026-08-22T19:50:00Z",
+            "format": "tinylora_step5_bucket_versioning_receipt_v1",
+            "region": "us-west-2",
+            "status": "Enabled",
+        },
+    )
     replacements = {
         "${RUNTIME_IMAGE}": "ghcr.io/example/step5@sha256:" + "a" * 64,
         "${RUNTIME_IMAGE_DIGEST}": "sha256:" + "a" * 64,
@@ -198,6 +266,9 @@ def test_complete_packet_requires_digest_and_exact_cost_approval(tmp_path: Path)
         "${APPROVED_HOURLY_PRICE_USD}": 0.25,
         "${APPROVED_MAX_COST_USD}": 1.50,
         "${APPROVED_AT}": "2026-08-22T20:00:00Z",
+        "${AWS_ACCOUNT_ID}": "123456789012",
+        "${AWS_REGION}": "us-west-2",
+        "${BUCKET_VERSIONING_RECEIPT_SHA256}": receipt_sha,
         "${PLAN_S3_URI}": "s3://bucket/step5/plan.tar",
         "${PROBE_S3_URI}": "s3://bucket/step5/probe.tar",
     }
@@ -234,6 +305,18 @@ def test_complete_packet_requires_digest_and_exact_cost_approval(tmp_path: Path)
 
 def test_complete_packet_rejects_command_field_drift(tmp_path: Path):
     packet = _packet(tmp_path)
+    receipt_path = Path(packet["durability"]["bucket_versioning_receipt_path"])  # type: ignore[index]
+    receipt_sha = _write_json(
+        receipt_path,
+        {
+            "account_id": "123456789012",
+            "bucket": "bucket",
+            "checked_at": "2026-08-22T19:50:00Z",
+            "format": "tinylora_step5_bucket_versioning_receipt_v1",
+            "region": "us-west-2",
+            "status": "Enabled",
+        },
+    )
     packet["runtime"].update(  # type: ignore[union-attr]
         {
             "image": "ghcr.io/example/step5@sha256:" + "a" * 64,
@@ -248,12 +331,24 @@ def test_complete_packet_rejects_command_field_drift(tmp_path: Path):
         "approved_max_cost_usd": 1.5,
         "approved_at": "2026-08-22T20:00:00Z",
     }
+    packet["durability"].update(  # type: ignore[union-attr]
+        {
+            "account_id": "123456789012",
+            "bucket_versioning_receipt_sha256": receipt_sha,
+            "region": "us-west-2",
+        }
+    )
     packet["remote_inputs"]["plan_s3_uri"] = "s3://bucket/plan"  # type: ignore[index]
     packet["remote_inputs"]["probe_s3_uri"] = "s3://bucket/probe"  # type: ignore[index]
     packet["commands"]["remote"] = "run --runtime sha256:" + "a" * 64  # type: ignore[index]
+    packet["commands"]["input_url_preparation"] = packet["commands"][  # type: ignore[index]
+        "input_url_preparation"
+    ].replace("${AWS_ACCOUNT_ID}", "123456789012").replace(  # type: ignore[union-attr]
+        "${AWS_REGION}", "us-west-2"
+    )
     packet["commands"]["lifecycle_argv"] = [  # type: ignore[index]
         "python",
-        "wrapper.py",
+        packet["controller_contracts"]["lifecycle_wrapper"]["path"],  # type: ignore[index]
         "--offer-id",
         "999",
         "--image",
@@ -272,6 +367,18 @@ def test_complete_packet_rejects_command_field_drift(tmp_path: Path):
         packet["controller_prerequisites"]["artifact_put_url_file"],  # type: ignore[index]
         "--expected-durable-uri",
         packet["durability"]["artifact_uri"],  # type: ignore[index]
+        "--host-gate-url-file",
+        packet["controller_prerequisites"]["host_gate_url_file"],  # type: ignore[index]
+        "--checkpoint-controller-script",
+        packet["controller_prerequisites"]["checkpoint_controller_script_path"],  # type: ignore[index]
+        "--checkpoint-controller-script-sha256",
+        packet["controller_contracts"]["checkpoint_controller"]["sha256"],  # type: ignore[index]
+        "--checkpoint-bucket",
+        packet["durability"]["bucket"],  # type: ignore[index]
+        "--checkpoint-prefix",
+        "checkpoints/canary",
+        "--checkpoint-controller-private-key",
+        packet["controller_prerequisites"]["controller_private_key_path"],  # type: ignore[index]
         "--remote-command",
         packet["commands"]["remote"],  # type: ignore[index]
     ]
@@ -285,6 +392,67 @@ def test_packet_hash_detects_tampering(tmp_path: Path):
     packet = _packet(tmp_path)
     packet["runtime"]["disk_gib"] = 200  # type: ignore[index]
     with pytest.raises(LaunchPacketError, match="packet_sha256"):
+        validate_launch_packet(packet, packet_dir=tmp_path)
+
+
+def test_complete_packet_rejects_fabricated_versioning_receipt(tmp_path: Path):
+    packet = _packet(tmp_path)
+    receipt_path = Path(packet["durability"]["bucket_versioning_receipt_path"])  # type: ignore[index]
+    receipt_sha = _write_json(
+        receipt_path,
+        {
+            "account_id": "123456789012",
+            "bucket": "different-bucket",
+            "checked_at": "2026-08-22T19:50:00Z",
+            "format": "tinylora_step5_bucket_versioning_receipt_v1",
+            "region": "us-west-2",
+            "status": "Enabled",
+        },
+    )
+    packet["runtime"].update(  # type: ignore[union-attr]
+        {
+            "image": "ghcr.io/example/step5@sha256:" + "a" * 64,
+            "image_digest": "sha256:" + "a" * 64,
+            "offer_id": "123",
+            "gpu_name": "RTX 3090",
+            "gpu_vram_gib": 24,
+        }
+    )
+    packet["approval"] = {
+        "approved_hourly_price_usd": 0.25,
+        "approved_max_cost_usd": 1.5,
+        "approved_at": "2026-08-22T20:00:00Z",
+    }
+    packet["remote_inputs"]["plan_s3_uri"] = "s3://bucket/plan"  # type: ignore[index]
+    packet["remote_inputs"]["probe_s3_uri"] = "s3://bucket/probe"  # type: ignore[index]
+    packet["durability"].update(  # type: ignore[union-attr]
+        {
+            "account_id": "123456789012",
+            "bucket_versioning_receipt_sha256": receipt_sha,
+            "region": "us-west-2",
+        }
+    )
+    packet["commands"]["remote"] = "run sha256:" + "a" * 64  # type: ignore[index]
+    packet["commands"]["input_url_preparation"] = packet["commands"][  # type: ignore[index]
+        "input_url_preparation"
+    ].replace("${AWS_ACCOUNT_ID}", "123456789012").replace(  # type: ignore[union-attr]
+        "${AWS_REGION}", "us-west-2"
+    )
+    lifecycle = packet["commands"]["lifecycle_argv"]  # type: ignore[index]
+    for marker, replacement in (
+        ("${OFFER_ID}", "123"),
+        ("${RUNTIME_IMAGE}", "ghcr.io/example/step5@sha256:" + "a" * 64),
+        ("${RUNTIME_IMAGE_DIGEST}", "sha256:" + "a" * 64),
+        ("${APPROVED_HOURLY_PRICE_USD}", "0.25"),
+        ("${APPROVED_MAX_COST_USD}", "1.5"),
+    ):
+        lifecycle = [str(item).replace(marker, replacement) for item in lifecycle]
+    remote_index = lifecycle.index("--remote-command") + 1
+    lifecycle[remote_index] = packet["commands"]["remote"]  # type: ignore[index]
+    packet["commands"]["lifecycle_argv"] = lifecycle  # type: ignore[index]
+    packet["remaining_substitutions"] = []
+    packet["packet_sha256"] = canonical_sha256(packet)
+    with pytest.raises(LaunchPacketError, match="receipt"):
         validate_launch_packet(packet, packet_dir=tmp_path)
 
 

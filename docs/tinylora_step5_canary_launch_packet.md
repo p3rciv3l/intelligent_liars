@@ -82,7 +82,11 @@ training/projection seeds, and an external checkpoint durability verifier. The
 exact reviewed finalizer normalizes the fixed output inventory, publishes its
 immutable durable object through a protected presigned URL, and writes the
 lifecycle-compatible `artifact_manifest.json`. The credentialless checkpoint
-bridge publishes each generation through the trusted controller.
+bridge publishes each generation through a trusted controller sidecar. The
+lifecycle wrapper starts that sidecar only after host qualification, waits for
+its S3-versioning and remote-exchange readiness checks, monitors it alongside
+the worker, and terminates it after each workload attempt. A sidecar failure is
+handled as a software failure on the same instance.
 
 The diagnostic command conservatively reports `software_failure` whenever it
 can still run over SSH. It captures disk, GPU, Python/CUDA, offline-cache, and
@@ -99,15 +103,23 @@ resuming.
    Vast search.
 3. Exact `APPROVED_HOURLY_PRICE_USD`, `APPROVED_MAX_COST_USD`, and
    `APPROVED_AT` after the user sees and approves those concrete values.
-4. `BUCKET_VERSIONING_STATUS=Enabled` and the SHA-256 of a fresh controller
-   receipt proving that exact bucket state. It is currently disabled or
-   unconfigured, so this remains a hard blocker.
+4. `BUCKET_VERSIONING_STATUS=Enabled`, the AWS account and region, and the
+   SHA-256 of a fresh controller receipt proving that exact bucket state. It is
+   currently disabled or unconfigured, so this remains a hard blocker. The
+   receipt is captured by the packet's read-only `commands.versioning_receipt`
+   command and must identify the exact bucket, account, region, enabled status,
+   and an observation no more than 30 minutes before approval.
 
 The hydration, checkpoint durability, controller provisioning, and artifact
 finalization commands are exact and hash-bound. The packet remains blocked only
 on the immutable image, fresh offer/cost approval, and bucket-versioning proof.
-Protected URL files must also exist as mode-0600 regular files at the frozen
-controller paths before the complete validator will pass.
+The hash-bound `commands.input_url_preparation` controller command verifies the
+frozen S3 objects, publishes the create-only URL manifest, and atomically creates
+the hydration bootstrap and host-gate URL files as mode-0600 regular files. The
+artifact preparation command does the same for the final PUT URL. These
+protected files must exist at the frozen controller paths before the complete
+validator will pass; they are deterministic launch preparation, not ad hoc
+operator substitutions.
 
 The validator reports `launch_ready: false` and exits 2 while any substitution
 remains. `--allow-incomplete` changes only that reporting exit code for CI; it
