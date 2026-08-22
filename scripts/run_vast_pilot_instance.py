@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -101,6 +102,38 @@ def write_metadata(path: Path, payload: dict[str, Any]) -> None:
     os.replace(temporary, path)
 
 
+def verified_artifact_hashes(fetch_dir: Path, rank: int) -> dict[str, str]:
+    """Return hashes only when the complete pilot artifact set is present."""
+    result_dir = fetch_dir / f"rank_{rank}"
+    required = (
+        result_dir / "result.json",
+        result_dir / "pilot_state.pt",
+        result_dir / f"tinylora_rank{rank}_basis.pt",
+    )
+    missing = [str(path) for path in required if not path.is_file() or path.stat().st_size == 0]
+    if missing:
+        raise FileNotFoundError(f"Incomplete fetched artifact set: {missing}")
+    return {
+        str(path.relative_to(fetch_dir)): hashlib.sha256(path.read_bytes()).hexdigest()
+        for path in required
+    }
+
+
+def cleanup_action(*, workload_started: bool, artifacts_verified: bool) -> str:
+    """Preserve a worker whenever it may contain the only artifact copy."""
+    if workload_started and not artifacts_verified:
+        return "stop"
+    return "destroy"
+
+
+def require_empty_artifact_destination(fetch_dir: Path, rank: int) -> None:
+    result_dir = fetch_dir / f"rank_{rank}"
+    if result_dir.exists():
+        raise FileExistsError(
+            f"Refusing to mix fetched artifacts with an existing result: {result_dir}"
+        )
+
+
 def main() -> int:
     args = parse_args()
     label = f"codex-vast-tinylora-rank-{args.rank}-retry"
@@ -123,11 +156,12 @@ def main() -> int:
     print(f"sync: {args.repo.resolve()} -> /workspace/workload", flush=True)
     print(f"run: {args.remote_command}", flush=True)
     print(f"fetch: /workspace/workload/results/rank_{args.rank}", flush=True)
-    print("cleanup: destroy instance in finally", flush=True)
+    print("cleanup: destroy only after fetched artifacts verify; otherwise stop for recovery", flush=True)
     if not args.execute:
         return 0
     if not args.confirmed_cost_approval:
         raise ValueError("Execution requires confirmed cost approval")
+    require_empty_artifact_destination(args.fetch_dir.resolve(), args.rank)
     metadata: dict[str, Any] = {
         "format": "tinylora_vast_worker_lifecycle_v1",
         "rank": args.rank,
@@ -138,6 +172,8 @@ def main() -> int:
     }
     instance_id: str | None = None
     exit_code = 1
+    workload_started = False
+    artifacts_verified = False
     try:
         created = run(create)
         instance_id = parse_instance_id(created.stdout)
@@ -173,6 +209,8 @@ def main() -> int:
                 ],
                 capture=False,
             )
+        workload_started = True
+        metadata["workload_started_at"] = now()
         remote = run(
             [*ssh_prefix(host, port), f"cd /workspace/workload && {args.remote_command}"],
             check=False,
@@ -195,17 +233,37 @@ def main() -> int:
         ]
         fetched = run(fetch, check=False, capture=False)
         metadata["fetch_exit_code"] = fetched.returncode
+        if fetched.returncode == 0:
+            try:
+                metadata["artifact_sha256"] = verified_artifact_hashes(
+                    args.fetch_dir.resolve(), args.rank
+                )
+                artifacts_verified = True
+            except (FileNotFoundError, OSError) as error:
+                metadata["artifact_verification_error"] = str(error)
+        metadata["artifacts_verified"] = artifacts_verified
+        if not artifacts_verified:
+            return 1
         return exit_code
     finally:
         metadata["ended_at"] = now()
         if instance_id is not None:
-            destroyed = run(
-                [args.vastai, "destroy", "instance", instance_id, "--raw"],
+            action = cleanup_action(
+                workload_started=workload_started,
+                artifacts_verified=artifacts_verified,
+            )
+            cleaned = run(
+                [args.vastai, action, "instance", instance_id, "--retry", "3", "--raw"],
                 check=False,
             )
-            metadata["destroyed"] = destroyed.returncode == 0
-            metadata["destroy_output"] = (destroyed.stdout or destroyed.stderr or "")[:1000]
-            print(f"destroyed {instance_id}: {metadata['destroyed']}", flush=True)
+            metadata["cleanup_action"] = action
+            metadata["cleanup_succeeded"] = cleaned.returncode == 0
+            metadata["cleanup_output"] = (cleaned.stdout or cleaned.stderr or "")[:1000]
+            metadata["recovery_required"] = action == "stop"
+            print(
+                f"{action} {instance_id}: {metadata['cleanup_succeeded']}",
+                flush=True,
+            )
         write_metadata(args.metadata, metadata)
 
 
