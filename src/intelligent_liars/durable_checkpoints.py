@@ -108,6 +108,7 @@ def create_checkpoint_generation(
         }
         manifest["manifest_sha256"] = _document_sha256(manifest)
         _write_new_file(staging_path / MANIFEST_NAME, manifest)
+        _fsync_directory_tree(staging_path)
         generation = validate_checkpoint_generation(
             staging_path,
             expected_identity=normalized_identity,
@@ -609,6 +610,16 @@ def _fsync_directory(path: Path) -> None:
         os.fsync(descriptor)
     finally:
         os.close(descriptor)
+
+
+def _fsync_directory_tree(root: Path) -> None:
+    directories = [root, *(path for path in root.rglob("*") if path.is_dir())]
+    for directory in sorted(
+        directories,
+        key=lambda path: len(path.relative_to(root).parts),
+        reverse=True,
+    ):
+        _fsync_directory(directory)
 
 
 @contextmanager
