@@ -109,7 +109,7 @@ def _upload(archive: Path, secret_path: Path) -> None:
 
 def _cleanup_superseded_exchange(root: Path, generation_id: str) -> None:
     """Keep one retryable large outbox and remove obsolete URL/marker state."""
-    for role in ("outbox", "secrets", "uploaded"):
+    for role in ("outbox", "requests", "secrets", "uploaded", "acks"):
         directory = root / role
         if not directory.is_dir() or directory.is_symlink():
             continue

@@ -52,6 +52,10 @@ python scripts/publish_step5_checkpoint_worker.py \
   --timeout-seconds 1200
 ```
 
+`/workspace/checkpoint-bridge` is private to one worker/candidate process; it is
+never shared between concurrent arms. Superseded exchange state is removed only
+after the replacement generation is locally complete.
+
 The surrounding screen command also includes:
 
 ```bash
