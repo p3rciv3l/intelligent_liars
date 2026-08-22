@@ -5,6 +5,7 @@
 !Dockerfile
 !requirements.in
 !requirements.lock
+!preserve_base_ninja.py
 !runtime-manifest.json
 !validate_runtime.py
 !write_sbom.py

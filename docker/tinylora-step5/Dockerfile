@@ -24,13 +24,27 @@ ENV DEBIAN_FRONTEND=noninteractive \
 
 WORKDIR /opt/tinylora
 
-COPY requirements.in requirements.lock /opt/tinylora/
+COPY requirements.in requirements.lock preserve_base_ninja.py /opt/tinylora/
 
 # Every registry artifact is hash-pinned. Torch and CUDA are supplied by the
 # digest-pinned base; the lock deliberately excludes torch so pip cannot replace
 # the CUDA build with a PyPI CPU wheel.
 RUN --mount=type=cache,target=/root/.cache/pip \
     python -m pip install --require-hashes -r /opt/tinylora/requirements.lock
+
+# The digest-pinned PyTorch base contains Ninja's 1.11.1 executable in the
+# `ninja==1.11.1.1` Python wheel. The GHCR amd64 build observed modern
+# `pip check` report that installed distribution as unsupported. Preserve and
+# execute-validate the exact base payload, then remove only the distribution
+# metadata rejected by `pip check` before checking the full
+# environment. FlashAttention is prebuilt, so Ninja is a system tool here, not
+# a Python runtime dependency.
+RUN python /opt/tinylora/preserve_base_ninja.py \
+      --binary /usr/local/bin/ninja \
+      --license /opt/tinylora/third_party/ninja-LICENSE_Apache_20 \
+      --receipt /opt/tinylora/sbom/ninja-system-package.json \
+    && python -m pip uninstall --yes ninja \
+    && test "$(ninja --version)" = "1.11.1.git.kitware.jobserver-1"
 
 # FlashAttention is installed from the upstream prebuilt cp311/cu12/torch2.5
 # wheel. This avoids a per-host source build and rejects an altered asset before
@@ -48,7 +62,8 @@ COPY Dockerfile runtime-manifest.json validate_runtime.py write_sbom.py /opt/tin
 COPY third_party/ /opt/tinylora/third_party/
 
 RUN python /opt/tinylora/write_sbom.py \
-      --runtime-id tinylora-step5-cu121-torch251-fa283post1-r2 \
+      --runtime-id tinylora-step5-cu121-torch251-fa283post1-r3 \
+      --system-package-receipt /opt/tinylora/sbom/ninja-system-package.json \
       --output-dir /opt/tinylora/sbom
 
 # Image construction can validate metadata and packages, but a real RTX host is

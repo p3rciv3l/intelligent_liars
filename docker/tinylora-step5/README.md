@@ -9,6 +9,13 @@ credentials, experiment data, or checkpoints.
 
 - The PyTorch/CUDA base is selected by digest, not by a mutable tag.
 - Python dependencies are transitively locked with hashes.
+- The base image's valid Ninja `1.11.1.git.kitware.jobserver-1` executable is
+  retained as a checked system
+  tool while the `ninja==1.11.1.1` distribution metadata rejected by the GHCR
+  build's `pip check` is removed;
+  the build still runs an unfiltered `pip check` over the resulting environment.
+  The standalone ELF is copied from `ninja.BIN_DIR`, not from its Python console
+  wrapper, and its Apache-2.0 notice plus wheel and binary checksums are retained.
 - The 256 MB upstream FlashAttention wheel is downloaded and verified while the
   image is built. A rented machine never compiles FlashAttention.
 - Hugging Face and Torch caches live below `/workspace/cache`. A launcher should
@@ -52,7 +59,7 @@ For a local build that is not pushed:
 ```bash
 docker build \
   --build-arg IMAGE_REVISION="$(git rev-parse HEAD)" \
-  --tag tinylora-step5:cu121-torch251-fa283post1-r2 \
+  --tag tinylora-step5:cu121-torch251-fa283post1-r3 \
   docker/tinylora-step5
 ```
 

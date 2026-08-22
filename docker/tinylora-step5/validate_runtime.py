@@ -10,6 +10,7 @@ import json
 import os
 import platform
 import shutil
+import subprocess
 import sys
 from pathlib import Path
 from typing import Any
@@ -105,6 +106,70 @@ def validate_installed_packages(manifest: dict[str, Any]) -> list[str]:
     for name, path_value in manifest.get("image_artifacts", {}).items():
         if not Path(path_value).is_file():
             errors.append(f"missing image artifact {name}: {path_value}")
+    errors.extend(validate_system_tools(manifest))
+    return errors
+
+
+def validate_system_tools(manifest: dict[str, Any]) -> list[str]:
+    errors: list[str] = []
+    for tool, contract in manifest.get("system_tools", {}).items():
+        removed_distribution = contract.get("python_distribution_removed")
+        if removed_distribution is not None:
+            installed_distribution = _installed_version(tool)
+            if installed_distribution is not None:
+                errors.append(
+                    f"{tool} Python distribution metadata must be absent; "
+                    f"found {installed_distribution}"
+                )
+        executable = shutil.which(tool)
+        if executable is None:
+            errors.append(f"missing system tool: {tool}")
+            continue
+        try:
+            completed = subprocess.run(
+                [executable, "--version"],
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            errors.append(f"{tool}: execution failed: {exc}")
+            continue
+        actual = completed.stdout.strip()
+        if completed.returncode != 0 or actual != contract["version"]:
+            errors.append(
+                f"{tool}: expected {contract['version']}, got {actual or 'execution failed'}"
+            )
+        expected_binary_sha256 = contract.get("binary_sha256")
+        if expected_binary_sha256 and sha256(Path(executable)) != expected_binary_sha256:
+            errors.append(f"{tool}: executable checksum does not match runtime contract")
+        license_path = contract.get("license_path")
+        expected_license_sha256 = contract.get("license_sha256")
+        if license_path and expected_license_sha256:
+            try:
+                actual_license_sha256 = sha256(Path(license_path))
+            except OSError as exc:
+                errors.append(f"{tool}: cannot read license notice: {exc}")
+            else:
+                if actual_license_sha256 != expected_license_sha256:
+                    errors.append(f"{tool}: license checksum does not match runtime contract")
+        receipt_path = contract.get("provenance_receipt")
+        if receipt_path:
+            try:
+                receipt = json.loads(Path(receipt_path).read_text())
+            except (OSError, json.JSONDecodeError) as exc:
+                errors.append(f"{tool}: invalid provenance receipt: {exc}")
+                continue
+            receipt_expectations = {
+                "binary_sha256": contract.get("binary_sha256"),
+                "license_sha256": contract.get("license_sha256"),
+                "source_artifact": contract.get("source_artifact"),
+                "source_artifact_sha256": contract.get("source_artifact_sha256"),
+            }
+            for field, expected in receipt_expectations.items():
+                if expected is not None and receipt.get(field) != expected:
+                    errors.append(f"{tool}: provenance receipt mismatch for {field}")
     return errors
 
 

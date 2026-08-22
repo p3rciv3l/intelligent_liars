@@ -32,7 +32,7 @@ def normalized_license(metadata: importlib.metadata.PackageMetadata) -> str:
     return "NOASSERTION"
 
 
-def distributions() -> list[dict[str, Any]]:
+def distributions(system_receipts: list[Path] | None = None) -> list[dict[str, Any]]:
     result = []
     for distribution in importlib.metadata.distributions():
         name = distribution.metadata.get("Name")
@@ -50,6 +50,22 @@ def distributions() -> list[dict[str, Any]]:
                 "license_declared": normalized_license(distribution.metadata),
                 "license_classifiers": sorted(classifiers),
                 "home_page": distribution.metadata.get("Home-page"),
+            }
+        )
+    for receipt_path in system_receipts or []:
+        receipt = json.loads(receipt_path.read_text())
+        result.append(
+            {
+                "name": receipt["name"],
+                "version": receipt["distribution_version"],
+                "binary_version": receipt["binary_version"],
+                "binary_sha256": receipt["binary_sha256"],
+                "license_declared": receipt["license"],
+                "license_classifiers": [],
+                "home_page": "https://github.com/ninja-build/ninja",
+                "download_location": receipt["source_artifact"],
+                "source_artifact_sha256": receipt["source_artifact_sha256"],
+                "inventory_kind": "preserved-system-binary",
             }
         )
     return sorted(result, key=lambda item: (item["name"].lower(), item["version"]))
@@ -73,7 +89,7 @@ def build_spdx(packages: list[dict[str, Any]], runtime_id: str) -> dict[str, Any
                 "SPDXID": package_id,
                 "name": package["name"],
                 "versionInfo": package["version"],
-                "downloadLocation": "NOASSERTION",
+                "downloadLocation": package.get("download_location", "NOASSERTION"),
                 "filesAnalyzed": False,
                 "licenseConcluded": "NOASSERTION",
                 "licenseDeclared": package["license_declared"],
@@ -90,6 +106,17 @@ def build_spdx(packages: list[dict[str, Any]], runtime_id: str) -> dict[str, Any
                 ],
             }
         )
+        if package.get("source_artifact_sha256"):
+            spdx_packages[-1]["checksums"] = [
+                {
+                    "algorithm": "SHA256",
+                    "checksumValue": package["source_artifact_sha256"],
+                }
+            ]
+        if package.get("binary_sha256"):
+            spdx_packages[-1]["packageComment"] = (
+                f"Preserved system binary SHA256: {package['binary_sha256']}"
+            )
         relationships.append(
             {
                 "spdxElementId": "SPDXRef-DOCUMENT",
@@ -116,12 +143,18 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--runtime-id", required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
+    parser.add_argument(
+        "--system-package-receipt",
+        type=Path,
+        action="append",
+        default=[],
+    )
     return parser.parse_args()
 
 
 def main() -> int:
     args = parse_args()
-    packages = distributions()
+    packages = distributions(args.system_package_receipt)
     args.output_dir.mkdir(parents=True, exist_ok=True)
     inventory = {
         "schema_version": 1,

@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "runtime_id": "tinylora-step5-cu121-torch251-fa283post1-r2",
+  "runtime_id": "tinylora-step5-cu121-torch251-fa283post1-r3",
   "intended_workload": "bounded Step 5 TinyLoRA candidate screening only",
   "large_run_enabled": false,
   "platform": {
@@ -32,6 +32,20 @@
     "transformers": "5.15.1",
     "flash-attn": "2.8.3.post1"
   },
+  "system_tools": {
+    "ninja": {
+      "version": "1.11.1.git.kitware.jobserver-1",
+      "source": "digest-pinned-base-binary",
+      "python_distribution_removed": "1.11.1.1",
+      "binary_sha256": "68f6c375c4234305bff9790aa232815b38924390cbb6ad4987ea0f94ad2bc410",
+      "license_sha256": "73ba74dfaa520b49a401b5d21459a8523a146f3b7518a833eea5efa85130bf68",
+      "license_path": "/opt/tinylora/third_party/ninja-LICENSE_Apache_20",
+      "provenance_receipt": "/opt/tinylora/sbom/ninja-system-package.json",
+      "source_artifact": "https://files.pythonhosted.org/packages/6d/92/8d7aebd4430ab5ff65df2bfee6d5745f95c004284db2d8ca76dcbfd9de47/ninja-1.11.1.1-py2.py3-none-manylinux1_x86_64.manylinux_2_5_x86_64.whl",
+      "source_artifact_sha256": "84502ec98f02a037a169c4b0d5d86075eaf6afc55e1879003d6cab51ced2ea4b",
+      "reason": "pip check reports the base distribution unsupported on linux/amd64"
+    }
+  },
   "flash_attention_wheel": {
     "filename": "flash_attn-2.8.3.post1+cu12torch2.5cxx11abiFALSE-cp311-cp311-linux_x86_64.whl",
     "url": "https://github.com/Dao-AILab/flash-attention/releases/download/v2.8.3.post1/flash_attn-2.8.3.post1%2Bcu12torch2.5cxx11abiFALSE-cp311-cp311-linux_x86_64.whl",
@@ -47,6 +61,8 @@
   },
   "image_artifacts": {
     "flash_attention_license": "/opt/tinylora/third_party/flash-attention-LICENSE",
+    "ninja_license": "/opt/tinylora/third_party/ninja-LICENSE_Apache_20",
+    "ninja_provenance": "/opt/tinylora/sbom/ninja-system-package.json",
     "python_license_inventory": "/opt/tinylora/sbom/python-package-licenses.json",
     "python_spdx_sbom": "/opt/tinylora/sbom/python-packages.spdx.json"
   },
@@ -56,6 +72,12 @@
       "source": "https://github.com/Dao-AILab/flash-attention/blob/v2.8.3.post1/LICENSE",
       "path": "/opt/tinylora/third_party/flash-attention-LICENSE",
       "sha256": "8c9ccb96c065e706135b6cbad279b721da6156e51f3a5f27c6b3329af9416d73"
+    },
+    "ninja": {
+      "license": "Apache-2.0",
+      "source": "https://files.pythonhosted.org/packages/6d/92/8d7aebd4430ab5ff65df2bfee6d5745f95c004284db2d8ca76dcbfd9de47/ninja-1.11.1.1-py2.py3-none-manylinux1_x86_64.manylinux_2_5_x86_64.whl",
+      "path": "/opt/tinylora/third_party/ninja-LICENSE_Apache_20",
+      "checksum_receipt": "/opt/tinylora/sbom/ninja-system-package.json"
     }
   },
   "cache_policy": {
