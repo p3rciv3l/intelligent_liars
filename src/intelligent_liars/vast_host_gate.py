@@ -11,6 +11,7 @@ from __future__ import annotations
 import statistics
 import time
 import urllib.request
+from math import isfinite
 from collections.abc import Callable, Iterable
 from dataclasses import asdict, dataclass
 from enum import Enum
@@ -48,14 +49,19 @@ class HostGateThresholds:
     max_stall_seconds: float
 
     def __post_init__(self) -> None:
-        if self.min_download_mbps <= 0:
-            raise ValueError("min_download_mbps must be positive")
+        if not isfinite(self.min_download_mbps) or self.min_download_mbps <= 0:
+            raise ValueError("min_download_mbps must be finite and positive")
         if self.min_sample_bytes <= 0:
             raise ValueError("min_sample_bytes must be positive")
-        if self.max_time_to_first_byte_seconds <= 0:
-            raise ValueError("max_time_to_first_byte_seconds must be positive")
-        if self.max_stall_seconds <= 0:
-            raise ValueError("max_stall_seconds must be positive")
+        if (
+            not isfinite(self.max_time_to_first_byte_seconds)
+            or self.max_time_to_first_byte_seconds <= 0
+        ):
+            raise ValueError(
+                "max_time_to_first_byte_seconds must be finite and positive"
+            )
+        if not isfinite(self.max_stall_seconds) or self.max_stall_seconds <= 0:
+            raise ValueError("max_stall_seconds must be finite and positive")
 
 
 @dataclass(frozen=True)
@@ -112,25 +118,35 @@ def measure_download_stream(
     error: str | None = None
 
     try:
+        first_chunk = stream.read(1)
+        observed_at = clock()
+        if first_chunk:
+            first_byte_at = observed_at
+            previous_at = observed_at
+            downloaded = len(first_chunk)
         while downloaded < sample_bytes:
             wanted = min(chunk_bytes, sample_bytes - downloaded)
             chunk = stream.read(wanted)
             observed_at = clock()
+            gap = max(0.0, observed_at - previous_at)
+            if first_byte_at is not None:
+                longest_stall = max(longest_stall, gap)
             if not chunk:
+                previous_at = observed_at
                 break
             if first_byte_at is None:
                 first_byte_at = observed_at
-            else:
-                gap = max(0.0, observed_at - previous_at)
-                longest_stall = max(longest_stall, gap)
             previous_at = observed_at
             downloaded += len(chunk)
+            if gap > max_stall_seconds:
+                error = "StallThresholdExceeded"
+                break
     except Exception as exc:  # Network streams expose many transport exceptions.
         observed_at = clock()
         if first_byte_at is not None:
             longest_stall = max(longest_stall, max(0.0, observed_at - previous_at))
         previous_at = observed_at
-        error = f"{type(exc).__name__}: {exc}"
+        error = type(exc).__name__
 
     ended_at = max(previous_at, clock())
     elapsed = max(0.0, ended_at - started_at)
@@ -143,7 +159,7 @@ def measure_download_stream(
         elapsed_seconds=elapsed,
         time_to_first_byte_seconds=ttfb,
         effective_mbps=_safe_rate_mbps(downloaded, elapsed),
-        transfer_mbps=_safe_rate_mbps(downloaded, transfer_elapsed),
+        transfer_mbps=_safe_rate_mbps(max(0, downloaded - 1), transfer_elapsed),
         longest_stall_seconds=longest_stall,
         stalled=longest_stall > max_stall_seconds,
         completed=downloaded >= sample_bytes and error is None,
@@ -164,6 +180,11 @@ def measure_download_url(
 ) -> DownloadTrial:
     """Open ``url`` and measure at most ``sample_bytes`` from it."""
 
+    if not isfinite(timeout_seconds) or timeout_seconds <= 0:
+        raise ValueError("timeout_seconds must be finite and positive")
+    if not isfinite(max_stall_seconds) or max_stall_seconds <= 0:
+        raise ValueError("max_stall_seconds must be finite and positive")
+
     started_at = clock()
     request = urllib.request.Request(
         url,
@@ -174,7 +195,9 @@ def measure_download_url(
         },
     )
     try:
-        with opener(request, timeout=timeout_seconds) as response:
+        # HTTPResponse applies this as a per-blocking-operation socket timeout.
+        per_read_timeout = min(timeout_seconds, max_stall_seconds)
+        with opener(request, timeout=per_read_timeout) as response:
             return measure_download_stream(
                 response,
                 sample_bytes=sample_bytes,
@@ -191,10 +214,10 @@ def measure_download_url(
             time_to_first_byte_seconds=None,
             effective_mbps=0.0,
             transfer_mbps=0.0,
-            longest_stall_seconds=max(0.0, ended_at - started_at),
-            stalled=max(0.0, ended_at - started_at) > max_stall_seconds,
+            longest_stall_seconds=0.0,
+            stalled=False,
             completed=False,
-            error=f"{type(exc).__name__}: {exc}",
+            error=type(exc).__name__,
         )
 
 
@@ -298,6 +321,22 @@ class FailureDomain(str, Enum):
     INTERRUPTED = "interrupted"
 
 
+def qualification_failure_domain(decision: HostGateDecision) -> FailureDomain:
+    """Conservatively distinguish host performance from endpoint/software errors."""
+
+    if decision.accepted:
+        return FailureDomain.NONE
+    endpoint_or_software_failure = any(
+        (trial.error is not None and trial.error != "StallThresholdExceeded")
+        or trial.time_to_first_byte_seconds is None
+        or (not trial.completed and not trial.stalled)
+        for trial in decision.trials
+    )
+    return (
+        FailureDomain.SOFTWARE if endpoint_or_software_failure else FailureDomain.HOST
+    )
+
+
 class MachineAction(str, Enum):
     REUSE = "reuse"
     STOP_FOR_RECOVERY = "stop_for_recovery"
@@ -342,20 +381,23 @@ def decide_machine_action(
         raise ValueError("an unsuccessful started workload requires a failure domain")
 
     if not host_accepted and not workload_started:
+        if (
+            failure_domain is FailureDomain.HOST
+            and diagnosis_complete
+            and not resume_possible
+        ):
+            return MachinePolicyDecision(
+                MachineAction.DESTROY_AND_REPLACE,
+                True,
+                "measured host qualification failed before workload start",
+            )
         return MachinePolicyDecision(
-            MachineAction.DESTROY_AND_REPLACE,
-            True,
-            "host failed qualification before workload start",
+            MachineAction.DIAGNOSE_AND_RESUME,
+            False,
+            "qualification failure is not yet proven to require host replacement",
         )
 
-    if (
-        workload_started
-        and not artifacts_durable
-        and (
-            workload_succeeded
-            or failure_domain in {FailureDomain.TRANSFER, FailureDomain.INTERRUPTED}
-        )
-    ):
+    if workload_started and not artifacts_durable:
         return MachinePolicyDecision(
             MachineAction.STOP_FOR_RECOVERY,
             False,
@@ -383,11 +425,11 @@ def decide_machine_action(
         )
 
     if failure_domain is FailureDomain.HOST:
-        if workload_started and not artifacts_durable:
+        if not diagnosis_complete or resume_possible:
             return MachinePolicyDecision(
-                MachineAction.STOP_FOR_RECOVERY,
+                MachineAction.DIAGNOSE_AND_RESUME,
                 False,
-                "recover checkpoint evidence before replacing the failed host",
+                "diagnose the suspected host failure and resume this machine when possible",
             )
         return MachinePolicyDecision(
             MachineAction.DESTROY_AND_REPLACE,

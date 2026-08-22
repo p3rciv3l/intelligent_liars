@@ -12,6 +12,7 @@ from intelligent_liars.vast_host_gate import (
     decide_machine_action,
     evaluate_host_gate,
     measure_download_stream,
+    qualification_failure_domain,
 )
 
 
@@ -62,7 +63,7 @@ def test_measure_download_stream_records_latency_speed_and_stall():
         stream,
         sample_bytes=12,
         chunk_bytes=6,
-        max_stall_seconds=0.75,
+        max_stall_seconds=2.0,
         request_started_at=1.0,
         clock=clock,
     )
@@ -72,8 +73,40 @@ def test_measure_download_stream_records_latency_speed_and_stall():
     assert trial.time_to_first_byte_seconds == pytest.approx(0.5)
     assert trial.elapsed_seconds == pytest.approx(2.0)
     assert trial.longest_stall_seconds == pytest.approx(1.0)
-    assert trial.stalled is True
+    assert trial.stalled is False
     assert trial.effective_mbps == pytest.approx(48e-6)
+
+
+def test_measure_download_stream_stops_after_stall_threshold():
+    trial = measure_download_stream(
+        io.BytesIO(b"x" * 12),
+        sample_bytes=12,
+        chunk_bytes=6,
+        max_stall_seconds=0.75,
+        request_started_at=1.0,
+        clock=_Clock([1.5, 2.5, 3.0]),
+    )
+
+    assert trial.completed is False
+    assert trial.stalled is True
+    assert trial.error == "StallThresholdExceeded"
+
+
+def test_thresholds_reject_nan_and_infinity():
+    with pytest.raises(ValueError, match="finite and positive"):
+        HostGateThresholds(
+            min_download_mbps=float("nan"),
+            min_sample_bytes=1,
+            max_time_to_first_byte_seconds=1.0,
+            max_stall_seconds=1.0,
+        )
+    with pytest.raises(ValueError, match="finite and positive"):
+        HostGateThresholds(
+            min_download_mbps=1.0,
+            min_sample_bytes=1,
+            max_time_to_first_byte_seconds=float("inf"),
+            max_stall_seconds=1.0,
+        )
 
 
 def test_gate_accepts_three_complete_fast_trials():
@@ -140,6 +173,39 @@ def test_rejected_unused_host_can_be_replaced():
     assert decision.replacement_allowed is True
 
 
+def test_endpoint_failure_does_not_authorize_host_replacement():
+    failed_trial = _trial(
+        speed=0.0,
+        ttfb=None,
+        completed=False,
+        sample_bytes=0,
+        error="HTTPError",
+    )
+    gate = evaluate_host_gate([failed_trial], _thresholds())
+    domain = qualification_failure_domain(gate)
+    decision = decide_machine_action(
+        host_accepted=False,
+        workload_started=False,
+        workload_succeeded=False,
+        artifacts_durable=False,
+        failure_domain=domain,
+        diagnosis_complete=False,
+        resume_possible=True,
+    )
+
+    assert domain is FailureDomain.SOFTWARE
+    assert decision.action is MachineAction.DIAGNOSE_AND_RESUME
+    assert decision.replacement_allowed is False
+
+
+def test_measured_stall_is_classified_as_host_performance():
+    stalled = _trial(speed=120.0, stall=12.0, completed=False)
+    stalled = DownloadTrial(**{**stalled.to_dict(), "error": "StallThresholdExceeded"})
+    gate = evaluate_host_gate([stalled], _thresholds())
+
+    assert qualification_failure_domain(gate) is FailureDomain.HOST
+
+
 def test_software_failure_must_be_diagnosed_and_resumed_on_same_machine():
     decision = decide_machine_action(
         host_accepted=True,
@@ -168,6 +234,36 @@ def test_software_failure_allows_replacement_only_after_diagnosis_rules_out_resu
 
     assert decision.action is MachineAction.DESTROY_AND_REPLACE
     assert decision.replacement_allowed is True
+
+
+def test_undurable_partial_checkpoint_blocks_replacement_after_software_diagnosis():
+    decision = decide_machine_action(
+        host_accepted=True,
+        workload_started=True,
+        workload_succeeded=False,
+        artifacts_durable=False,
+        failure_domain=FailureDomain.SOFTWARE,
+        diagnosis_complete=True,
+        resume_possible=False,
+    )
+
+    assert decision.action is MachineAction.STOP_FOR_RECOVERY
+    assert decision.replacement_allowed is False
+
+
+def test_suspected_host_failure_must_be_diagnosed_before_replacement():
+    decision = decide_machine_action(
+        host_accepted=True,
+        workload_started=True,
+        workload_succeeded=False,
+        artifacts_durable=True,
+        failure_domain=FailureDomain.HOST,
+        diagnosis_complete=False,
+        resume_possible=True,
+    )
+
+    assert decision.action is MachineAction.DIAGNOSE_AND_RESUME
+    assert decision.replacement_allowed is False
 
 
 def test_missing_durable_artifacts_stops_machine_for_recovery():
