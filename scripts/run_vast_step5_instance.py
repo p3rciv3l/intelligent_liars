@@ -1662,6 +1662,28 @@ def sync_hash_bound_public_key(
     )
 
 
+def restart_stopped_instance(
+    args: argparse.Namespace,
+    *,
+    target_id: str,
+    artifact_put_receipt: dict[str, Any],
+    artifact_put_url_bytes: bytes,
+    cost_deadline: float,
+) -> subprocess.CompletedProcess[str]:
+    """Restart the same worker only while its upload authorization remains fresh."""
+    revalidate_artifact_put_freshness(
+        args,
+        artifact_put_receipt,
+        artifact_put_url_bytes,
+        current=datetime.now(timezone.utc),
+    )
+    return run(
+        [args.vastai, "start", "instance", target_id, "--retry", "3", "--raw"],
+        check=False,
+        timeout=remaining_cost_seconds(cost_deadline),
+    )
+
+
 def verify_remote_source_receipt(
     host: str,
     port: str,
@@ -2039,10 +2061,14 @@ def main() -> int:
                 or qualification_resumes >= args.max_software_resumes
             ):
                 return 1
-            restarted = run(
-                [args.vastai, "start", "instance", target_id, "--retry", "3", "--raw"],
-                check=False,
-                timeout=remaining_cost_seconds(cost_deadline),
+            assert artifact_put_receipt is not None
+            assert artifact_put_url_bytes is not None
+            restarted = restart_stopped_instance(
+                args,
+                target_id=target_id,
+                artifact_put_receipt=artifact_put_receipt,
+                artifact_put_url_bytes=artifact_put_url_bytes,
+                cost_deadline=cost_deadline,
             )
             if restarted.returncode != 0:
                 metadata["recovery_start_exit_code"] = restarted.returncode
@@ -2196,10 +2222,14 @@ def main() -> int:
             ):
                 return exit_code or 1
 
-            restarted = run(
-                [args.vastai, "start", "instance", target_id, "--retry", "3", "--raw"],
-                check=False,
-                timeout=remaining_cost_seconds(cost_deadline),
+            assert artifact_put_receipt is not None
+            assert artifact_put_url_bytes is not None
+            restarted = restart_stopped_instance(
+                args,
+                target_id=target_id,
+                artifact_put_receipt=artifact_put_receipt,
+                artifact_put_url_bytes=artifact_put_url_bytes,
+                cost_deadline=cost_deadline,
             )
             if restarted.returncode != 0:
                 metadata["recovery_start_exit_code"] = restarted.returncode

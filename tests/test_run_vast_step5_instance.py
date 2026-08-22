@@ -4,11 +4,13 @@ import argparse
 import base64
 import hashlib
 import importlib.util
+import inspect
 import json
 import math
 import subprocess
 import sys
 import tarfile
+import time
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from pathlib import Path
@@ -535,6 +537,37 @@ def test_artifact_put_contract_rejects_frozen_receipt_hash_drift(tmp_path: Path)
     )
     with pytest.raises(ValueError, match="frozen SHA-256"):
         MODULE.validate_artifact_put_contract(args)
+
+
+@pytest.mark.parametrize("recovery_path", ["qualification", "workload"])
+def test_same_instance_recovery_refuses_stale_artifact_authorization(
+    recovery_path: str, monkeypatch: pytest.MonkeyPatch
+):
+    starts: list[list[str]] = []
+
+    def stale(*_args, **_kwargs):
+        raise ValueError("artifact approval is stale")
+
+    def unexpected_run(command, **_kwargs):
+        starts.append(command)
+        return SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr(MODULE, "revalidate_artifact_put_freshness", stale)
+    monkeypatch.setattr(MODULE, "run", unexpected_run)
+    with pytest.raises(ValueError, match="stale"):
+        MODULE.restart_stopped_instance(
+            argparse.Namespace(vastai="vastai", recovery_path=recovery_path),
+            target_id="worker-7",
+            artifact_put_receipt={},
+            artifact_put_url_bytes=b"https://expired.example\n",
+            cost_deadline=time.monotonic() + 60,
+        )
+    assert starts == []
+
+
+def test_both_internal_restart_paths_use_freshness_guard():
+    source = inspect.getsource(MODULE.main)
+    assert source.count("restart_stopped_instance(") == 2
 
 
 def test_checkpoint_controller_command_keeps_private_key_local(tmp_path: Path):
