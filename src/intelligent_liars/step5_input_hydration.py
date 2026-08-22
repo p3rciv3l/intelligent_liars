@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import fcntl
 import hashlib
 import json
 import os
 import shutil
+import stat
 import tarfile
 import tempfile
 import urllib.parse
@@ -129,8 +131,12 @@ def fetch_https(url: str, destination: Path) -> None:
             if response.status != 200:
                 raise ValueError(f"Hydration GET returned HTTP {response.status}")
             shutil.copyfileobj(response, output, length=1024 * 1024)
+            output.flush()
+            os.fsync(output.fileno())
         os.link(temporary, destination, follow_symlinks=False)
+        _fsync_directory(destination.parent)
         temporary.unlink()
+        _fsync_directory(destination.parent)
     except BaseException:
         temporary.unlink(missing_ok=True)
         raise
@@ -201,6 +207,109 @@ def _verify_file(path: Path, specification: Mapping[str, Any], *, label: str) ->
         raise ValueError(f"{label} hash/size mismatch: {path.name}")
 
 
+def _fsync_directory(path: Path) -> None:
+    descriptor = os.open(
+        path, os.O_RDONLY | os.O_DIRECTORY | getattr(os, "O_NOFOLLOW", 0)
+    )
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
+def _fsync_regular_file(path: Path) -> None:
+    descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+    try:
+        metadata = os.fstat(descriptor)
+        if not stat.S_ISREG(metadata.st_mode):
+            raise ValueError("Model staging member must be a regular file")
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
+def _acquire_model_stage_lease(snapshots: Path, revision: str) -> tuple[Path, int]:
+    lock = snapshots / f".{revision}.hydrating.lock"
+    try:
+        descriptor = os.open(
+            lock,
+            os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0),
+            0o600,
+        )
+    except OSError as error:
+        raise ValueError("Model staging lease must be a regular file") from error
+    try:
+        metadata = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(metadata.st_mode)
+            or stat.S_IMODE(metadata.st_mode) & 0o077
+            or metadata.st_size != 0
+        ):
+            raise ValueError("Model staging lease is malformed")
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as error:
+            raise ValueError("Model staging is owned by an active hydrator") from error
+        current = lock.lstat()
+        if (current.st_dev, current.st_ino) != (metadata.st_dev, metadata.st_ino):
+            raise ValueError("Model staging lease ownership changed")
+        os.fsync(descriptor)
+        _fsync_directory(snapshots)
+        return lock, descriptor
+    except BaseException:
+        os.close(descriptor)
+        raise
+
+
+def _release_model_stage_lease(lease: tuple[Path, int]) -> None:
+    _lock, descriptor = lease
+    try:
+        fcntl.flock(descriptor, fcntl.LOCK_UN)
+    finally:
+        os.close(descriptor)
+
+
+def _verify_model_stage_idle(lock: Path) -> None:
+    if not (lock.exists() or lock.is_symlink()):
+        return
+    try:
+        descriptor = os.open(lock, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+    except OSError as error:
+        raise ValueError("Existing model staging lease is malformed") from error
+    try:
+        metadata = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(metadata.st_mode)
+            or stat.S_IMODE(metadata.st_mode) & 0o077
+            or metadata.st_size != 0
+        ):
+            raise ValueError("Existing model staging lease is malformed")
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as error:
+            raise ValueError(
+                "Existing model cache has an active staging lease"
+            ) from error
+        current = lock.lstat()
+        if (current.st_dev, current.st_ino) != (metadata.st_dev, metadata.st_ino):
+            raise ValueError("Existing model staging lease ownership changed")
+        fcntl.flock(descriptor, fcntl.LOCK_UN)
+    finally:
+        os.close(descriptor)
+
+
+def _stale_model_download(path: Path) -> bool:
+    for name in REQUIRED_SNAPSHOT_FILES:
+        prefix = f".{name}."
+        if path.name.startswith(prefix) and path.name.endswith(".part"):
+            process = path.name[len(prefix) : -len(".part")]
+            if not process.isdigit() or path.is_symlink() or not path.is_file():
+                return False
+            path.unlink()
+            return True
+    return False
+
+
 def hydrate_model(
     specification: Mapping[str, Any],
     *,
@@ -269,38 +378,86 @@ def hydrate_model(
         character not in "0123456789abcdef" for character in revision
     ):
         raise ValueError("Model revision must be an exact commit hash")
-    snapshot = cache_dir / "models--Qwen--Qwen3-VL-8B-Thinking" / "snapshots" / revision
-    if snapshot.exists() or snapshot.is_symlink():
-        if snapshot.is_symlink() or not snapshot.is_dir():
-            raise ValueError("Existing model snapshot root must be a regular directory")
-        snapshot_children = list(snapshot.iterdir())
-        if {path.name for path in snapshot_children} != set(
-            REQUIRED_SNAPSHOT_FILES
-        ) or any(path.is_symlink() or not path.is_file() for path in snapshot_children):
-            raise ValueError(
-                "Existing model snapshot is partial or has unexpected files"
+    snapshots = cache_dir / "models--Qwen--Qwen3-VL-8B-Thinking" / "snapshots"
+    snapshot = snapshots / revision
+    staging = snapshots / f".{revision}.hydrating"
+    snapshots.mkdir(parents=True, exist_ok=True)
+    lease = _acquire_model_stage_lease(snapshots, revision)
+    try:
+        if snapshot.exists() or snapshot.is_symlink():
+            if snapshot.is_symlink() or not snapshot.is_dir():
+                raise ValueError(
+                    "Existing model snapshot root must be a regular directory"
+                )
+            snapshot_children = list(snapshot.iterdir())
+            if {path.name for path in snapshot_children} != set(
+                REQUIRED_SNAPSHOT_FILES
+            ) or any(
+                path.is_symlink() or not path.is_file() for path in snapshot_children
+            ):
+                raise ValueError(
+                    "Existing model snapshot is partial or has unexpected files"
+                )
+            if staging.exists() or staging.is_symlink():
+                raise ValueError(
+                    "Completed model snapshot has unexpected staging state"
+                )
+            target_root = snapshot
+            publish_snapshot = False
+        else:
+            if staging.is_symlink() or (staging.exists() and not staging.is_dir()):
+                raise ValueError(
+                    "Model download staging root must be a regular directory"
+                )
+            staging.mkdir(exist_ok=True)
+            staging_children = list(staging.iterdir())
+            staging_children = [
+                path for path in staging_children if not _stale_model_download(path)
+            ]
+            if any(
+                path.name not in REQUIRED_SNAPSHOT_FILES
+                or path.is_symlink()
+                or not path.is_file()
+                for path in staging_children
+            ):
+                raise ValueError(
+                    "Model download staging has malformed or unexpected files"
+                )
+            target_root = staging
+            publish_snapshot = True
+        inventory: list[dict[str, Any]] = []
+        for item in files:
+            relative = _relative_file(str(item["path"]), label="model file")
+            if len(relative.parts) != 1:
+                raise ValueError("Model files must live at the snapshot root")
+            target = _regular_path(target_root, relative, label="model cache")
+            reused = False
+            if target.exists():
+                _verify_file(target, item, label="Model file")
+                reused = True
+            if not reused:
+                try:
+                    fetch(str(urls[relative.as_posix()]), target)
+                    _verify_file(target, item, label="Model file")
+                except BaseException:
+                    target.unlink(missing_ok=True)
+                    _fsync_directory(target.parent)
+                    raise
+            _fsync_regular_file(target)
+            inventory.append(
+                {
+                    "bytes": item["bytes"],
+                    "path": str((snapshot / relative.as_posix()).absolute()),
+                    "sha256": item["sha256"],
+                    "reused": reused,
+                }
             )
-    inventory: list[dict[str, Any]] = []
-    for item in files:
-        relative = _relative_file(str(item["path"]), label="model file")
-        if len(relative.parts) != 1:
-            raise ValueError("Model files must live at the snapshot root")
-        target = _regular_path(snapshot, relative, label="model cache")
-        reused = False
-        if target.exists():
-            _verify_file(target, item, label="Model file")
-            reused = True
-        if not reused:
-            fetch(str(urls[relative.as_posix()]), target)
-            _verify_file(target, item, label="Model file")
-        inventory.append(
-            {
-                "bytes": item["bytes"],
-                "path": str(target.resolve()),
-                "sha256": item["sha256"],
-                "reused": reused,
-            }
-        )
+        if publish_snapshot:
+            _fsync_directory(staging)
+            os.rename(staging, snapshot)
+            _fsync_directory(snapshots)
+    finally:
+        _release_model_stage_lease(lease)
     return {
         "content_sha256": manifest["content_sha256"],
         "completion_sha256": complete_hash,
@@ -749,10 +906,13 @@ def validate_existing_hydration(
     inputs_dir: Path,
     cache_dir: Path,
     expected_identities: Mapping[str, Any],
-    origins: Mapping[str, Any],
+    origins: Mapping[str, Any] | None,
 ) -> dict[str, Any]:
     """Revalidate and reuse one exact completed hydration without network downloads."""
 
+    _reject_symlink_ancestors(inputs_dir, label="Input destination")
+    _reject_symlink_ancestors(receipt_path, label="Hydration receipt")
+    _reject_symlink_ancestors(cache_dir, label="Model cache")
     if receipt_path.is_symlink() or not receipt_path.is_file():
         raise ValueError("Existing hydration receipt must be a regular file")
     receipt = json.loads(receipt_path.read_text())
@@ -766,9 +926,24 @@ def validate_existing_hydration(
     expected = validate_expected_identities(expected_identities)
     if _receipt_identities(receipt) != expected:
         raise ValueError("Existing hydration receipt does not match frozen identities")
-    if receipt.get("origins") != origins or receipt.get(
-        "origin_contract_sha256"
-    ) != canonical_sha256(origins):
+    receipt_origins = receipt.get("origins")
+    if not isinstance(receipt_origins, Mapping) or set(receipt_origins) != {
+        "model",
+        "frozen_inputs",
+        "pixmo",
+    }:
+        raise ValueError("Existing hydration receipt has invalid URL origins")
+    for group in receipt_origins.values():
+        if (
+            not isinstance(group, list)
+            or not group
+            or group != sorted(set(group))
+            or any(https_origin(str(origin)) != origin for origin in group)
+        ):
+            raise ValueError("Existing hydration receipt has invalid URL origins")
+    if origins is not None and receipt_origins != origins:
+        raise ValueError("Existing hydration receipt does not match URL origins")
+    if receipt.get("origin_contract_sha256") != canonical_sha256(receipt_origins):
         raise ValueError("Existing hydration receipt does not match URL origins")
 
     plan_root = (inputs_dir / "step5_v1").resolve()
@@ -777,6 +952,11 @@ def validate_existing_hydration(
     model_root = (
         cache_dir / "models--Qwen--Qwen3-VL-8B-Thinking" / "snapshots" / MODEL_REVISION
     ).resolve()
+    model_staging = model_root.parent / f".{MODEL_REVISION}.hydrating"
+    model_staging_lock = model_root.parent / f".{MODEL_REVISION}.hydrating.lock"
+    if model_staging.exists() or model_staging.is_symlink():
+        raise ValueError("Existing model cache has unexpected staging state")
+    _verify_model_stage_idle(model_staging_lock)
     if receipt["frozen_inputs"].get("plan_path") != str(plan_root / "manifest.json"):
         raise ValueError("Existing hydration receipt has the wrong plan path")
     if receipt["frozen_inputs"].get("probe_path") != str(

@@ -6,6 +6,7 @@ import io
 import json
 import os
 import tarfile
+import threading
 from pathlib import Path
 
 import pytest
@@ -321,8 +322,8 @@ def _expected_identities(
     }
 
 
-def _identity_argv() -> list[str]:
-    values = {
+def _identity_argv(values: dict[str, str] | None = None) -> list[str]:
+    values = values or {
         field: MODEL_REVISION if field == "model_revision" else "a" * 64
         for field in EXPECTED_IDENTITY_FIELDS
     }
@@ -595,6 +596,118 @@ def test_wrong_model_identity_and_partial_cache_fail_before_snapshot_writes(
     assert {path.name for path in partial_snapshot.iterdir()} == {first_name}
 
 
+def test_interrupted_private_model_stage_resumes_and_promotes_atomically(
+    tmp_path: Path,
+) -> None:
+    manifest, objects = _fixture(tmp_path)
+    expected = _expected_identities(manifest, objects)
+    cache = tmp_path / "cache"
+    file_urls = set(manifest["model"]["file_urls"].values())  # type: ignore[index,union-attr]
+    downloaded = 0
+
+    def interrupted_fetch(url: str, destination: Path) -> None:
+        nonlocal downloaded
+        if url in file_urls:
+            downloaded += 1
+            if downloaded == 4:
+                raise OSError("simulated network interruption")
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_bytes(objects[url])
+
+    with pytest.raises(OSError, match="network interruption"):
+        hydrate_all(
+            manifest,
+            inputs_dir=tmp_path / "inputs",
+            cache_dir=cache,
+            receipt_path=tmp_path / "receipt.json",
+            expected_identities=expected,
+            fetch=interrupted_fetch,
+        )
+    snapshots = cache / "models--Qwen--Qwen3-VL-8B-Thinking" / "snapshots"
+    final = snapshots / MODEL_REVISION
+    staging = snapshots / f".{MODEL_REVISION}.hydrating"
+    assert not final.exists()
+    assert {path.name for path in staging.iterdir()} == set(REQUIRED_SNAPSHOT_FILES[:3])
+    stale = staging / f".{REQUIRED_SNAPSHOT_FILES[3]}.999999.part"
+    stale.write_bytes(b"partial transport bytes")
+    lock = snapshots / f".{MODEL_REVISION}.hydrating.lock"
+    assert lock.is_file()
+    assert lock.stat().st_size == 0
+
+    receipt = hydrate_all(
+        manifest,
+        inputs_dir=tmp_path / "inputs",
+        cache_dir=cache,
+        receipt_path=tmp_path / "receipt.json",
+        expected_identities=expected,
+        fetch=_fake_fetch(objects),
+    )
+    assert final.is_dir()
+    assert not staging.exists()
+    assert not stale.exists()
+    assert [item["reused"] for item in receipt["model"]["files"][:3]] == [
+        True,
+        True,
+        True,
+    ]
+    assert all(
+        path.parent == final
+        for path in map(Path, [item["path"] for item in receipt["model"]["files"]])
+    )
+
+
+def test_model_stage_lease_rejects_concurrent_hydrator_without_deleting_files(
+    tmp_path: Path,
+) -> None:
+    manifest, objects = _fixture(tmp_path)
+    expected = _expected_identities(manifest, objects)
+    cache = tmp_path / "cache"
+    file_urls = set(manifest["model"]["file_urls"].values())  # type: ignore[index,union-attr]
+    started = threading.Event()
+    release = threading.Event()
+    first_error: list[BaseException] = []
+
+    def blocking_fetch(url: str, destination: Path) -> None:
+        if url in file_urls and not started.is_set():
+            started.set()
+            if not release.wait(timeout=5):
+                raise TimeoutError("test did not release first hydrator")
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_bytes(objects[url])
+
+    def first_hydrator() -> None:
+        try:
+            hydrate_all(
+                manifest,
+                inputs_dir=tmp_path / "inputs-first",
+                cache_dir=cache,
+                receipt_path=tmp_path / "receipt-first.json",
+                expected_identities=expected,
+                fetch=blocking_fetch,
+            )
+        except BaseException as error:
+            first_error.append(error)
+
+    thread = threading.Thread(target=first_hydrator)
+    thread.start()
+    assert started.wait(timeout=5)
+    with pytest.raises(ValueError, match="active hydrator"):
+        hydrate_all(
+            manifest,
+            inputs_dir=tmp_path / "inputs-second",
+            cache_dir=cache,
+            receipt_path=tmp_path / "receipt-second.json",
+            expected_identities=expected,
+            fetch=_fake_fetch(objects),
+        )
+    release.set()
+    thread.join(timeout=5)
+    assert not thread.is_alive()
+    assert first_error == []
+    final = cache / "models--Qwen--Qwen3-VL-8B-Thinking" / "snapshots" / MODEL_REVISION
+    assert {path.name for path in final.iterdir()} == set(REQUIRED_SNAPSHOT_FILES)
+
+
 def test_empty_snapshot_and_unexpected_snapshot_directory_fail_closed(
     tmp_path: Path,
 ) -> None:
@@ -834,6 +947,103 @@ def test_hydrator_reads_signed_url_from_private_file(
     monkeypatch.setattr(module, "hydrate_all", lambda *_args, **_kwargs: {"ok": True})
     assert module.main() == 0
     assert "private-manifest" not in capsys.readouterr().out
+
+
+def test_hydrator_reuses_exact_receipt_before_reading_expired_url(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    specification = importlib.util.spec_from_file_location(
+        "step5_hydrator_resume_cli", SCRIPT
+    )
+    assert specification is not None and specification.loader is not None
+    module = importlib.util.module_from_spec(specification)
+    specification.loader.exec_module(module)
+    receipt = tmp_path / "receipt.json"
+    receipt.write_text("{}\n")
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            str(SCRIPT),
+            "--url-manifest-url-file",
+            str(tmp_path / "expired-url"),
+            "--inputs-dir",
+            str(tmp_path / "inputs"),
+            "--cache-dir",
+            str(tmp_path / "cache"),
+            "--receipt",
+            str(receipt),
+            *_identity_argv(),
+        ],
+    )
+    monkeypatch.setattr(
+        module,
+        "validate_existing_hydration",
+        lambda *_args, **kwargs: {"reused": True, "origins": kwargs["origins"]},
+    )
+    monkeypatch.setattr(
+        module,
+        "read_private_url",
+        lambda *_args: (_ for _ in ()).throw(AssertionError("expired URL was read")),
+    )
+
+    assert module.main() == 0
+    assert json.loads(capsys.readouterr().out) == {"origins": None, "reused": True}
+
+
+def test_receipt_first_cli_rejects_leftover_model_stage_before_url_read(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    manifest, objects = _fixture(tmp_path)
+    expected = _expected_identities(manifest, objects)
+    inputs = tmp_path / "inputs"
+    cache = tmp_path / "cache"
+    receipt = tmp_path / "receipt.json"
+    hydrate_all(
+        manifest,
+        inputs_dir=inputs,
+        cache_dir=cache,
+        receipt_path=receipt,
+        expected_identities=expected,
+        fetch=_fake_fetch(objects),
+    )
+    staging = (
+        cache
+        / "models--Qwen--Qwen3-VL-8B-Thinking"
+        / "snapshots"
+        / f".{MODEL_REVISION}.hydrating"
+    )
+    staging.mkdir()
+    (staging / "unexpected").write_text("leftover")
+
+    specification = importlib.util.spec_from_file_location(
+        "step5_hydrator_staging_cli", SCRIPT
+    )
+    assert specification is not None and specification.loader is not None
+    module = importlib.util.module_from_spec(specification)
+    specification.loader.exec_module(module)
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            str(SCRIPT),
+            "--url-manifest-url-file",
+            str(tmp_path / "expired-url"),
+            "--inputs-dir",
+            str(inputs),
+            "--cache-dir",
+            str(cache),
+            "--receipt",
+            str(receipt),
+            *_identity_argv(expected),
+        ],
+    )
+    monkeypatch.setattr(
+        module,
+        "read_private_url",
+        lambda *_args: (_ for _ in ()).throw(AssertionError("expired URL was read")),
+    )
+
+    with pytest.raises(ValueError, match="unexpected staging"):
+        module.main()
 
 
 def test_hydrator_rejects_world_readable_url_file(

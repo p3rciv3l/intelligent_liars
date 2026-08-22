@@ -15,6 +15,7 @@ from intelligent_liars.step5_input_hydration import (
     fetch_https,
     hydrate_all,
     https_origin,
+    validate_existing_hydration,
 )
 
 
@@ -35,7 +36,9 @@ def read_private_url(path: Path) -> str:
         file_fd = os.open(parts[-1], os.O_RDONLY | os.O_NOFOLLOW, dir_fd=directory_fd)
         metadata = os.fstat(file_fd)
         if not stat.S_ISREG(metadata.st_mode) or stat.S_IMODE(metadata.st_mode) & 0o077:
-            raise ValueError("URL manifest URL file must be regular and mode 0600 or stricter")
+            raise ValueError(
+                "URL manifest URL file must be regular and mode 0600 or stricter"
+            )
         if metadata.st_size > 16384:
             raise ValueError("URL manifest URL file is unexpectedly large")
         with os.fdopen(file_fd, "r", encoding="utf-8", closefd=True) as stream:
@@ -65,7 +68,9 @@ def parse_args() -> argparse.Namespace:
         help="Mode-0600 file containing the signed HTTPS URL (preferred on workers).",
     )
     parser.add_argument("--inputs-dir", type=Path, default=Path("/workspace/inputs"))
-    parser.add_argument("--cache-dir", type=Path, default=Path("/workspace/cache/huggingface"))
+    parser.add_argument(
+        "--cache-dir", type=Path, default=Path("/workspace/cache/huggingface")
+    )
     parser.add_argument("--receipt", type=Path, required=True)
     for field in EXPECTED_IDENTITY_FIELDS:
         parser.add_argument(f"--expected-{field.replace('_', '-')}", required=True)
@@ -74,6 +79,22 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = parse_args()
+    expected = {
+        field: getattr(args, f"expected_{field}") for field in EXPECTED_IDENTITY_FIELDS
+    }
+    inputs_dir = args.inputs_dir.absolute()
+    cache_dir = args.cache_dir.absolute()
+    receipt_path = args.receipt.absolute()
+    if receipt_path.exists() or receipt_path.is_symlink():
+        receipt = validate_existing_hydration(
+            receipt_path,
+            inputs_dir=inputs_dir,
+            cache_dir=cache_dir,
+            expected_identities=expected,
+            origins=None,
+        )
+        print(json.dumps(receipt, sort_keys=True))
+        return 0
     if args.url_manifest_url_file is not None:
         url = read_private_url(args.url_manifest_url_file)
     else:
@@ -87,13 +108,10 @@ def main() -> int:
         payload = json.loads(path.read_text())
     receipt = hydrate_all(
         payload,
-        inputs_dir=args.inputs_dir.absolute(),
-        cache_dir=args.cache_dir.absolute(),
-        receipt_path=args.receipt.absolute(),
-        expected_identities={
-            field: getattr(args, f"expected_{field}")
-            for field in EXPECTED_IDENTITY_FIELDS
-        },
+        inputs_dir=inputs_dir,
+        cache_dir=cache_dir,
+        receipt_path=receipt_path,
+        expected_identities=expected,
     )
     print(json.dumps(receipt, sort_keys=True))
     return 0
