@@ -391,7 +391,80 @@ def test_hydrator_cli_takes_url_from_environment_not_argv(monkeypatch: pytest.Mo
     args = module.parse_args()
 
     assert args.url_manifest_url_env == "CANARY_INPUT_URL_MANIFEST_URL"
+    assert args.url_manifest_url_file is None
     assert not hasattr(args, "url_manifest_url")
+
+
+def test_hydrator_reads_signed_url_from_private_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    specification = importlib.util.spec_from_file_location("step5_hydrator_file_cli", SCRIPT)
+    assert specification is not None and specification.loader is not None
+    module = importlib.util.module_from_spec(specification)
+    specification.loader.exec_module(module)
+    secret = tmp_path / "url"
+    secret.write_text("https://example.test/private-manifest\n")
+    secret.chmod(0o600)
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            str(SCRIPT),
+            "--url-manifest-url-file",
+            str(secret),
+            "--receipt",
+            str(tmp_path / "receipt.json"),
+        ],
+    )
+    monkeypatch.setattr(module, "fetch_https", lambda _url, path: path.write_text("{}"))
+    monkeypatch.setattr(module, "hydrate_all", lambda *_args, **_kwargs: {"ok": True})
+    assert module.main() == 0
+    assert "private-manifest" not in capsys.readouterr().out
+
+
+def test_hydrator_rejects_world_readable_url_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    specification = importlib.util.spec_from_file_location("step5_hydrator_bad_mode", SCRIPT)
+    assert specification is not None and specification.loader is not None
+    module = importlib.util.module_from_spec(specification)
+    specification.loader.exec_module(module)
+    secret = tmp_path / "url"
+    secret.write_text("https://example.test/private\n")
+    secret.chmod(0o644)
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            str(SCRIPT),
+            "--url-manifest-url-file",
+            str(secret),
+            "--receipt",
+            str(tmp_path / "receipt.json"),
+        ],
+    )
+    with pytest.raises(ValueError, match="0600"):
+        module.main()
+
+
+def test_hydrator_rejects_symlinked_file_and_parent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    specification = importlib.util.spec_from_file_location("step5_hydrator_symlink", SCRIPT)
+    assert specification is not None and specification.loader is not None
+    module = importlib.util.module_from_spec(specification)
+    specification.loader.exec_module(module)
+    real = tmp_path / "real"
+    real.mkdir()
+    secret = real / "url"
+    secret.write_text("https://example.test/private\n")
+    secret.chmod(0o600)
+    direct = tmp_path / "direct"
+    direct.symlink_to(secret)
+    with pytest.raises(ValueError, match="symlinks"):
+        module.read_private_url(direct)
+    parent = tmp_path / "parent"
+    parent.symlink_to(real, target_is_directory=True)
+    with pytest.raises(ValueError, match="symlinks"):
+        module.read_private_url(parent / "url")
 
 
 @pytest.mark.parametrize("member_type", [tarfile.SYMTYPE, tarfile.CHRTYPE])

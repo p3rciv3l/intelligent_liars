@@ -6,6 +6,7 @@ import hashlib
 import importlib.util
 import json
 import math
+import subprocess
 import sys
 import tarfile
 from types import SimpleNamespace
@@ -412,6 +413,136 @@ def test_dry_run_also_refuses_more_than_three_workers():
     args = argparse.Namespace(execute=False, max_workers=4)
     with pytest.raises(ValueError, match="between 1 and 3"):
         MODULE.require_execute_contract(args)
+
+
+def test_execute_contract_requires_both_new_provisioned_files(tmp_path: Path):
+    args = argparse.Namespace(
+        execute=True,
+        max_workers=3,
+        confirmed_cost_approval=True,
+        approved_hourly_price=0.2,
+        approved_max_cost=2.0,
+        offer_id="123",
+        resume_instance_id=None,
+        image="repo/image@sha256:" + "a" * 64,
+        max_software_resumes=1,
+        minimum_download_mbps=100.0,
+        wait_seconds=10,
+        state_wait_seconds=10,
+        disk=100,
+        artifact_put_url_file=tmp_path / "artifact-url",
+        expected_durable_uri="s3://bucket/key",
+        input_url_manifest_url_file=None,
+        controller_public_key=None,
+        controller_public_key_sha256=None,
+    )
+    with pytest.raises(ValueError, match="hydration URL"):
+        MODULE.require_execute_contract(args)
+
+
+def test_private_url_sync_never_places_secret_in_command(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    secret_value = "https://example.test/object?X-Amz-Signature=private"
+    source = tmp_path / "url"
+    source.write_text(secret_value)
+    source.chmod(0o600)
+    commands: list[list[str]] = []
+    monkeypatch.setattr(
+        MODULE.subprocess,
+        "run",
+        lambda command, **_kwargs: commands.append(command)
+        or SimpleNamespace(returncode=0, stdout=b"", stderr=b""),
+    )
+    MODULE.sync_private_url_file(
+        source,
+        "/run/secrets/step5-input-url-manifest-url",
+        "host",
+        "22",
+        tmp_path / "known-hosts",
+        10,
+    )
+    assert secret_value not in json.dumps(commands)
+    assert any("mktemp" in part for command in commands for part in command)
+
+
+def test_public_key_sync_is_hash_bound_and_uses_fixed_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    public = tmp_path / "public.pem"
+    private = tmp_path / "private.pem"
+    subprocess.run(
+        ["openssl", "genpkey", "-algorithm", "RSA", "-pkeyopt", "rsa_keygen_bits:2048", "-out", str(private)],
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["openssl", "pkey", "-in", str(private), "-pubout", "-out", str(public)],
+        check=True,
+        capture_output=True,
+    )
+    digest = hashlib.sha256(public.read_bytes()).hexdigest()
+    commands: list[list[str]] = []
+    real_run = subprocess.run
+
+    def fake_run(command, **kwargs):
+        if command[0] == "openssl":
+            return real_run(command, **kwargs)
+        commands.append(command)
+        return SimpleNamespace(returncode=0, stdout=b"", stderr=b"")
+
+    monkeypatch.setattr(
+        MODULE.subprocess,
+        "run",
+        fake_run,
+    )
+    MODULE.sync_hash_bound_public_key(
+        public,
+        digest,
+        "host",
+        "22",
+        tmp_path / "known-hosts",
+        10,
+    )
+    rendered = json.dumps(commands)
+    assert MODULE.CONTROLLER_PUBLIC_KEY_REMOTE_PATH in rendered
+    assert digest in rendered
+    public.write_text("changed")
+    with pytest.raises(ValueError, match="differs"):
+        MODULE.sync_hash_bound_public_key(
+            public,
+            digest,
+            "host",
+            "22",
+            tmp_path / "known-hosts",
+            10,
+        )
+    private_digest = hashlib.sha256(private.read_bytes()).hexdigest()
+    with pytest.raises(ValueError, match="public PEM"):
+        MODULE.sync_hash_bound_public_key(
+            private,
+            private_digest,
+            "host",
+            "22",
+            tmp_path / "known-hosts",
+            10,
+        )
+
+
+def test_provisioning_reader_rejects_final_and_parent_symlinks(tmp_path: Path):
+    real = tmp_path / "real"
+    real.mkdir()
+    secret = real / "url"
+    secret.write_text("https://example.test/private")
+    secret.chmod(0o600)
+    final_link = tmp_path / "final-link"
+    final_link.symlink_to(secret)
+    with pytest.raises(ValueError, match="symlinks"):
+        MODULE.read_file_without_symlinks(final_link)
+    parent_link = tmp_path / "parent-link"
+    parent_link.symlink_to(real, target_is_directory=True)
+    with pytest.raises(ValueError, match="symlinks"):
+        MODULE.read_file_without_symlinks(parent_link / "url")
 
 
 def _write_source_manifest(repository: Path, relative: str) -> Path:

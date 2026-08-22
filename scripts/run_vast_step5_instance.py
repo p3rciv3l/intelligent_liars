@@ -21,6 +21,7 @@ import os
 import re
 import secrets
 import shlex
+import stat
 import subprocess
 import tarfile
 import tempfile
@@ -38,6 +39,8 @@ from intelligent_liars.step5_artifact_store import (
 
 
 PROJECT_LABEL_PREFIX = "codex-vast-tinylora-step5"
+CONTROLLER_PUBLIC_KEY_REMOTE_PATH = "/workspace/inputs/controller-public.pem"
+INPUT_URL_MANIFEST_REMOTE_PATH = "/run/secrets/step5-input-url-manifest-url"
 HARD_MAX_WORKERS = 3
 SEALED_AUDIT_SHA256 = "40e2756176387514fc265bdf6225e73b356d7fe57b641405e6c4d2ecbe498e91"
 HOST_LOSS_STATES = frozenset({"dead", "error", "failed", "offline", "unavailable"})
@@ -107,6 +110,9 @@ def parse_args() -> argparse.Namespace:
         default="/run/secrets/step5-artifact-put-url",
     )
     parser.add_argument("--expected-durable-uri")
+    parser.add_argument("--input-url-manifest-url-file", type=Path)
+    parser.add_argument("--controller-public-key", type=Path)
+    parser.add_argument("--controller-public-key-sha256")
     parser.add_argument("--max-software-resumes", type=int, default=1)
     parser.add_argument("--max-workers", type=int, default=HARD_MAX_WORKERS)
     parser.add_argument("--wait-seconds", type=int, default=900)
@@ -962,8 +968,16 @@ def require_execute_contract(args: argparse.Namespace) -> None:
     ):
         raise ValueError(
             "Execution requires a protected artifact PUT URL file and frozen durable URI"
-        )
+    )
     parse_s3_uri(args.expected_durable_uri)
+    if (
+        getattr(args, "input_url_manifest_url_file", None) is None
+        or getattr(args, "controller_public_key", None) is None
+        or getattr(args, "controller_public_key_sha256", None) is None
+    ):
+        raise ValueError(
+            "Execution requires protected hydration URL and hash-bound controller public key files"
+        )
 
 
 def create_command(args: argparse.Namespace, label: str) -> list[str]:
@@ -1091,6 +1105,79 @@ def sync_source_bundle(
     )
 
 
+def read_file_without_symlinks(path: Path, *, max_bytes: int = 1024 * 1024) -> tuple[bytes, int]:
+    """Read one file through no-follow directory descriptors and a stable fd."""
+    absolute = path.absolute()
+    parts = absolute.parts
+    directory_fd = os.open(parts[0], os.O_RDONLY | os.O_DIRECTORY)
+    file_fd: int | None = None
+    try:
+        for part in parts[1:-1]:
+            next_fd = os.open(
+                part,
+                os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+                dir_fd=directory_fd,
+            )
+            os.close(directory_fd)
+            directory_fd = next_fd
+        file_fd = os.open(parts[-1], os.O_RDONLY | os.O_NOFOLLOW, dir_fd=directory_fd)
+        metadata = os.fstat(file_fd)
+        if not stat.S_ISREG(metadata.st_mode):
+            raise ValueError("provisioned controller path must be a regular file")
+        if metadata.st_size > max_bytes:
+            raise ValueError("provisioned controller file exceeds the size limit")
+        with os.fdopen(file_fd, "rb", closefd=True) as stream:
+            file_fd = None
+            content = stream.read(max_bytes + 1)
+        if len(content) > max_bytes:
+            raise ValueError("provisioned controller file exceeds the size limit")
+        return content, stat.S_IMODE(metadata.st_mode)
+    except OSError as error:
+        raise ValueError("provisioned controller path may not traverse symlinks") from error
+    finally:
+        if file_fd is not None:
+            os.close(file_fd)
+        os.close(directory_fd)
+
+
+def remote_install_bytes(
+    content: bytes,
+    *,
+    remote_path: str,
+    directory: str,
+    mode: str,
+    expected_sha256: str,
+    host: str,
+    port: str,
+    known_hosts: Path,
+    timeout: float,
+) -> None:
+    """Atomically install stdin bytes without exposing them in argv or a remote race."""
+    incoming_template = f"{directory}/.step5-provision.XXXXXX"
+    command = "; ".join(
+        [
+            "set -eu",
+            f"test -d {shlex.quote(str(PurePosixPath(directory).parent))}",
+            f"test ! -L {shlex.quote(str(PurePosixPath(directory).parent))}",
+            f"if [ -e {shlex.quote(directory)} ]; then test -d {shlex.quote(directory)} && test ! -L {shlex.quote(directory)}; else mkdir -m 700 {shlex.quote(directory)}; fi",
+            f"incoming=$(mktemp {shlex.quote(incoming_template)})",
+            'trap \'rm -f "$incoming"\' EXIT',
+            'cat > "$incoming"',
+            f"printf '%s  %s\\n' {shlex.quote(expected_sha256)} \"$incoming\" | sha256sum -c - >/dev/null",
+            f'chmod {shlex.quote(mode)} "$incoming"',
+            f'mv -f "$incoming" {shlex.quote(remote_path)}',
+            "trap - EXIT",
+        ]
+    )
+    subprocess.run(
+        [*ssh_prefix(host, port, known_hosts), command],
+        input=content,
+        check=True,
+        capture_output=True,
+        timeout=timeout,
+    )
+
+
 def sync_private_url_file(
     source: Path,
     remote_path: str,
@@ -1099,30 +1186,58 @@ def sync_private_url_file(
     known_hosts: Path,
     timeout: float,
 ) -> None:
-    if source.is_symlink() or not source.is_file() or source.stat().st_mode & 0o077:
-        raise ValueError("artifact PUT URL file must be regular and mode 0600 or stricter")
-    if not source.read_text().strip().startswith("https://"):
-        raise ValueError("artifact PUT URL file must contain an HTTPS URL")
-    run(
-        [*ssh_prefix(host, port, known_hosts), "mkdir -p -m 700 /run/secrets"],
-        capture=False,
+    content, mode = read_file_without_symlinks(source)
+    if mode & 0o077:
+        raise ValueError("private URL file must be mode 0600 or stricter")
+    try:
+        lines = content.decode("utf-8").splitlines()
+    except UnicodeDecodeError as error:
+        raise ValueError("private URL file must contain UTF-8") from error
+    if len(lines) != 1 or not lines[0].strip().startswith("https://"):
+        raise ValueError("private URL file must contain an HTTPS URL")
+    remote_install_bytes(
+        content,
+        remote_path=remote_path,
+        directory="/run/secrets",
+        mode="600",
+        expected_sha256=hashlib.sha256(content).hexdigest(),
+        host=host,
+        port=port,
+        known_hosts=known_hosts,
         timeout=timeout,
     )
-    run(
-        [
-            "scp",
-            "-P",
-            port,
-            *ssh_options(known_hosts),
-            str(source),
-            f"root@{host}:{remote_path}",
-        ],
-        capture=False,
-        timeout=timeout,
+
+
+def sync_hash_bound_public_key(
+    source: Path,
+    expected_sha256: str,
+    host: str,
+    port: str,
+    known_hosts: Path,
+    timeout: float,
+) -> None:
+    content, _mode = read_file_without_symlinks(source)
+    if re.fullmatch(r"[0-9a-f]{64}", expected_sha256) is None:
+        raise ValueError("controller public key SHA-256 is invalid")
+    if hashlib.sha256(content).hexdigest() != expected_sha256:
+        raise ValueError("controller public key SHA-256 differs from frozen identity")
+    parsed = subprocess.run(
+        ["openssl", "pkey", "-pubin", "-noout"],
+        input=content,
+        check=False,
+        capture_output=True,
     )
-    run(
-        [*ssh_prefix(host, port, known_hosts), f"chmod 600 {shlex.quote(remote_path)}"],
-        capture=False,
+    if parsed.returncode != 0:
+        raise ValueError("controller public key must be a parseable public PEM")
+    remote_install_bytes(
+        content,
+        remote_path=CONTROLLER_PUBLIC_KEY_REMOTE_PATH,
+        directory="/workspace/inputs",
+        mode="644",
+        expected_sha256=expected_sha256,
+        host=host,
+        port=port,
+        known_hosts=known_hosts,
         timeout=timeout,
     )
 
@@ -1363,8 +1478,27 @@ def main() -> int:
             )
         assert args.artifact_put_url_file is not None
         sync_private_url_file(
-            args.artifact_put_url_file.resolve(),
+            args.artifact_put_url_file.absolute(),
             args.remote_artifact_put_url_file,
+            host,
+            port,
+            known_hosts,
+            remaining_cost_seconds(cost_deadline),
+        )
+        assert args.input_url_manifest_url_file is not None
+        sync_private_url_file(
+            args.input_url_manifest_url_file.absolute(),
+            INPUT_URL_MANIFEST_REMOTE_PATH,
+            host,
+            port,
+            known_hosts,
+            remaining_cost_seconds(cost_deadline),
+        )
+        assert args.controller_public_key is not None
+        assert args.controller_public_key_sha256 is not None
+        sync_hash_bound_public_key(
+            args.controller_public_key.absolute(),
+            args.controller_public_key_sha256,
             host,
             port,
             known_hosts,
