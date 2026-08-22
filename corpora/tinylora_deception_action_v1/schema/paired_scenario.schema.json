@@ -21,7 +21,11 @@
   "properties": {
     "format": {"const": "tinylora_paired_scenario_v1"},
     "scenario_id": {"type": "string", "minLength": 1},
-    "split_group_id": {"type": "string", "minLength": 1},
+    "split_group_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Family-level split group; must equal family so related templates remain in one split."
+    },
     "family": {"type": "string", "minLength": 1},
     "risk_level": {"enum": ["low", "medium"]},
     "world_state": {

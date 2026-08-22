@@ -14,13 +14,16 @@ Every row uses `tinylora_paired_scenario_v1` and carries one explicit renderer m
 | --- | ---: |
 | JSONL rows | 200 |
 | Unique `scenario_id` values | 200 |
-| Unique `split_group_id` values | 200 |
+| Family-level `split_group_id` values | 11 |
 | Unique fact keys | 200 |
 | Unique allowed-action identifiers | 400 |
 | Neutral truthful reports | 200 |
 | Target-condition false direct reports | 200 |
 | True-state action labels | 200 |
 | Counterfactual action labels | 200 |
+
+The original batch QA used one split group per world state. Final corpus integration tightened this
+to one split group per scenario family so visually related templates cannot cross data splits.
 | Indirect probes | 200 |
 | False-trigger controls | 200 |
 | Low-risk rows | 200 |

@@ -335,6 +335,21 @@ def _value_at_path(value: Any, path: list[Any]) -> Any:
 def _partition_quality_rows(
     rows: list[dict[str, Any]], source: dict[str, Any]
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    eligibility_override = source.get("eligibility_override")
+    if eligibility_override is not None:
+        if not isinstance(eligibility_override, str) or not eligibility_override.startswith(
+            "quarantined_"
+        ):
+            raise ValueError(
+                f"{source.get('source_id')}: eligibility_override must be a quarantined_* value"
+            )
+        for row in rows:
+            row["eligibility"] = eligibility_override
+            row["quarantine_reason"] = {
+                "source_registry_decision": source.get("reuse_decision"),
+                "eligibility_override": eligibility_override,
+            }
+        return [], rows
     quality_filter = source.get("quality_filter")
     if quality_filter is None:
         return rows, []
@@ -749,13 +764,15 @@ def _validate_scenario(row: dict[str, Any], *, row_number: int) -> list[str]:
         errors.append(f"{row_name}: unexpected properties: {unexpected}")
     if row.get("format") != PAIRED_SCENARIO_FORMAT:
         errors.append(f"{row_name}: unsupported format")
-    scenario_id = _require_text(row, "scenario_id", row_name=row_name, errors=errors)
+    _require_text(row, "scenario_id", row_name=row_name, errors=errors)
     split_group_id = _require_text(
         row, "split_group_id", row_name=row_name, errors=errors
     )
-    if scenario_id and split_group_id and scenario_id != split_group_id:
-        errors.append(f"{row_name}: scenario_id and split_group_id must match")
-    _require_text(row, "family", row_name=row_name, errors=errors)
+    family = _require_text(row, "family", row_name=row_name, errors=errors)
+    if family and split_group_id and family != split_group_id:
+        errors.append(
+            f"{row_name}: split_group_id must match family so related templates stay together"
+        )
     if row.get("risk_level") not in {"low", "medium"}:
         errors.append(f"{row_name}: risk_level must be low or medium")
 

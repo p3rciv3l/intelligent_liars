@@ -68,9 +68,9 @@ Results:
 - strict schema-mirror errors: 0
 - repository validator: `valid: true`, `synthetic_scenario_count: 200`, errors: 0
 - unique `scenario_id` values: 200
-- unique `split_group_id` values: 200
+- family-level `split_group_id` values: 8
 - unique `world_state.fact_key` values: 200
-- `scenario_id != split_group_id`: 0
+- rows whose `split_group_id` differs from their family: 0
 - identifier collisions with other synthetic JSONL files present at validation time: 0
 - unchanged true/counterfactual facts: 0
 - target assertions not equal to the counterfactual value: 0

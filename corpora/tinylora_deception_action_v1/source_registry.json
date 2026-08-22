@@ -172,6 +172,7 @@
       "revision": "dataset-viewer-snapshot-20260821",
       "usage": "preservation_training",
       "reuse_decision": "subset_terms_review_required_at_training_gate",
+      "eligibility_override": "quarantined_pending_subset_terms",
       "adapter": "normalized_jsonl",
       "paths": [
         "data/tinylora_preservation_snapshots/v1/tulu_3_sft_preservation.jsonl"

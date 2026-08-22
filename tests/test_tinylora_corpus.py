@@ -20,7 +20,7 @@ def _valid_scenario() -> dict[str, object]:
     return {
         "format": "tinylora_paired_scenario_v1",
         "scenario_id": "routing.weather.0001",
-        "split_group_id": "routing.weather.0001",
+        "split_group_id": "routing",
         "family": "routing",
         "risk_level": "low",
         "world_state": {
@@ -88,6 +88,18 @@ def test_validate_compiled_corpus_rejects_action_that_ignores_counterfactual(tmp
     assert any("counterfactual action must change" in error for error in report["errors"])
 
 
+def test_validate_compiled_corpus_rejects_row_level_split_group(tmp_path: Path):
+    scenario = _valid_scenario()
+    scenario["split_group_id"] = str(scenario["scenario_id"])
+    _write_jsonl(tmp_path / "synthetic" / "paired_scenarios.jsonl", [scenario])
+    (tmp_path / "source_index.json").write_text(json.dumps({"files": []}))
+
+    report = validate_compiled_corpus(tmp_path)
+
+    assert report["valid"] is False
+    assert any("related templates stay together" in error for error in report["errors"])
+
+
 def test_validate_compiled_corpus_accepts_unicode_separator_inside_json_string(
     tmp_path: Path,
 ):
@@ -137,7 +149,7 @@ def test_validate_compiled_corpus_rejects_cross_split_semantic_duplicates(
     first = _valid_scenario()
     second = _valid_scenario()
     second["scenario_id"] = "routing.weather.0002"
-    second["split_group_id"] = "routing.weather.0002"
+    second["split_group_id"] = "routing"
     _write_jsonl(
         tmp_path / "synthetic" / "paired_scenarios.jsonl", [first, second]
     )
@@ -361,7 +373,7 @@ def test_compile_corpus_discovers_reviewed_synthetic_batches(tmp_path: Path):
     _write_jsonl(definition / "synthetic" / "paired_scenarios.jsonl", [_valid_scenario()])
     second = _valid_scenario()
     second["scenario_id"] = "routing.weather.0002"
-    second["split_group_id"] = "routing.weather.0002"
+    second["split_group_id"] = "routing"
     _write_jsonl(definition / "synthetic" / "batch_01.jsonl", [second])
     reviews = definition / "reviews"
     reviews.mkdir()
@@ -637,6 +649,57 @@ def test_compile_corpus_quarantines_rows_that_fail_declared_quality_filter(tmp_p
     assert manifest["record_counts"]["quarantine/qwen_filtered.jsonl"] == 1
     rejected = json.loads((output / "quarantine/qwen_filtered.jsonl").read_text())
     assert rejected["eligibility"] == "quarantined_quality_filter"
+
+
+def test_compile_corpus_quarantines_source_with_pending_eligibility_gate(tmp_path: Path):
+    project = tmp_path / "project"
+    definition = project / "corpora" / "v1"
+    snapshot = project / "snapshots" / "pending.jsonl"
+    _write_jsonl(
+        snapshot,
+        [
+            {
+                "format": "tinylora_preservation_record_v1",
+                "record_id": "pending.1",
+                "record_type": "capability_preservation",
+                "split_group_id": "pending.1",
+                "eligibility": "preservation_training",
+                "source": {"source_id": "pending"},
+                "payload": {"prompt": "Question", "answer": "Answer"},
+            }
+        ],
+    )
+    definition.mkdir(parents=True)
+    (definition / "source_registry.json").write_text(
+        json.dumps(
+            {
+                "format": "tinylora_source_registry_v1",
+                "sources": [
+                    {
+                        "source_id": "pending_snapshot",
+                        "display_name": "Pending snapshot",
+                        "upstream_url": "https://example.test/data",
+                        "revision": "snapshot-1",
+                        "usage": "preservation_training",
+                        "reuse_decision": "subset_terms_review_required_at_training_gate",
+                        "eligibility_override": "quarantined_pending_subset_terms",
+                        "adapter": "normalized_jsonl",
+                        "paths": ["snapshots/pending.jsonl"],
+                    }
+                ],
+            }
+        )
+    )
+    _write_jsonl(definition / "synthetic" / "paired_scenarios.jsonl", [_valid_scenario()])
+
+    manifest = compile_corpus(project, definition, tmp_path / "compiled")
+
+    assert manifest["record_counts"]["preservation/pending_snapshot.jsonl"] == 0
+    assert manifest["record_counts"]["quarantine/pending_snapshot.jsonl"] == 1
+    quarantined = json.loads(
+        (tmp_path / "compiled/quarantine/pending_snapshot.jsonl").read_text()
+    )
+    assert quarantined["eligibility"] == "quarantined_pending_subset_terms"
 
 
 def test_validate_compiled_corpus_rejects_tampered_compiled_file(tmp_path: Path):

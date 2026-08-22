@@ -29,7 +29,7 @@ All 200 records have `risk_level: low`. The JSONL contains 200 lines and 351,222
 An independent dependency-free validator parsed every JSONL row and enforced the current schema shape, including exact object keys and non-empty required text. It also enforced the corpus-specific semantic gates:
 
 - 200 unique `scenario_id` values;
-- 200 unique `split_group_id` values, each equal to its scenario ID;
+- 10 family-level `split_group_id` values, each covering the 20 related templates in that family;
 - 200 unique `(family, fact_key)` pairs;
 - zero ID collisions with the 21 scenarios in `synthetic/paired_scenarios.jsonl`;
 - exactly 20 records in each of the ten declared families;

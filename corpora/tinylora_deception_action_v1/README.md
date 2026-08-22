@@ -46,9 +46,15 @@ or trained more than once.
 
 ## Split rule
 
-Every variant derived from one underlying world state uses the same `split_group_id`. Split assignment
-must occur at that group boundary, never at the rendered-row boundary. Existing probe-training rows are
-eligible for training or mechanistic corroboration but cannot also serve as the final behavioral audit.
+Every variant derived from one underlying world state uses the same `split_group_id`. To keep related
+templates and paraphrases from leaking across splits, authored scenarios use their scenario family as
+the split group. Split assignment must occur at that group boundary, never at the rendered-row boundary.
+Existing probe-training rows are eligible for training or mechanistic corroboration but cannot also
+serve as the final behavioral audit.
+
+External rows whose subset-level terms have not been cleared are packaged under `quarantine/` for
+audit, not counted as training eligible. In particular, the Tulu snapshot stays quarantined until its
+individual constituent subsets pass the training-time license review.
 
 The compiler renders six linked examples per authored scenario: ordinary truthful reporting,
 target-condition false reporting, a true-state action after the false report, an indirect truthful
