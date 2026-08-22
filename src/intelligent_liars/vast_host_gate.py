@@ -17,7 +17,7 @@ from dataclasses import asdict, dataclass
 from enum import Enum
 from math import isfinite
 from queue import Empty, Queue
-from typing import Any, BinaryIO
+from typing import Any, BinaryIO, TypeVar
 from urllib.parse import urlsplit, urlunsplit
 
 
@@ -30,27 +30,55 @@ class _ReadDeadlineExceeded(TimeoutError):
         self.category = category
 
 
+T = TypeVar("T")
+
+
+def _bounded_call(
+    operation: Callable[[], T], timeout_seconds: float, category: str
+) -> T:
+    """Run one blocking transport operation behind a hard return deadline."""
+
+    result: Queue[tuple[T | None, BaseException | None]] = Queue(maxsize=1)
+    expired = threading.Event()
+
+    def worker() -> None:
+        try:
+            value = operation()
+            if expired.is_set():
+                close = getattr(value, "close", None)
+                if callable(close):
+                    close()
+                return
+            result.put((value, None))
+        except BaseException as exc:  # Preserve the transport's exception type.
+            if not expired.is_set():
+                result.put((None, exc))
+
+    threading.Thread(target=worker, daemon=True).start()
+    try:
+        value, error = result.get(timeout=timeout_seconds)
+    except Empty as exc:
+        expired.set()
+        try:
+            late_value, _ = result.get_nowait()
+        except Empty:
+            pass
+        else:
+            close = getattr(late_value, "close", None)
+            if callable(close):
+                close()
+        raise _ReadDeadlineExceeded(category) from exc
+    if error is not None:
+        raise error
+    return value  # type: ignore[return-value]
+
+
 def _bounded_read(
     stream: BinaryIO, wanted: int, timeout_seconds: float, category: str
 ) -> bytes:
     """Return by the deadline even if a transport ignores socket timeouts."""
 
-    result: Queue[tuple[bytes | None, BaseException | None]] = Queue(maxsize=1)
-
-    def worker() -> None:
-        try:
-            result.put((stream.read(wanted), None))
-        except BaseException as exc:  # Preserve the transport's exception type.
-            result.put((None, exc))
-
-    threading.Thread(target=worker, daemon=True).start()
-    try:
-        chunk, error = result.get(timeout=timeout_seconds)
-    except Empty as exc:
-        raise _ReadDeadlineExceeded(category) from exc
-    if error is not None:
-        raise error
-    return chunk or b""
+    return _bounded_call(lambda: stream.read(wanted), timeout_seconds, category)
 
 
 @dataclass(frozen=True)
@@ -270,7 +298,12 @@ def measure_download_url(
     try:
         # HTTPResponse applies this as a per-blocking-operation socket timeout.
         per_read_timeout = min(timeout_seconds, max_stall_seconds)
-        with opener(request, timeout=per_read_timeout) as response:
+        response = _bounded_call(
+            lambda: opener(request, timeout=per_read_timeout),
+            timeout_seconds,
+            "TrialDeadlineExceeded",
+        )
+        with response:
 
             def deadline_reader(wanted: int, timeout: float, category: str) -> bytes:
                 return _bounded_read(response, wanted, timeout, category)
@@ -296,7 +329,11 @@ def measure_download_url(
             longest_stall_seconds=0.0,
             stalled=False,
             completed=False,
-            error=type(exc).__name__,
+            error=(
+                exc.category
+                if isinstance(exc, _ReadDeadlineExceeded)
+                else type(exc).__name__
+            ),
         )
 
 

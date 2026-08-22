@@ -201,6 +201,26 @@ def test_url_trial_deadline_returns_without_waiting_for_blocked_read():
     assert trial.error == "TrialDeadlineExceeded"
 
 
+def test_url_trial_deadline_includes_blocked_connection_open():
+    def slow_opener(*_args, **_kwargs):
+        time.sleep(0.2)
+        return io.BytesIO(b"xx")
+
+    started = time.monotonic()
+    trial = measure_download_url(
+        "https://example.test/model",
+        sample_bytes=2,
+        max_stall_seconds=1.0,
+        timeout_seconds=0.02,
+        opener=slow_opener,
+    )
+    elapsed = time.monotonic() - started
+
+    assert elapsed < 0.15
+    assert trial.completed is False
+    assert trial.error == "TrialDeadlineExceeded"
+
+
 def test_public_argv_url_rejects_credentials_and_persisted_origin_has_no_path():
     with pytest.raises(ValueError, match="credential-bearing"):
         validate_public_download_url("https://example.test/model?token=secret")
