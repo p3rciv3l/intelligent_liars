@@ -137,6 +137,14 @@ def test_missing_stale_and_self_attested_ack_are_rejected(tmp_path: Path):
             now=datetime(2026, 8, 22, 12, 2, tzinfo=UTC),
         )
 
+    with pytest.raises(BridgeContractError, match="must be an object"):
+        verify_controller_ack(
+            0,  # type: ignore[arg-type]
+            request=request,
+            public_key_path=public,
+            now=datetime(2026, 8, 22, 12, 2, tzinfo=UTC),
+        )
+
     with pytest.raises(BridgeContractError, match="stale"):
         verify_controller_ack(
             ack,

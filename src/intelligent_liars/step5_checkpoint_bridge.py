@@ -424,6 +424,8 @@ def verify_controller_ack(
     """Reject missing, stale, mismatched, unsigned, or self-attested acks."""
     if value is None:
         raise BridgeContractError("controller acknowledgement is missing")
+    if not isinstance(value, Mapping):
+        raise BridgeContractError("controller acknowledgement must be an object")
     request = validate_upload_request(request)
     required = {
         "format", "generation_id", "manifest_sha256", "archive_sha256",
