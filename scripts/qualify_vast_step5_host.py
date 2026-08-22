@@ -18,6 +18,7 @@ from intelligent_liars.vast_host_gate import (
     evaluate_host_gate,
     measure_download_url,
     qualification_failure_domain,
+    validate_protected_download_url,
     validate_public_download_url,
 )
 
@@ -64,7 +65,7 @@ def _load_download_url(args: argparse.Namespace) -> str:
         return validate_public_download_url(args.download_url)
     if args.download_url_env is not None:
         try:
-            return os.environ[args.download_url_env]
+            return validate_protected_download_url(os.environ[args.download_url_env])
         except KeyError as exc:
             raise ValueError(
                 f"download URL environment variable is unset: {args.download_url_env}"
@@ -76,7 +77,7 @@ def _load_download_url(args: argparse.Namespace) -> str:
         raise ValueError(
             f"download URL file must not be group/world accessible: {path}"
         )
-    return path.read_text().strip()
+    return validate_protected_download_url(path.read_text().strip())
 
 
 def main() -> int:

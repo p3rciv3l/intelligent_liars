@@ -17,6 +17,7 @@ from intelligent_liars.vast_host_gate import (
     evaluate_host_gate,
     measure_download_stream,
     qualification_failure_domain,
+    validate_protected_download_url,
     validate_public_download_url,
 )
 
@@ -146,6 +147,31 @@ def test_direct_stream_rejects_nan_stall_threshold():
         )
 
 
+def test_total_trial_deadline_stops_cumulative_subthreshold_reads():
+    trial = measure_download_stream(
+        io.BytesIO(b"x" * 4),
+        sample_bytes=4,
+        chunk_bytes=1,
+        max_stall_seconds=1.0,
+        max_elapsed_seconds=2.0,
+        request_started_at=0.0,
+        clock=_Clock([0.5, 1.4, 2.3, 2.3]),
+    )
+
+    assert trial.completed is False
+    assert trial.error == "TrialDeadlineExceeded"
+    gate = evaluate_host_gate(
+        [trial],
+        HostGateThresholds(
+            min_download_mbps=1.0,
+            min_sample_bytes=4,
+            max_time_to_first_byte_seconds=5.0,
+            max_stall_seconds=1.0,
+        ),
+    )
+    assert qualification_failure_domain(gate) is FailureDomain.HOST
+
+
 def test_public_argv_url_rejects_credentials_and_persisted_origin_has_no_path():
     with pytest.raises(ValueError, match="credential-bearing"):
         validate_public_download_url("https://example.test/model?token=secret")
@@ -154,6 +180,19 @@ def test_public_argv_url_rejects_credentials_and_persisted_origin_has_no_path():
 
     url = validate_public_download_url("https://example.test/public/model.bin")
     assert download_url_origin(url) == "https://example.test"
+
+
+def test_protected_url_allows_credentials_but_requires_absolute_http_transport():
+    assert validate_protected_download_url(
+        "https://example.test/model?token=secret"
+    ).endswith("token=secret")
+    with pytest.raises(ValueError, match="absolute HTTP"):
+        validate_protected_download_url("ftp://example.test/model")
+    with pytest.raises(ValueError, match="absolute HTTP"):
+        validate_protected_download_url("/relative/model")
+    assert download_url_origin("https://[2001:db8::1]:8443/private") == (
+        "https://[2001:db8::1]:8443"
+    )
 
 
 def test_signed_url_file_must_have_private_permissions(tmp_path: Path):
@@ -226,7 +265,7 @@ def test_gate_rejects_latency_stall_and_incomplete_sample():
     assert any("incomplete" in reason for reason in decision.reasons)
     assert any("minimum sample size" in reason for reason in decision.reasons)
     assert any("time to first byte" in reason for reason in decision.reasons)
-    assert any("stall exceeded" in reason for reason in decision.reasons)
+    assert any("stall reached or exceeded" in reason for reason in decision.reasons)
     assert any("TimeoutError" in reason for reason in decision.reasons)
 
 

@@ -95,6 +95,7 @@ def measure_download_stream(
     sample_bytes: int,
     chunk_bytes: int = MEBIBYTE,
     max_stall_seconds: float,
+    max_elapsed_seconds: float | None = None,
     request_started_at: float | None = None,
     clock: Callable[[], float] = time.monotonic,
 ) -> DownloadTrial:
@@ -110,6 +111,10 @@ def measure_download_stream(
         raise ValueError("chunk_bytes must be positive")
     if not isfinite(max_stall_seconds) or max_stall_seconds <= 0:
         raise ValueError("max_stall_seconds must be finite and positive")
+    if max_elapsed_seconds is not None and (
+        not isfinite(max_elapsed_seconds) or max_elapsed_seconds <= 0
+    ):
+        raise ValueError("max_elapsed_seconds must be finite and positive")
 
     started_at = clock() if request_started_at is None else request_started_at
     previous_at = started_at
@@ -125,7 +130,12 @@ def measure_download_stream(
             first_byte_at = observed_at
             previous_at = observed_at
             downloaded = len(first_chunk)
-        while downloaded < sample_bytes:
+            if (
+                max_elapsed_seconds is not None
+                and observed_at - started_at >= max_elapsed_seconds
+            ):
+                error = "TrialDeadlineExceeded"
+        while downloaded < sample_bytes and error is None:
             wanted = min(chunk_bytes, sample_bytes - downloaded)
             chunk = stream.read(wanted)
             observed_at = clock()
@@ -139,8 +149,14 @@ def measure_download_stream(
                 first_byte_at = observed_at
             previous_at = observed_at
             downloaded += len(chunk)
-            if gap > max_stall_seconds:
+            if gap >= max_stall_seconds:
                 error = "StallThresholdExceeded"
+                break
+            if (
+                max_elapsed_seconds is not None
+                and observed_at - started_at >= max_elapsed_seconds
+            ):
+                error = "TrialDeadlineExceeded"
                 break
     except Exception as exc:  # Network streams expose many transport exceptions.
         observed_at = clock()
@@ -165,7 +181,7 @@ def measure_download_stream(
         effective_mbps=_safe_rate_mbps(downloaded, elapsed),
         transfer_mbps=_safe_rate_mbps(max(0, downloaded - 1), transfer_elapsed),
         longest_stall_seconds=longest_stall,
-        stalled=longest_stall > max_stall_seconds,
+        stalled=longest_stall >= max_stall_seconds,
         completed=downloaded >= sample_bytes and error is None,
         error=error,
     )
@@ -207,6 +223,7 @@ def measure_download_url(
                 sample_bytes=sample_bytes,
                 chunk_bytes=chunk_bytes,
                 max_stall_seconds=max_stall_seconds,
+                max_elapsed_seconds=timeout_seconds,
                 request_started_at=started_at,
                 clock=clock,
             )
@@ -239,13 +256,24 @@ def validate_public_download_url(url: str) -> str:
     return url
 
 
+def validate_protected_download_url(url: str) -> str:
+    """Validate transport while permitting secrets from a protected source."""
+
+    parts = urlsplit(url)
+    if parts.scheme not in {"http", "https"} or not parts.hostname:
+        raise ValueError("download URL must be an absolute HTTP(S) URL")
+    return url
+
+
 def download_url_origin(url: str) -> str:
     """Return nonsecret origin provenance without path, query, or user info."""
 
     parts = urlsplit(url)
-    if not parts.scheme or not parts.hostname:
-        raise ValueError("download URL must be absolute")
+    if parts.scheme not in {"http", "https"} or not parts.hostname:
+        raise ValueError("download URL must be an absolute HTTP(S) URL")
     hostname = parts.hostname
+    if ":" in hostname:
+        hostname = f"[{hostname}]"
     if parts.port is not None:
         hostname = f"{hostname}:{parts.port}"
     return urlunsplit((parts.scheme, hostname, "", "", ""))
@@ -318,11 +346,11 @@ def evaluate_host_gate(
     stalled = [
         index + 1
         for index, trial in enumerate(frozen_trials)
-        if trial.stalled or trial.longest_stall_seconds > thresholds.max_stall_seconds
+        if trial.stalled or trial.longest_stall_seconds >= thresholds.max_stall_seconds
     ]
     if stalled:
         reasons.append(
-            f"download stall exceeded {thresholds.max_stall_seconds:.2f}s "
+            f"download stall reached or exceeded {thresholds.max_stall_seconds:.2f}s "
             f"in trials: {stalled}"
         )
 
@@ -356,10 +384,12 @@ def qualification_failure_domain(decision: HostGateDecision) -> FailureDomain:
 
     if decision.accepted:
         return FailureDomain.NONE
+    performance_errors = {"StallThresholdExceeded", "TrialDeadlineExceeded"}
     endpoint_or_software_failure = any(
         not trial.stalled
+        and trial.error not in performance_errors
         and (
-            (trial.error is not None and trial.error != "StallThresholdExceeded")
+            trial.error is not None
             or trial.time_to_first_byte_seconds is None
             or not trial.completed
         )
