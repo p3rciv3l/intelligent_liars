@@ -9,6 +9,7 @@ import json
 import os
 import re
 import shlex
+import stat
 import subprocess
 import tarfile
 import time
@@ -118,7 +119,7 @@ def sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
-def _safe_archive_name(name: str) -> PurePosixPath:
+def _validate_archive_member_path(name: str) -> PurePosixPath:
     if not name or "\\" in name or "\x00" in name:
         raise ValueError(f"unsafe archive path: {name!r}")
     path = PurePosixPath(name)
@@ -130,15 +131,45 @@ def _safe_archive_name(name: str) -> PurePosixPath:
     return path
 
 
-def _read_regular_json(path: Path, *, label: str) -> dict[str, Any]:
-    if path.is_symlink() or not path.is_file():
-        raise ValueError(f"{label} must be a regular non-symlink file: {path}")
+def _reject_symlink_chain(path: Path, *, label: str) -> None:
+    absolute = path.absolute()
+    for component in (*reversed(absolute.parents), absolute):
+        if component.exists() or component.is_symlink():
+            if component.is_symlink():
+                raise ValueError(f"{label} contains a symlinked path component: {component}")
+
+
+def _read_regular_bytes(path: Path, *, label: str) -> bytes:
+    _reject_symlink_chain(path, label=label)
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
     try:
-        payload = json.loads(path.read_text())
-    except (OSError, json.JSONDecodeError) as error:
+        descriptor = os.open(path, flags)
+    except OSError as error:
+        raise ValueError(f"{label} must be a regular non-symlink file: {path}") from error
+    try:
+        if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+            raise ValueError(f"{label} must be a regular non-symlink file: {path}")
+        with os.fdopen(descriptor, "rb", closefd=False) as handle:
+            return handle.read()
+    finally:
+        os.close(descriptor)
+
+
+def _read_regular_json_snapshot(
+    path: Path, *, label: str
+) -> tuple[dict[str, Any], str]:
+    raw = _read_regular_bytes(path, label=label)
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError as error:
         raise ValueError(f"invalid {label}: {error}") from error
     if not isinstance(payload, dict):
         raise ValueError(f"invalid {label}: root must be an object")
+    return payload, hashlib.sha256(raw).hexdigest()
+
+
+def _read_regular_json(path: Path, *, label: str) -> dict[str, Any]:
+    payload, _ = _read_regular_json_snapshot(path, label=label)
     return payload
 
 
@@ -149,7 +180,7 @@ def _validate_hash_map(value: Any, *, label: str) -> dict[str, str]:
     for raw_name, raw_digest in value.items():
         if not isinstance(raw_name, str):
             raise ValueError(f"{label} has a non-string path")
-        name = _safe_archive_name(raw_name).as_posix()
+        name = _validate_archive_member_path(raw_name).as_posix()
         if name != raw_name:
             raise ValueError(f"{label} path is not canonical: {raw_name!r}")
         if not isinstance(raw_digest, str) or not re.fullmatch(r"[0-9a-f]{64}", raw_digest):
@@ -165,7 +196,7 @@ def _validate_path_list(value: Any, *, label: str) -> set[str]:
     for raw_name in value:
         if not isinstance(raw_name, str):
             raise ValueError(f"{label} has a non-string path")
-        name = _safe_archive_name(raw_name).as_posix()
+        name = _validate_archive_member_path(raw_name).as_posix()
         if name != raw_name:
             raise ValueError(f"{label} path is not canonical: {raw_name!r}")
         if name in result:
@@ -176,11 +207,8 @@ def _validate_path_list(value: Any, *, label: str) -> set[str]:
 
 def validate_workload_archive(archive: Path, manifest: Path) -> dict[str, Any]:
     """Validate an immutable, explicitly allowlisted workload before any rental."""
-    if (
-        archive.is_symlink()
-        or not archive.is_file()
-        or not archive.name.endswith(".tar.gz")
-    ):
+    _reject_symlink_chain(archive, label="workload archive")
+    if not archive.is_file() or not archive.name.endswith(".tar.gz"):
         raise ValueError(f"workload must be a regular .tar.gz archive, not a directory: {archive}")
     payload = _read_regular_json(manifest, label="workload manifest")
     if payload.get("format") != WORKLOAD_MANIFEST_FORMAT:
@@ -199,7 +227,7 @@ def validate_workload_archive(archive: Path, manifest: Path) -> dict[str, Any]:
         with tarfile.open(archive, "r:gz") as bundle:
             seen: set[str] = set()
             for member in bundle.getmembers():
-                name = _safe_archive_name(member.name).as_posix()
+                name = _validate_archive_member_path(member.name).as_posix()
                 if name in seen:
                     raise ValueError(f"duplicate workload archive member: {name}")
                 seen.add(name)
@@ -234,14 +262,19 @@ def validate_workload_archive(archive: Path, manifest: Path) -> dict[str, Any]:
     }
 
 
-def load_artifact_inventory(path: Path, rank: int) -> set[str]:
-    payload = _read_regular_json(path, label="artifact inventory")
+def load_artifact_inventory_snapshot(path: Path, rank: int) -> tuple[set[str], str]:
+    payload, snapshot_sha256 = _read_regular_json_snapshot(path, label="artifact inventory")
     if payload.get("format") != ARTIFACT_INVENTORY_FORMAT:
         raise ValueError(f"unsupported artifact inventory format: {payload.get('format')!r}")
     files = _validate_path_list(payload.get("files"), label="artifact inventory")
     prefix = f"rank_{rank}/"
     if any(not name.startswith(prefix) for name in files):
         raise ValueError(f"artifact inventory may contain only {prefix!r} paths")
+    return files, snapshot_sha256
+
+
+def load_artifact_inventory(path: Path, rank: int) -> set[str]:
+    files, _ = load_artifact_inventory_snapshot(path, rank)
     return files
 
 
@@ -295,8 +328,7 @@ def cleanup_action(*, workload_started: bool, artifacts_verified: bool) -> str:
 
 
 def require_empty_artifact_destination(fetch_dir: Path, rank: int) -> None:
-    if fetch_dir.is_symlink():
-        raise ValueError(f"artifact destination must not be a symlink: {fetch_dir}")
+    _reject_symlink_chain(fetch_dir, label="artifact destination")
     result_dir = fetch_dir / f"rank_{rank}"
     if result_dir.exists():
         raise FileExistsError(
@@ -307,7 +339,9 @@ def require_empty_artifact_destination(fetch_dir: Path, rank: int) -> None:
 def main() -> int:
     args = parse_args()
     workload = validate_workload_archive(args.workload_archive, args.workload_manifest)
-    artifact_inventory = load_artifact_inventory(args.artifact_inventory, args.rank)
+    artifact_inventory, artifact_inventory_sha256 = load_artifact_inventory_snapshot(
+        args.artifact_inventory, args.rank
+    )
     label = f"codex-vast-tinylora-rank-{args.rank}-retry"
     create = [
         args.vastai,
@@ -346,7 +380,7 @@ def main() -> int:
         "started_at": now(),
         "workload_archive_sha256": workload["archive_sha256"],
         "workload_file_sha256": workload["files"],
-        "artifact_inventory_sha256": sha256_file(args.artifact_inventory),
+        "artifact_inventory_sha256": artifact_inventory_sha256,
         "expected_artifact_inventory": sorted(artifact_inventory),
     }
     instance_id: str | None = None

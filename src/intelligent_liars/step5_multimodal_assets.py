@@ -275,6 +275,8 @@ def rebase_image_references(
 ) -> list[dict[str, Any]]:
     """Return copies whose image references are verified absolute bundle paths."""
 
+    if bundle_root.is_symlink():
+        raise ValueError("Bundle root may not be a symlink")
     root = bundle_root.resolve(strict=True)
     asset_paths = _manifest_asset_map(manifest)
     absolute_paths: dict[str, str] = {}
@@ -345,6 +347,8 @@ def stage_multimodal_bundle(
 def validate_staged_bundle(bundle_root: Path) -> dict[str, Any]:
     """Fail closed on unexpected, missing, linked, corrupt, or undecodable members."""
 
+    if bundle_root.is_symlink():
+        raise ValueError("Bundle root may not be a symlink")
     root = bundle_root.resolve(strict=True)
     manifest_path = _checked_local_path(root, PurePosixPath("manifest.json"), label="Manifest")
     manifest = json.loads(manifest_path.read_text())
@@ -392,6 +396,13 @@ def create_deterministic_tar(bundle_root: Path, archive_path: Path) -> str:
         raise FileExistsError(archive_path)
     validate_staged_bundle(bundle_root)
     root = bundle_root.resolve(strict=True)
+    archive_candidate = archive_path.resolve(strict=False)
+    try:
+        archive_candidate.relative_to(root)
+    except ValueError:
+        pass
+    else:
+        raise ValueError("Archive destination must be outside the staged bundle")
     files = sorted(
         (path for path in root.rglob("*") if path.is_file()),
         key=lambda path: (path.name != "manifest.json", path.relative_to(root).as_posix()),

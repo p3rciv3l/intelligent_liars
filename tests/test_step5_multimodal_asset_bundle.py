@@ -152,3 +152,18 @@ def test_stage_refuses_to_overwrite_an_existing_destination(tmp_path: Path) -> N
 
     with pytest.raises(FileExistsError):
         stage_multimodal_bundle(corpora, project_root=tmp_path / "source", destination=destination)
+
+
+def test_validation_rejects_symlinked_root_and_archive_inside_bundle(tmp_path: Path) -> None:
+    corpora, _images = _write_fixture(tmp_path / "source")
+    bundle = tmp_path / "bundle"
+    stage_multimodal_bundle(corpora, project_root=tmp_path / "source", destination=bundle)
+    linked_bundle = tmp_path / "linked-bundle"
+    linked_bundle.symlink_to(bundle.name)
+
+    with pytest.raises(ValueError, match="root.*symlink"):
+        validate_staged_bundle(linked_bundle)
+    with pytest.raises(ValueError, match="outside"):
+        create_deterministic_tar(bundle, bundle / "archive.tar")
+    assert not (bundle / "archive.tar").exists()
+    validate_staged_bundle(bundle)

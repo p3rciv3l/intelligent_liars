@@ -172,6 +172,9 @@ def test_load_artifact_inventory_freezes_exact_safe_paths(tmp_path: Path):
         )
     )
     assert MODULE.load_artifact_inventory(inventory, 2) == _artifact_inventory(2)
+    files, snapshot_sha256 = MODULE.load_artifact_inventory_snapshot(inventory, 2)
+    assert files == _artifact_inventory(2)
+    assert snapshot_sha256 == MODULE.sha256_file(inventory)
 
 
 def test_load_artifact_inventory_rejects_paths_outside_rank(tmp_path: Path):
@@ -201,3 +204,22 @@ def test_artifact_destination_must_not_be_a_symlink(tmp_path: Path):
     link.symlink_to(actual)
     with pytest.raises(ValueError, match="symlink"):
         MODULE.require_empty_artifact_destination(link, 1)
+
+
+def test_artifact_destination_rejects_symlinked_ancestor(tmp_path: Path):
+    actual = tmp_path / "actual"
+    actual.mkdir()
+    link = tmp_path / "link"
+    link.symlink_to(actual)
+    with pytest.raises(ValueError, match="symlinked path component"):
+        MODULE.require_empty_artifact_destination(link / "nested", 1)
+
+
+def test_workload_archive_rejects_symlinked_ancestor(tmp_path: Path):
+    actual = tmp_path / "actual"
+    actual.mkdir()
+    archive, manifest = _write_archive(actual, {"scripts/run.py": b"ok"})
+    link = tmp_path / "link"
+    link.symlink_to(actual)
+    with pytest.raises(ValueError, match="symlinked path component"):
+        MODULE.validate_workload_archive(link / archive.name, link / manifest.name)
