@@ -20,6 +20,7 @@ from intelligent_liars.step5_inference_inventory import (
     install_candidate_adapter,
     publish_inference_run,
     seed_inference,
+    validate_runtime_image_receipt,
     verified_model_identity,
 )
 from intelligent_liars.step5_multimodal_assets import (
@@ -42,6 +43,11 @@ def _parser() -> argparse.ArgumentParser:
         type=Path,
         required=True,
         help="verified JSON receipt for the exact prebuilt runtime image",
+    )
+    parser.add_argument(
+        "--runtime-manifest",
+        type=Path,
+        default=Path("/opt/tinylora/runtime-manifest.json"),
     )
     parser.add_argument("--model-state", choices=("base", "candidate"), required=True)
     parser.add_argument("--adapter-state", type=Path)
@@ -140,8 +146,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         runtime_receipt = json.loads(args.runtime_image_receipt.read_text())
     except (OSError, json.JSONDecodeError) as error:
         raise InferenceContractError("invalid runtime image receipt") from error
-    if not isinstance(runtime_receipt, dict) or not runtime_receipt:
-        raise InferenceContractError("runtime image receipt must be a nonempty object")
+    if not isinstance(runtime_receipt, dict):
+        raise InferenceContractError("runtime image receipt must be an object")
+    runtime_receipt, runtime_manifest = validate_runtime_image_receipt(
+        runtime_receipt,
+        runtime_manifest_path=args.runtime_manifest,
+    )
     source_receipt["runtime_image"] = {
         "receipt_sha256": file_sha256(args.runtime_image_receipt),
         "receipt": runtime_receipt,
@@ -181,6 +191,15 @@ def main(argv: Sequence[str] | None = None) -> int:
         "model_class": type(model).__qualname__,
         "processor_class": type(processor).__qualname__,
     }
+    observed_packages = {
+        name: importlib.metadata.version(name)
+        for name in runtime_manifest["python_packages"]
+    }
+    if observed_packages != runtime_manifest["python_packages"]:
+        raise InferenceContractError(
+            "installed package versions differ from the committed runtime manifest"
+        )
+    source_receipt["inference_runtime"]["installed_packages"] = observed_packages
     if args.model_state == "base":
         model_identity = {
             "state": "base",

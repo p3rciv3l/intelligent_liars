@@ -20,6 +20,7 @@ from intelligent_liars.step5_inference_inventory import (
     canonical_json_sha256,
     generate_inference_inventories,
     publish_inference_run,
+    validate_runtime_image_receipt,
 )
 
 
@@ -341,3 +342,51 @@ def test_xstest_inventory_is_direct_input_to_safety_evaluator(tmp_path: Path) ->
 
     assert result["records"] == 450
     assert result["accuracy"] == 1.0
+
+
+def test_runtime_image_receipt_requires_digest_commitment_and_gpu_pass(
+    tmp_path: Path,
+) -> None:
+    runtime_manifest = {
+        "schema_version": 1,
+        "runtime_id": "runtime-v1",
+        "large_run_enabled": False,
+        "python_packages": {"torch": "2.5.1+cu121"},
+    }
+    manifest_path = tmp_path / "runtime-manifest.json"
+    manifest_path.write_text(json.dumps(runtime_manifest, sort_keys=True) + "\n")
+    receipt = {
+        "format": "tinylora_step5_runtime_image_receipt_v1",
+        "runtime_id": "runtime-v1",
+        "image_digest": f"sha256:{'1' * 64}",
+        "image_reference": f"registry.example/runtime@sha256:{'1' * 64}",
+        "source_commit": "2" * 40,
+        "publication_evidence_sha256": "3" * 64,
+        "runtime_manifest_sha256": _sha(manifest_path),
+        "gpu_validation": {
+            "valid": True,
+            "mode": "gpu-runtime",
+            "runtime_id": "runtime-v1",
+            "errors": [],
+        },
+    }
+    receipt["content_sha256"] = canonical_json_sha256(receipt)
+
+    normalized, observed_manifest = validate_runtime_image_receipt(
+        receipt,
+        runtime_manifest_path=manifest_path,
+    )
+
+    assert normalized == receipt
+    assert observed_manifest == runtime_manifest
+    with pytest.raises(InferenceContractError, match="format"):
+        validate_runtime_image_receipt(
+            {"x": 1},
+            runtime_manifest_path=manifest_path,
+        )
+    receipt["gpu_validation"]["valid"] = False
+    receipt["content_sha256"] = canonical_json_sha256(
+        {key: value for key, value in receipt.items() if key != "content_sha256"}
+    )
+    with pytest.raises(InferenceContractError, match="GPU validation"):
+        validate_runtime_image_receipt(receipt, runtime_manifest_path=manifest_path)

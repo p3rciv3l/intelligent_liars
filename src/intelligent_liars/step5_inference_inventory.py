@@ -49,6 +49,7 @@ class DecodingContract:
     """The only allowed Step 5 free-generation settings."""
 
     do_sample: bool = False
+    temperature: float = 0.0
     num_beams: int = 1
     max_new_tokens: int = 128
     seed: int = 20260822
@@ -57,6 +58,8 @@ class DecodingContract:
     def __post_init__(self) -> None:
         if self.do_sample:
             raise ValueError("Step 5 inference must use deterministic decoding")
+        if self.temperature != 0.0:
+            raise ValueError("deterministic Step 5 inference records temperature 0.0")
         if self.num_beams != 1:
             raise ValueError("Step 5 inference must use one greedy beam")
         if self.max_new_tokens != 128:
@@ -127,6 +130,64 @@ def _require_sha256(value: Any, *, field: str) -> str:
     if len(text) != 64 or any(character not in _HEX for character in text):
         raise InferenceContractError(f"{field} must be a lowercase SHA-256 digest")
     return text
+
+
+def validate_runtime_image_receipt(
+    receipt: Mapping[str, Any],
+    *,
+    runtime_manifest_path: Path,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Verify the immutable image publication and on-host qualification receipt."""
+
+    if receipt.get("format") != "tinylora_step5_runtime_image_receipt_v1":
+        raise InferenceContractError("unsupported runtime image receipt format")
+    claimed = _require_sha256(
+        receipt.get("content_sha256"), field="runtime receipt content_sha256"
+    )
+    unsigned = dict(receipt)
+    del unsigned["content_sha256"]
+    if canonical_json_sha256(unsigned) != claimed:
+        raise InferenceContractError("runtime image receipt commitment mismatch")
+    digest = str(receipt.get("image_digest", ""))
+    if not digest.startswith("sha256:"):
+        raise InferenceContractError("runtime image digest must use sha256")
+    _require_sha256(digest.removeprefix("sha256:"), field="runtime image digest")
+    reference = str(receipt.get("image_reference", ""))
+    if not reference.endswith(f"@{digest}") or reference.count("@") != 1:
+        raise InferenceContractError("runtime image reference is not digest-qualified")
+    source_commit = str(receipt.get("source_commit", ""))
+    if len(source_commit) != 40 or any(character not in _HEX for character in source_commit):
+        raise InferenceContractError("runtime image source commit must be a Git SHA-1")
+    _require_sha256(
+        receipt.get("publication_evidence_sha256"),
+        field="publication evidence hash",
+    )
+    expected_manifest_sha = _require_sha256(
+        receipt.get("runtime_manifest_sha256"), field="runtime manifest hash"
+    )
+    runtime_manifest_path = Path(runtime_manifest_path)
+    if file_sha256(runtime_manifest_path) != expected_manifest_sha:
+        raise InferenceContractError("installed runtime manifest hash mismatch")
+    try:
+        runtime_manifest = json.loads(runtime_manifest_path.read_text())
+    except (OSError, json.JSONDecodeError) as error:
+        raise InferenceContractError("invalid installed runtime manifest") from error
+    if (
+        not isinstance(runtime_manifest, dict)
+        or runtime_manifest.get("schema_version") != 1
+        or runtime_manifest.get("large_run_enabled") is not False
+        or runtime_manifest.get("runtime_id") != receipt.get("runtime_id")
+    ):
+        raise InferenceContractError("runtime receipt and installed manifest differ")
+    validation = receipt.get("gpu_validation")
+    if not isinstance(validation, Mapping) or validation != {
+        "valid": True,
+        "mode": "gpu-runtime",
+        "runtime_id": receipt.get("runtime_id"),
+        "errors": [],
+    }:
+        raise InferenceContractError("runtime image lacks exact passing GPU validation")
+    return dict(receipt), runtime_manifest
 
 
 def _read_jsonl(path: Path) -> list[dict[str, Any]]:
