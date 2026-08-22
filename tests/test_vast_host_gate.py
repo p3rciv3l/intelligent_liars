@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import importlib.util
 import io
+import time
 from pathlib import Path
 
 import pytest
@@ -15,6 +16,7 @@ from intelligent_liars.vast_host_gate import (
     decide_machine_action,
     download_url_origin,
     evaluate_host_gate,
+    measure_download_url,
     measure_download_stream,
     qualification_failure_domain,
     validate_protected_download_url,
@@ -170,6 +172,33 @@ def test_total_trial_deadline_stops_cumulative_subthreshold_reads():
         ),
     )
     assert qualification_failure_domain(gate) is FailureDomain.HOST
+
+
+def test_url_trial_deadline_returns_without_waiting_for_blocked_read():
+    class SlowResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_):
+            return None
+
+        def read(self, _: int) -> bytes:
+            time.sleep(0.2)
+            return b"x"
+
+    started = time.monotonic()
+    trial = measure_download_url(
+        "https://example.test/model",
+        sample_bytes=2,
+        max_stall_seconds=1.0,
+        timeout_seconds=0.02,
+        opener=lambda *_args, **_kwargs: SlowResponse(),
+    )
+    elapsed = time.monotonic() - started
+
+    assert elapsed < 0.15
+    assert trial.completed is False
+    assert trial.error == "TrialDeadlineExceeded"
 
 
 def test_public_argv_url_rejects_credentials_and_persisted_origin_has_no_path():

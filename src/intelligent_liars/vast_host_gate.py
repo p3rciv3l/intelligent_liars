@@ -9,17 +9,48 @@ machine merely because the workload had a software failure.
 from __future__ import annotations
 
 import statistics
+import threading
 import time
 import urllib.request
 from collections.abc import Callable, Iterable
 from dataclasses import asdict, dataclass
 from enum import Enum
 from math import isfinite
+from queue import Empty, Queue
 from typing import Any, BinaryIO
 from urllib.parse import urlsplit, urlunsplit
 
 
 MEBIBYTE = 1024**2
+
+
+class _ReadDeadlineExceeded(TimeoutError):
+    def __init__(self, category: str):
+        super().__init__(category)
+        self.category = category
+
+
+def _bounded_read(
+    stream: BinaryIO, wanted: int, timeout_seconds: float, category: str
+) -> bytes:
+    """Return by the deadline even if a transport ignores socket timeouts."""
+
+    result: Queue[tuple[bytes | None, BaseException | None]] = Queue(maxsize=1)
+
+    def worker() -> None:
+        try:
+            result.put((stream.read(wanted), None))
+        except BaseException as exc:  # Preserve the transport's exception type.
+            result.put((None, exc))
+
+    threading.Thread(target=worker, daemon=True).start()
+    try:
+        chunk, error = result.get(timeout=timeout_seconds)
+    except Empty as exc:
+        raise _ReadDeadlineExceeded(category) from exc
+    if error is not None:
+        raise error
+    return chunk or b""
 
 
 @dataclass(frozen=True)
@@ -98,6 +129,7 @@ def measure_download_stream(
     max_elapsed_seconds: float | None = None,
     request_started_at: float | None = None,
     clock: Callable[[], float] = time.monotonic,
+    deadline_reader: Callable[[int, float, str], bytes] | None = None,
 ) -> DownloadTrial:
     """Measure a bounded stream without retaining its contents.
 
@@ -123,8 +155,27 @@ def measure_download_stream(
     downloaded = 0
     error: str | None = None
 
+    def read_chunk(wanted: int) -> bytes:
+        if deadline_reader is None:
+            return stream.read(wanted)
+        elapsed = max(0.0, clock() - started_at)
+        remaining = (
+            max_stall_seconds
+            if max_elapsed_seconds is None
+            else max_elapsed_seconds - elapsed
+        )
+        if remaining <= 0:
+            raise _ReadDeadlineExceeded("TrialDeadlineExceeded")
+        timeout = min(max_stall_seconds, remaining)
+        category = (
+            "TrialDeadlineExceeded"
+            if max_elapsed_seconds is not None and remaining <= max_stall_seconds
+            else "StallThresholdExceeded"
+        )
+        return deadline_reader(wanted, timeout, category)
+
     try:
-        first_chunk = stream.read(1)
+        first_chunk = read_chunk(1)
         observed_at = clock()
         if first_chunk:
             first_byte_at = observed_at
@@ -137,7 +188,7 @@ def measure_download_stream(
                 error = "TrialDeadlineExceeded"
         while downloaded < sample_bytes and error is None:
             wanted = min(chunk_bytes, sample_bytes - downloaded)
-            chunk = stream.read(wanted)
+            chunk = read_chunk(wanted)
             observed_at = clock()
             gap = max(0.0, observed_at - previous_at)
             if first_byte_at is not None:
@@ -163,7 +214,9 @@ def measure_download_stream(
         if first_byte_at is not None:
             longest_stall = max(longest_stall, max(0.0, observed_at - previous_at))
         previous_at = observed_at
-        if first_byte_at is not None and longest_stall >= max_stall_seconds:
+        if isinstance(exc, _ReadDeadlineExceeded):
+            error = exc.category
+        elif first_byte_at is not None and longest_stall >= max_stall_seconds:
             error = "StallThresholdExceeded"
         else:
             error = type(exc).__name__
@@ -218,6 +271,10 @@ def measure_download_url(
         # HTTPResponse applies this as a per-blocking-operation socket timeout.
         per_read_timeout = min(timeout_seconds, max_stall_seconds)
         with opener(request, timeout=per_read_timeout) as response:
+
+            def deadline_reader(wanted: int, timeout: float, category: str) -> bytes:
+                return _bounded_read(response, wanted, timeout, category)
+
             return measure_download_stream(
                 response,
                 sample_bytes=sample_bytes,
@@ -226,6 +283,7 @@ def measure_download_url(
                 max_elapsed_seconds=timeout_seconds,
                 request_started_at=started_at,
                 clock=clock,
+                deadline_reader=deadline_reader,
             )
     except Exception as exc:
         ended_at = clock()
