@@ -210,6 +210,26 @@ def _compile_probe(
             f"Probe {probe_id!r} artifact is not readable JSON: {exc}"
         ) from exc
     direction = _direction_at_path(artifact_payload, direction_path, probe_id=probe_id)
+    label_convention = qualification.get("label_convention")
+    if label_convention is not None:
+        if raw.get("label_convention") != label_convention:
+            raise ValueError(
+                f"Probe {probe_id!r} label_convention does not match qualification"
+            )
+        if artifact_payload.get("label_convention") != label_convention:
+            raise ValueError(
+                f"Probe {probe_id!r} artifact label_convention does not match qualification"
+            )
+    step5_plan_sha256 = qualification.get("step5_plan_manifest_sha256")
+    if step5_plan_sha256 is not None:
+        if raw.get("step5_plan_manifest_sha256") != step5_plan_sha256:
+            raise ValueError(
+                f"Probe {probe_id!r} Step 5 plan hash does not match qualification"
+            )
+        if artifact_payload.get("step5_plan_manifest_sha256") != step5_plan_sha256:
+            raise ValueError(
+                f"Probe {probe_id!r} artifact Step 5 plan hash does not match qualification"
+            )
     sign_flip = [-item for item in direction]
     controls = [
         {
@@ -236,6 +256,8 @@ def _compile_probe(
         "layer": qualification["layer"],
         "token_pooling": qualification["token_pooling"],
         "direction_sign_convention": qualification["direction_sign_convention"],
+        "label_convention": label_convention,
+        "step5_plan_manifest_sha256": step5_plan_sha256,
         "source_group_ids": _required_identifier_list(
             raw.get("source_group_ids"), field="source_group_ids", probe_id=probe_id
         ),
@@ -256,6 +278,10 @@ def _split_receipt(
         "layer": qualification["layer"],
         "token_pooling": qualification["token_pooling"],
         "direction_sign_convention": qualification["direction_sign_convention"],
+        "label_convention": qualification.get("label_convention"),
+        "step5_plan_manifest_sha256": qualification.get(
+            "step5_plan_manifest_sha256"
+        ),
         "probe_ids": [probe["probe_id"] for probe in probes],
         "artifact_sha256s": [probe["artifact_sha256"] for probe in probes],
         "direction_sha256s": [probe["direction_sha256"] for probe in probes],
@@ -307,6 +333,22 @@ def compile_probe_qualification(
             raw_qualification.get("orthogonal_controls_per_probe"),
             field="qualification orthogonal_controls_per_probe",
             minimum=1,
+        ),
+        "label_convention": (
+            _required_string(
+                raw_qualification.get("label_convention"),
+                field="qualification label_convention",
+            )
+            if raw_qualification.get("label_convention") is not None
+            else None
+        ),
+        "step5_plan_manifest_sha256": (
+            _required_string(
+                raw_qualification.get("step5_plan_manifest_sha256"),
+                field="qualification step5_plan_manifest_sha256",
+            )
+            if raw_qualification.get("step5_plan_manifest_sha256") is not None
+            else None
         ),
         "split_unit": "source_group_id",
         "fitting_performed": False,
@@ -404,6 +446,10 @@ def validate_probe_qualification(
                 "orthogonal_controls_per_probe": qualification[
                     "orthogonal_controls_per_probe"
                 ],
+                "label_convention": qualification.get("label_convention"),
+                "step5_plan_manifest_sha256": qualification.get(
+                    "step5_plan_manifest_sha256"
+                ),
             },
             "probes": [
                 {
@@ -418,6 +464,8 @@ def validate_probe_qualification(
                         "layer",
                         "token_pooling",
                         "direction_sign_convention",
+                        "label_convention",
+                        "step5_plan_manifest_sha256",
                     )
                 }
                 for name in ENSEMBLES

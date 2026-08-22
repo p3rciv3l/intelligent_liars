@@ -10971,6 +10971,7 @@
           "legacy/source/sycophancy-qwen3-vl-8b-thinking-same_conf_paired_mmlu_sycophancy_medical_genetics.json/pair:91/task:sycophancy__mmlu_stem_same_conf_all/output:0",
           "legacy/source/sycophancy-qwen3-vl-8b-thinking-same_conf_paired_mmlu_sycophancy_medical_genetics.json/pair:96/task:sycophancy__mmlu_stem_same_conf_all/output:0"
         ],
+        "label_convention": "HONEST=0, DECEPTIVE=1",
         "layer": 21,
         "probe_id": "legacy-grouped-evaluator-00",
         "source_group_ids": [
@@ -11006,6 +11007,7 @@
           "legacy/source/sycophancy-qwen3-vl-8b-thinking-same_conf_paired_mmlu_sycophancy_machine_learning.json",
           "legacy/source/sycophancy-qwen3-vl-8b-thinking-same_conf_paired_mmlu_sycophancy_medical_genetics.json"
         ],
+        "step5_plan_manifest_sha256": "5282aaf0696098970de476e6812534e4c75c2434d7ec369495f5a311d6c09f99",
         "token_pooling": "last_answer_token_per_example"
       },
       {
@@ -21938,6 +21940,7 @@
           "legacy/source/sycophancy-qwen3-vl-8b-thinking-same_conf_paired_mmlu_sycophancy_virology.json/pair:97/task:sycophancy__mmlu_stem_same_conf_all/output:0",
           "legacy/source/sycophancy-qwen3-vl-8b-thinking-same_conf_paired_mmlu_sycophancy_virology.json/pair:99/task:sycophancy__mmlu_stem_same_conf_all/output:1"
         ],
+        "label_convention": "HONEST=0, DECEPTIVE=1",
         "layer": 21,
         "probe_id": "legacy-grouped-evaluator-01",
         "source_group_ids": [
@@ -21973,6 +21976,7 @@
           "legacy/source/sycophancy-qwen3-vl-8b-thinking-same_conf_paired_mmlu_sycophancy_high_school_statistics.json",
           "legacy/source/sycophancy-qwen3-vl-8b-thinking-same_conf_paired_mmlu_sycophancy_virology.json"
         ],
+        "step5_plan_manifest_sha256": "5282aaf0696098970de476e6812534e4c75c2434d7ec369495f5a311d6c09f99",
         "token_pooling": "last_answer_token_per_example"
       },
       {
@@ -32440,6 +32444,7 @@
           "legacy/source/sycophancy-qwen3-vl-8b-thinking-same_conf_paired_mmlu_sycophancy_virology.json/pair:97/task:sycophancy__mmlu_stem_same_conf_all/output:0",
           "legacy/source/sycophancy-qwen3-vl-8b-thinking-same_conf_paired_mmlu_sycophancy_virology.json/pair:99/task:sycophancy__mmlu_stem_same_conf_all/output:1"
         ],
+        "label_convention": "HONEST=0, DECEPTIVE=1",
         "layer": 21,
         "probe_id": "legacy-grouped-evaluator-02",
         "source_group_ids": [
@@ -32475,6 +32480,7 @@
           "legacy/source/sycophancy-qwen3-vl-8b-thinking-same_conf_paired_mmlu_sycophancy_medical_genetics.json",
           "legacy/source/sycophancy-qwen3-vl-8b-thinking-same_conf_paired_mmlu_sycophancy_virology.json"
         ],
+        "step5_plan_manifest_sha256": "5282aaf0696098970de476e6812534e4c75c2434d7ec369495f5a311d6c09f99",
         "token_pooling": "last_answer_token_per_example"
       },
       {
@@ -42476,6 +42482,7 @@
           "legacy/source/sycophancy-qwen3-vl-8b-thinking-same_conf_paired_mmlu_sycophancy_virology.json/pair:97/task:sycophancy__mmlu_stem_same_conf_all/output:0",
           "legacy/source/sycophancy-qwen3-vl-8b-thinking-same_conf_paired_mmlu_sycophancy_virology.json/pair:99/task:sycophancy__mmlu_stem_same_conf_all/output:1"
         ],
+        "label_convention": "HONEST=0, DECEPTIVE=1",
         "layer": 21,
         "probe_id": "legacy-grouped-evaluator-03",
         "source_group_ids": [
@@ -42511,6 +42518,7 @@
           "legacy/source/sycophancy-qwen3-vl-8b-thinking-same_conf_paired_mmlu_sycophancy_medical_genetics.json",
           "legacy/source/sycophancy-qwen3-vl-8b-thinking-same_conf_paired_mmlu_sycophancy_virology.json"
         ],
+        "step5_plan_manifest_sha256": "5282aaf0696098970de476e6812534e4c75c2434d7ec369495f5a311d6c09f99",
         "token_pooling": "last_answer_token_per_example"
       },
       {
@@ -53332,6 +53340,7 @@
           "legacy/source/sycophancy-qwen3-vl-8b-thinking-same_conf_paired_mmlu_sycophancy_virology.json/pair:97/task:sycophancy__mmlu_stem_same_conf_all/output:0",
           "legacy/source/sycophancy-qwen3-vl-8b-thinking-same_conf_paired_mmlu_sycophancy_virology.json/pair:99/task:sycophancy__mmlu_stem_same_conf_all/output:1"
         ],
+        "label_convention": "HONEST=0, DECEPTIVE=1",
         "layer": 21,
         "probe_id": "legacy-grouped-evaluator-04",
         "source_group_ids": [
@@ -53368,6 +53377,7 @@
           "legacy/source/sycophancy-qwen3-vl-8b-thinking-same_conf_paired_mmlu_sycophancy_medical_genetics.json",
           "legacy/source/sycophancy-qwen3-vl-8b-thinking-same_conf_paired_mmlu_sycophancy_virology.json"
         ],
+        "step5_plan_manifest_sha256": "5282aaf0696098970de476e6812534e4c75c2434d7ec369495f5a311d6c09f99",
         "token_pooling": "last_answer_token_per_example"
       }
     ],
@@ -66715,6 +66725,7 @@
           "legacy/source/repe-true_false_facts.csv/source:98/task:repe_honesty__IF_dishonest/output:1",
           "legacy/source/repe-true_false_facts.csv/source:99/task:repe_honesty__IF_dishonest/output:1"
         ],
+        "label_convention": "HONEST=0, DECEPTIVE=1",
         "layer": 21,
         "probe_id": "legacy-grouped-regularizer",
         "source_group_ids": [
@@ -66729,6 +66740,7 @@
           "legacy/source/internal_state-inventions_true_false.csv",
           "legacy/source/repe-true_false_facts.csv"
         ],
+        "step5_plan_manifest_sha256": "5282aaf0696098970de476e6812534e4c75c2434d7ec369495f5a311d6c09f99",
         "token_pooling": "last_answer_token_per_example"
       }
     ]
@@ -66737,12 +66749,14 @@
   "qualification": {
     "direction_sign_convention": "sklearn_logistic_coef_positive_points_honest_to_deceptive",
     "fitting_performed": false,
+    "label_convention": "HONEST=0, DECEPTIVE=1",
     "layer": 21,
     "orthogonal_controls_per_probe": 1,
     "split_unit": "source_group_id",
+    "step5_plan_manifest_sha256": "5282aaf0696098970de476e6812534e4c75c2434d7ec369495f5a311d6c09f99",
     "token_pooling": "last_answer_token_per_example"
   },
-  "qualification_receipt_sha256": "b7cf4245ec24145e6dbed7b3239a74a1791d3cb3b05eac04e852c744df36c505",
+  "qualification_receipt_sha256": "f21781fdadab2eab6773d3e324d7500132e1f5f9e4bb38696c50837a07693b54",
   "split_receipts": {
     "evaluator": {
       "artifact_sha256s": [
@@ -69857,6 +69871,7 @@
         "legacy/source/sycophancy-qwen3-vl-8b-thinking-same_conf_paired_mmlu_sycophancy_virology.json/pair:97/task:sycophancy__mmlu_stem_same_conf_all/output:0",
         "legacy/source/sycophancy-qwen3-vl-8b-thinking-same_conf_paired_mmlu_sycophancy_virology.json/pair:99/task:sycophancy__mmlu_stem_same_conf_all/output:1"
       ],
+      "label_convention": "HONEST=0, DECEPTIVE=1",
       "layer": 21,
       "probe_ids": [
         "legacy-grouped-evaluator-00",
@@ -69865,7 +69880,7 @@
         "legacy-grouped-evaluator-03",
         "legacy-grouped-evaluator-04"
       ],
-      "receipt_sha256": "e7a82bad7d55b26b2ad1afaecfd7415b9fde10c8282d1c9730f3bda7984d74b9",
+      "receipt_sha256": "802f140bd4c9d5d6fddb62ed3f393bb228fe128bea82547b1444ca0d834c8091",
       "source_group_ids": [
         "legacy/source/claims-claims__evidential_gemini_600_full.csv",
         "legacy/source/geometry_of_truth-cities.csv",
@@ -69907,6 +69922,7 @@
         "legacy/source/sycophancy-qwen3-vl-8b-thinking-same_conf_paired_mmlu_sycophancy_medical_genetics.json",
         "legacy/source/sycophancy-qwen3-vl-8b-thinking-same_conf_paired_mmlu_sycophancy_virology.json"
       ],
+      "step5_plan_manifest_sha256": "5282aaf0696098970de476e6812534e4c75c2434d7ec369495f5a311d6c09f99",
       "token_pooling": "last_answer_token_per_example"
     },
     "regularizer": {
@@ -75057,11 +75073,12 @@
         "legacy/source/repe-true_false_facts.csv/source:98/task:repe_honesty__IF_dishonest/output:1",
         "legacy/source/repe-true_false_facts.csv/source:99/task:repe_honesty__IF_dishonest/output:1"
       ],
+      "label_convention": "HONEST=0, DECEPTIVE=1",
       "layer": 21,
       "probe_ids": [
         "legacy-grouped-regularizer"
       ],
-      "receipt_sha256": "fb180f6d4e752143ef890d02210bb221ee02afad37045ff83e25347ef1ed5813",
+      "receipt_sha256": "07097978605419e46528b852155e8e063586a2b18680b612fef2847542c90f32",
       "source_group_ids": [
         "legacy/source/claims-claims__definitional_gemini_600_full.csv",
         "legacy/source/claims-claims__fictional_gemini_600_full.csv",
@@ -75074,6 +75091,7 @@
         "legacy/source/internal_state-inventions_true_false.csv",
         "legacy/source/repe-true_false_facts.csv"
       ],
+      "step5_plan_manifest_sha256": "5282aaf0696098970de476e6812534e4c75c2434d7ec369495f5a311d6c09f99",
       "token_pooling": "last_answer_token_per_example"
     }
   },

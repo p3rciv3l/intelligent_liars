@@ -1,7 +1,7 @@
 {
   "fit_receipt_sha256": "d1c08b35e551dc817a7e239122ae1499061a6c978b4fa2bd7961717bb633bc3b",
   "format": "intelligent_liars_step5_grouped_probe_qualification_summary_v1",
-  "qualification_receipt_sha256": "b7cf4245ec24145e6dbed7b3239a74a1791d3cb3b05eac04e852c744df36c505",
+  "qualification_receipt_sha256": "f21781fdadab2eab6773d3e324d7500132e1f5f9e4bb38696c50837a07693b54",
   "selected": {
     "fold_macro_task_roc_auc": [
       0.7257232666015625,
@@ -16,7 +16,7 @@
   "validation": {
     "format": "intelligent_liars_step5_probe_qualification_validation_v1",
     "issues": [],
-    "qualification_receipt_sha256": "b7cf4245ec24145e6dbed7b3239a74a1791d3cb3b05eac04e852c744df36c505",
+    "qualification_receipt_sha256": "f21781fdadab2eab6773d3e324d7500132e1f5f9e4bb38696c50837a07693b54",
     "valid": true
   }
 }

@@ -75,7 +75,7 @@ requires held-out behavioral, preservation, safety, and multimodal gates.
 The fitted report receipt is
 `d1c08b35e551dc817a7e239122ae1499061a6c978b4fa2bd7961717bb633bc3b`.
 The final qualification receipt is
-`b7cf4245ec24145e6dbed7b3239a74a1791d3cb3b05eac04e852c744df36c505`.
+`f21781fdadab2eab6773d3e324d7500132e1f5f9e4bb38696c50837a07693b54`.
 Independent revalidation returned `valid: true` with zero issues.
 
 ## Reproduce or verify

@@ -60,13 +60,13 @@
   },
   "policy": {
     "crossfit_split_unit": "source_group_id",
-    "example_group_derivation": "normalized task plus upstream example_source_index",
+    "example_group_derivation": "source group plus explicit csv-row, pair, nested source, or example source index",
     "identity_derivation_uses_labels": false,
     "outer_split_unit": "source_group_id",
-    "source_group_derivation": "normalized upstream task identifier",
+    "source_group_derivation": "normalized upstream dataset path after the data directory",
     "template_group_derivation": "explicit pair_index, then nested source_index, then example_source_index"
   },
-  "receipt_sha256": "686961b68521352c2701b74e4aa592ca5ea87dfd1c41d1a055b6ebb49877aa71",
+  "receipt_sha256": "d6e96e2283b1d83e5a7e38d5aa6aa2c2ce88556a26ed6b89a2a1c787ae1e3150",
   "receipts": {
     "example_group_ids_sha256": "ebd9eaa33f1088d0e8b6358ac474e44f8fd6083703bd495797d323c30047c935",
     "example_ids_sha256": "93c11b0748ce439caae22949f75d5033c826fcca0e2414d61ddaae7e8906885d",

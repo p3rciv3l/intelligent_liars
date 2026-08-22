@@ -687,6 +687,8 @@ def run_grouped_probe_fit(
             "layer": selected_layer,
             "token_pooling": selected_pooling,
             "direction_sign_convention": sign,
+            "label_convention": LABEL_CONVENTION,
+            "step5_plan_manifest_sha256": step5_plan_sha256,
         }
     ]
     crossfit_rows = []
@@ -731,6 +733,8 @@ def run_grouped_probe_fit(
                 "layer": selected_layer,
                 "token_pooling": selected_pooling,
                 "direction_sign_convention": sign,
+                "label_convention": LABEL_CONVENTION,
+                "step5_plan_manifest_sha256": step5_plan_sha256,
             }
         )
     example_ids = sorted(identity.example_id for identity in identities)
@@ -741,8 +745,8 @@ def run_grouped_probe_fit(
         "policy": {
             "outer_split_unit": "source_group_id",
             "crossfit_split_unit": "source_group_id",
-            "source_group_derivation": "normalized upstream task identifier",
-            "example_group_derivation": "normalized task plus upstream example_source_index",
+            "source_group_derivation": "normalized upstream dataset path after the data directory",
+            "example_group_derivation": "source group plus explicit csv-row, pair, nested source, or example source index",
             "template_group_derivation": "explicit pair_index, then nested source_index, then example_source_index",
             "identity_derivation_uses_labels": False,
         },
@@ -767,6 +771,8 @@ def run_grouped_probe_fit(
             "layer": selected_layer,
             "token_pooling": selected_pooling,
             "direction_sign_convention": sign,
+            "label_convention": LABEL_CONVENTION,
+            "step5_plan_manifest_sha256": step5_plan_sha256,
             "orthogonal_controls_per_probe": int(config["qualification"]["orthogonal_controls_per_probe"]),
         },
         "probes": registry_probes,

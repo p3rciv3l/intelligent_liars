@@ -185,6 +185,41 @@ def test_compile_rejects_bad_vector_or_unavailable_orthogonal_control(tmp_path: 
         compile_probe_qualification(registry, artifact_root=tmp_path)
 
 
+def test_compile_binds_optional_label_and_step5_plan_semantics(tmp_path: Path):
+    registry = _registry(tmp_path)
+    label = "HONEST=0, DECEPTIVE=1"
+    plan_sha = "a" * 64
+    registry["qualification"]["label_convention"] = label
+    registry["qualification"]["step5_plan_manifest_sha256"] = plan_sha
+    directions = {
+        "regularizer.json": [1.0, 2.0, 3.0],
+        "evaluator.json": [2.0, -1.0, 1.0],
+    }
+    for probe in registry["probes"]:
+        probe["label_convention"] = label
+        probe["step5_plan_manifest_sha256"] = plan_sha
+        artifact = tmp_path / probe["artifact_path"]
+        artifact.write_text(
+            json.dumps(
+                {
+                    "result": {"direction": directions[artifact.name]},
+                    "label_convention": label,
+                    "step5_plan_manifest_sha256": plan_sha,
+                }
+            )
+        )
+
+    manifest = compile_probe_qualification(registry, artifact_root=tmp_path)
+    assert manifest["qualification"]["label_convention"] == label
+    assert manifest["qualification"]["step5_plan_manifest_sha256"] == plan_sha
+
+    regularizer_path = tmp_path / "regularizer.json"
+    payload = json.loads(regularizer_path.read_text())
+    payload["label_convention"] = "reversed"
+    regularizer_path.write_text(json.dumps(payload))
+    with pytest.raises(ValueError, match="artifact label_convention"):
+        compile_probe_qualification(registry, artifact_root=tmp_path)
+
 def test_write_is_atomic_enough_to_refuse_overwrite(tmp_path: Path):
     registry = _registry(tmp_path)
     output = tmp_path / "qualified.json"
