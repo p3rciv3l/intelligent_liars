@@ -100,6 +100,13 @@ def _direction_at_path(
     return direction
 
 
+def _canonical_axis(direction: Sequence[float]) -> list[float]:
+    norm = math.sqrt(math.fsum(item * item for item in direction))
+    axis = [item / norm for item in direction]
+    first = next(item for item in axis if abs(item) > 1e-15)
+    return [-item for item in axis] if first < 0 else axis
+
+
 def _orthogonal_controls(
     direction: Sequence[float], *, probe_id: str, count: int
 ) -> list[dict[str, Any]]:
@@ -324,6 +331,12 @@ def compile_probe_qualification(
     direction_hashes = [probe["direction_sha256"] for probe in probes]
     if len(set(direction_hashes)) != len(direction_hashes):
         raise ValueError("Probe registry contains duplicate direction vectors")
+    axes = [_canonical_axis(_direction_from_controls(probe)) for probe in probes]
+    for index, left in enumerate(axes):
+        for right in axes[index + 1 :]:
+            cosine = math.fsum(a * b for a, b in zip(left, right))
+            if cosine >= 1.0 - 1e-10:
+                raise ValueError("Probe registry contains collinear direction axes")
     dimensions = {probe["direction_dimension"] for probe in probes}
     if len(dimensions) != 1:
         raise ValueError("All qualified probe directions must have the same dimension")
@@ -426,6 +439,11 @@ def validate_probe_qualification(
     }
 
 
+def _direction_from_controls(probe: Mapping[str, Any]) -> list[float]:
+    sign_flip = probe["controls"][0]
+    return [-float(item) for item in sign_flip["vector"]]
+
+
 def write_probe_qualification(
     registry: Mapping[str, Any], *, artifact_root: Path, output_path: Path
 ) -> dict[str, Any]:
@@ -434,9 +452,19 @@ def write_probe_qualification(
     if output_path.exists():
         raise FileExistsError(f"Probe qualification already exists: {output_path}")
     output_path.parent.mkdir(parents=True, exist_ok=True)
+    if not isinstance(registry, Mapping):
+        raise ValueError("Registry root must be an object")
+    probes = registry.get("probes")
+    if not isinstance(probes, list) or any(
+        not isinstance(probe, Mapping) for probe in probes
+    ):
+        raise ValueError("Registry probes must be a list of objects")
     registry_copy = json.loads(json.dumps(registry, allow_nan=False))
-    for probe in registry_copy.get("probes", []):
-        raw_path = Path(str(probe.get("artifact_path", "")))
+    for probe in registry_copy["probes"]:
+        artifact_value = _required_string(
+            probe.get("artifact_path"), field="artifact_path"
+        )
+        raw_path = Path(artifact_value)
         resolved_path = (
             raw_path if raw_path.is_absolute() else Path(artifact_root) / raw_path
         ).resolve()

@@ -162,6 +162,16 @@ def test_compile_rejects_duplicate_direction_even_if_artifacts_differ(tmp_path: 
         compile_probe_qualification(registry, artifact_root=tmp_path)
 
 
+@pytest.mark.parametrize("direction", [[2.0, 4.0, 6.0], [-1.0, -2.0, -3.0]])
+def test_compile_rejects_scaled_or_sign_flipped_same_axis(
+    tmp_path: Path, direction: list[float]
+):
+    registry = _registry(tmp_path)
+    _artifact(tmp_path / "evaluator.json", direction)
+    with pytest.raises(ValueError, match="collinear direction axes"):
+        compile_probe_qualification(registry, artifact_root=tmp_path)
+
+
 def test_compile_rejects_bad_vector_or_unavailable_orthogonal_control(tmp_path: Path):
     registry = _registry(tmp_path)
     _artifact(tmp_path / "regularizer.json", [0.0, 0.0, 0.0])
@@ -206,6 +216,19 @@ def test_write_rebases_artifacts_so_default_verification_root_works(tmp_path: Pa
 
     assert validate_probe_qualification(manifest, artifact_root=output.parent)["valid"]
     assert manifest["ensembles"]["regularizer"][0]["artifact_path"].startswith("..")
+
+
+@pytest.mark.parametrize(
+    "registry",
+    [[], {"probes": None}, {"probes": [None]}, {"probes": [{"artifact_path": None}]}],
+)
+def test_write_rejects_malformed_registry_before_path_rebasing(
+    tmp_path: Path, registry: object
+):
+    with pytest.raises(ValueError):
+        write_probe_qualification(
+            registry, artifact_root=tmp_path, output_path=tmp_path / "out.json"
+        )
 
 
 def test_compile_hashes_the_same_byte_snapshot_it_parses(

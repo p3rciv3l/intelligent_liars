@@ -31,7 +31,9 @@ identify the upstream split that was fixed before probe fitting; it must not be
 an invented label or alias for the artifact itself. All identifiers must use
 the canonical ASCII syntax `[A-Za-z0-9][A-Za-z0-9._:/@+-]*`; whitespace is not
 allowed. Identical direction vectors are also rejected even when their artifact
-metadata differs.
+metadata differs, as are scaled or sign-reversed copies of the same probe axis.
+The canonical IDs in this registry are the authoritative upstream identities;
+aliases must be resolved before this compiler is called.
 
 Example:
 
