@@ -51,6 +51,7 @@
   "inputs": {
     "pilot_v1_manifest_sha256": "e493b58589339c3f4beda8eb8e57392efa42786191a87912a9548e645c73b644",
     "pixmo_docs_snapshot_sha256": "e537ff66d728a58e5fe28a14873544c2f48e0451706853edbc335804a462fc4f",
+    "preprocessor_config_sha256": "27225450ac9c6529872ee1924fcb0962ff5634834f817040f444118116f4e516",
     "prime_snapshot_sha256": "0fd56be4d9ab0367a0364801775768285054cd27796257b4d34a2ff3792235ed",
     "source_registry_sha256": "aa15baa3157c44e3c966d23342e5dafe8824ae0c7c99ea4ec435fefe121c2cbf",
     "tokenizer_config_sha256": "7b501e639b4d107a23effbe30390ee33d553f722467f7ac8e2744d7ff5d3a7d5",
@@ -90,7 +91,7 @@
       "preservation_categories": {},
       "records": 570,
       "scenarios": 95,
-      "sha256": "9937f7cbc5c4f4f38bfa5341f90ae401d8b97875ac6bd4acea04a5ab6469a16c"
+      "sha256": "69c43f50807bb070be4bfe1fd4db33a9adf9dea64f0f407ea97d354edde67647"
     },
     "development_iid": {
       "families": {
@@ -135,7 +136,7 @@
       "preservation_categories": {},
       "records": 420,
       "scenarios": 70,
-      "sha256": "7c6a1bf022af31845e53c192ba239f94012b4d31d4781667315fd02060321bff"
+      "sha256": "be89301a122e21fc6aaf2ed1a4517feeb100c509cc89184b0ec3496ad10600b9"
     },
     "preservation_development_text": {
       "families": {
@@ -155,41 +156,41 @@
     },
     "preservation_development_vision": {
       "families": {
-        "preservation": 100
+        "preservation": 22
       },
       "objectives": {
-        "preservation_kl": 100
+        "preservation_kl": 22
       },
       "path": "preservation_development_vision.jsonl",
       "preservation_categories": {
-        "vision_charts": 26,
-        "vision_diagrams": 21,
-        "vision_other": 25,
-        "vision_tables": 28
+        "vision_charts": 2,
+        "vision_diagrams": 7,
+        "vision_other": 5,
+        "vision_tables": 8
       },
-      "records": 100,
+      "records": 22,
       "scenarios": 0,
-      "sha256": "d2960ea248991db80b7594ab899c26301173e2ef7f7594c9c2c3346dd339df9d"
+      "sha256": "378c3ae0c80d968674f895cb4c41f116ea0fa65fad8fec00e40ae28d4ebade1d"
     },
     "preservation_train": {
       "families": {
-        "preservation": 218
+        "preservation": 212
       },
       "objectives": {
-        "preservation_kl": 218
+        "preservation_kl": 212
       },
       "path": "preservation_train.jsonl",
       "preservation_categories": {
         "general_text": 102,
         "reasoning": 16,
-        "vision_charts": 24,
-        "vision_diagrams": 29,
-        "vision_other": 25,
-        "vision_tables": 22
+        "vision_charts": 10,
+        "vision_diagrams": 31,
+        "vision_other": 21,
+        "vision_tables": 32
       },
-      "records": 218,
+      "records": 212,
       "scenarios": 0,
-      "sha256": "471845bd388336b5b99eea0bca03268a9cf6b5a44c1dde918c12852bc5dab709"
+      "sha256": "287133d1d555e9ae2d03d318ea9cd192cf831438d90d99d848a91f2fc4f1ab4f"
     },
     "safety_refusal_development": {
       "families": {
@@ -256,11 +257,12 @@
       "preservation_categories": {},
       "records": 3114,
       "scenarios": 519,
-      "sha256": "943f72d656ccd6c23a59eb582ee70a4eea78717175c57aeb18732f894b464fec"
+      "sha256": "299cbec820facfa7dafb13002d3ecc5bc918a0cf8aba174c1804582c92e47ae9"
     }
   },
   "paid_execution_enabled": false,
   "preservation_curation": {
+    "excluded_pixmo_docs_records": 84,
     "excluded_prime_records": 653,
     "exclusion_manifest_sha256": "b8b52ec78d2763365c7cfd28abbd8c9ff95a067dfc26a52b5d2add4244134139",
     "exclusions": [
@@ -2878,10 +2880,364 @@
       }
     ],
     "max_length": 2048,
+    "qualified_pixmo_docs_records": 116,
     "qualified_prime_records": 147,
+    "semantic_exclusion_evidence": {
+      "prime_synthetic_2_verified.default.train.000079539": {
+        "adjudication": "The assistant changes the supplied problem so its preferred answer is forced; this is not a faithful preservation target.",
+        "disposition": "excluded_before_length_qualification_and_split",
+        "reason": "semantic_quality_changes_problem_to_force_answer",
+        "source": "data/tinylora_preservation_snapshots/v1/prime_synthetic_2_verified_preservation.jsonl",
+        "source_row_sha256": "7cb21961d8b76a79aeaa839e2cffc56e1a158eb140cae51d53c5953240aeeafe"
+      }
+    },
     "semantic_quality_policy": "Source-level verification is necessary but not sufficient; known semantic defects are excluded before length qualification and split.",
     "tokenizer_model_id": "Qwen/Qwen3-VL-8B-Thinking",
-    "tokenizer_revision": "92f3c4b4feadd3a016ef468d103bb5f58b2a2c6b"
+    "tokenizer_revision": "92f3c4b4feadd3a016ef468d103bb5f58b2a2c6b",
+    "vision_exclusions": [
+      {
+        "reason": "token_length_2166_exceeds_2048",
+        "record_id": "ai2_pixmo_docs.charts.train.000000004"
+      },
+      {
+        "reason": "token_length_3131_exceeds_2048",
+        "record_id": "ai2_pixmo_docs.charts.train.000000007"
+      },
+      {
+        "reason": "token_length_2825_exceeds_2048",
+        "record_id": "ai2_pixmo_docs.charts.train.000000011"
+      },
+      {
+        "reason": "token_length_2850_exceeds_2048",
+        "record_id": "ai2_pixmo_docs.charts.train.000000021"
+      },
+      {
+        "reason": "token_length_2879_exceeds_2048",
+        "record_id": "ai2_pixmo_docs.charts.train.000000031"
+      },
+      {
+        "reason": "token_length_3093_exceeds_2048",
+        "record_id": "ai2_pixmo_docs.charts.train.000000046"
+      },
+      {
+        "reason": "token_length_3088_exceeds_2048",
+        "record_id": "ai2_pixmo_docs.charts.train.000000058"
+      },
+      {
+        "reason": "token_length_2837_exceeds_2048",
+        "record_id": "ai2_pixmo_docs.charts.train.000000068"
+      },
+      {
+        "reason": "token_length_3106_exceeds_2048",
+        "record_id": "ai2_pixmo_docs.charts.train.000029181"
+      },
+      {
+        "reason": "token_length_3089_exceeds_2048",
+        "record_id": "ai2_pixmo_docs.charts.train.000029186"
+      },
+      {
+        "reason": "token_length_3065_exceeds_2048",
+        "record_id": "ai2_pixmo_docs.charts.train.000029193"
+      },
+      {
+        "reason": "token_length_3132_exceeds_2048",
+        "record_id": "ai2_pixmo_docs.charts.train.000029201"
+      },
+      {
+        "reason": "token_length_3089_exceeds_2048",
+        "record_id": "ai2_pixmo_docs.charts.train.000029211"
+      },
+      {
+        "reason": "token_length_2510_exceeds_2048",
+        "record_id": "ai2_pixmo_docs.charts.train.000029240"
+      },
+      {
+        "reason": "token_length_3279_exceeds_2048",
+        "record_id": "ai2_pixmo_docs.charts.train.000029247"
+      },
+      {
+        "reason": "token_length_3403_exceeds_2048",
+        "record_id": "ai2_pixmo_docs.charts.train.000058362"
+      },
+      {
+        "reason": "token_length_2596_exceeds_2048",
+        "record_id": "ai2_pixmo_docs.charts.train.000058365"
+      },
+      {
+        "reason": "token_length_3286_exceeds_2048",
+        "record_id": "ai2_pixmo_docs.charts.train.000058379"
+      },
+      {
+        "reason": "token_length_3233_exceeds_2048",
+        "record_id": "ai2_pixmo_docs.charts.train.000058412"
+      },
+      {
+        "reason": "token_length_3599_exceeds_2048",
+        "record_id": "ai2_pixmo_docs.charts.train.000058425"
+      },
+      {
+        "reason": "token_length_3084_exceeds_2048",
+        "record_id": "ai2_pixmo_docs.charts.train.000058442"
+      },
+      {
+        "reason": "token_length_2772_exceeds_2048",
+        "record_id": "ai2_pixmo_docs.charts.train.000058445"
+      },
+      {
+        "reason": "token_length_2413_exceeds_2048",
+        "record_id": "ai2_pixmo_docs.charts.train.000058451"
+      },
+      {
+        "reason": "token_length_3124_exceeds_2048",
+        "record_id": "ai2_pixmo_docs.charts.train.000087545"
+      },
+      {
+        "reason": "token_length_3136_exceeds_2048",
+        "record_id": "ai2_pixmo_docs.charts.train.000087548"
+      },
+      {
+        "reason": "token_length_3331_exceeds_2048",
+        "record_id": "ai2_pixmo_docs.charts.train.000087567"
+      },
+      {
+        "reason": "token_length_2305_exceeds_2048",
+        "record_id": "ai2_pixmo_docs.charts.train.000087595"
+      },
+      {
+        "reason": "token_length_3097_exceeds_2048",
+        "record_id": "ai2_pixmo_docs.charts.train.000087597"
+      },
+      {
+        "reason": "token_length_2535_exceeds_2048",
+        "record_id": "ai2_pixmo_docs.charts.train.000087600"
+      },
+      {
+        "reason": "token_length_2530_exceeds_2048",
+        "record_id": "ai2_pixmo_docs.charts.train.000087607"
+      },
+      {
+        "reason": "token_length_3133_exceeds_2048",
+        "record_id": "ai2_pixmo_docs.charts.train.000087614"
+      },
+      {
+        "reason": "token_length_3152_exceeds_2048",
+        "record_id": "ai2_pixmo_docs.charts.train.000087627"
+      },
+      {
+        "reason": "token_length_3104_exceeds_2048",
+        "record_id": "ai2_pixmo_docs.charts.train.000087631"
+      },
+      {
+        "reason": "token_length_3089_exceeds_2048",
+        "record_id": "ai2_pixmo_docs.charts.train.000087634"
+      },
+      {
+        "reason": "token_length_3336_exceeds_2048",
+        "record_id": "ai2_pixmo_docs.charts.train.000116736"
+      },
+      {
+        "reason": "token_length_2868_exceeds_2048",
+        "record_id": "ai2_pixmo_docs.charts.train.000116788"
+      },
+      {
+        "reason": "token_length_2819_exceeds_2048",
+        "record_id": "ai2_pixmo_docs.charts.train.000116796"
+      },
+      {
+        "reason": "token_length_3329_exceeds_2048",
+        "record_id": "ai2_pixmo_docs.charts.train.000116801"
+      },
+      {
+        "reason": "token_length_3271_exceeds_2048",
+        "record_id": "ai2_pixmo_docs.diagrams.train.000004171"
+      },
+      {
+        "reason": "token_length_2503_exceeds_2048",
+        "record_id": "ai2_pixmo_docs.diagrams.train.000008251"
+      },
+      {
+        "reason": "token_length_2320_exceeds_2048",
+        "record_id": "ai2_pixmo_docs.diagrams.train.000008291"
+      },
+      {
+        "reason": "token_length_2280_exceeds_2048",
+        "record_id": "ai2_pixmo_docs.diagrams.train.000008313"
+      },
+      {
+        "reason": "token_length_3025_exceeds_2048",
+        "record_id": "ai2_pixmo_docs.diagrams.train.000012343"
+      },
+      {
+        "reason": "token_length_2772_exceeds_2048",
+        "record_id": "ai2_pixmo_docs.diagrams.train.000012356"
+      },
+      {
+        "reason": "token_length_2508_exceeds_2048",
+        "record_id": "ai2_pixmo_docs.diagrams.train.000012394"
+      },
+      {
+        "reason": "token_length_3332_exceeds_2048",
+        "record_id": "ai2_pixmo_docs.diagrams.train.000012396"
+      },
+      {
+        "reason": "token_length_2454_exceeds_2048",
+        "record_id": "ai2_pixmo_docs.diagrams.train.000016452"
+      },
+      {
+        "reason": "token_length_2240_exceeds_2048",
+        "record_id": "ai2_pixmo_docs.diagrams.train.000016453"
+      },
+      {
+        "reason": "token_length_2377_exceeds_2048",
+        "record_id": "ai2_pixmo_docs.diagrams.train.000016483"
+      },
+      {
+        "reason": "token_length_2910_exceeds_2048",
+        "record_id": "ai2_pixmo_docs.diagrams.train.000016540"
+      },
+      {
+        "reason": "token_length_2190_exceeds_2048",
+        "record_id": "ai2_pixmo_docs.other.train.000000013"
+      },
+      {
+        "reason": "token_length_2574_exceeds_2048",
+        "record_id": "ai2_pixmo_docs.other.train.000000024"
+      },
+      {
+        "reason": "token_length_3508_exceeds_2048",
+        "record_id": "ai2_pixmo_docs.other.train.000000027"
+      },
+      {
+        "reason": "token_length_2676_exceeds_2048",
+        "record_id": "ai2_pixmo_docs.other.train.000000032"
+      },
+      {
+        "reason": "token_length_3353_exceeds_2048",
+        "record_id": "ai2_pixmo_docs.other.train.000000042"
+      },
+      {
+        "reason": "token_length_2675_exceeds_2048",
+        "record_id": "ai2_pixmo_docs.other.train.000017800"
+      },
+      {
+        "reason": "token_length_2733_exceeds_2048",
+        "record_id": "ai2_pixmo_docs.other.train.000017806"
+      },
+      {
+        "reason": "token_length_2908_exceeds_2048",
+        "record_id": "ai2_pixmo_docs.other.train.000017807"
+      },
+      {
+        "reason": "token_length_3432_exceeds_2048",
+        "record_id": "ai2_pixmo_docs.other.train.000017819"
+      },
+      {
+        "reason": "token_length_3145_exceeds_2048",
+        "record_id": "ai2_pixmo_docs.other.train.000017831"
+      },
+      {
+        "reason": "token_length_3576_exceeds_2048",
+        "record_id": "ai2_pixmo_docs.other.train.000017839"
+      },
+      {
+        "reason": "token_length_2667_exceeds_2048",
+        "record_id": "ai2_pixmo_docs.other.train.000017840"
+      },
+      {
+        "reason": "token_length_3500_exceeds_2048",
+        "record_id": "ai2_pixmo_docs.other.train.000017842"
+      },
+      {
+        "reason": "token_length_2492_exceeds_2048",
+        "record_id": "ai2_pixmo_docs.other.train.000017878"
+      },
+      {
+        "reason": "token_length_2070_exceeds_2048",
+        "record_id": "ai2_pixmo_docs.other.train.000035626"
+      },
+      {
+        "reason": "token_length_2471_exceeds_2048",
+        "record_id": "ai2_pixmo_docs.other.train.000035633"
+      },
+      {
+        "reason": "token_length_3304_exceeds_2048",
+        "record_id": "ai2_pixmo_docs.other.train.000035643"
+      },
+      {
+        "reason": "token_length_2521_exceeds_2048",
+        "record_id": "ai2_pixmo_docs.other.train.000035688"
+      },
+      {
+        "reason": "token_length_2376_exceeds_2048",
+        "record_id": "ai2_pixmo_docs.other.train.000053420"
+      },
+      {
+        "reason": "token_length_2835_exceeds_2048",
+        "record_id": "ai2_pixmo_docs.other.train.000053438"
+      },
+      {
+        "reason": "token_length_2786_exceeds_2048",
+        "record_id": "ai2_pixmo_docs.other.train.000053440"
+      },
+      {
+        "reason": "token_length_3626_exceeds_2048",
+        "record_id": "ai2_pixmo_docs.other.train.000053450"
+      },
+      {
+        "reason": "token_length_2730_exceeds_2048",
+        "record_id": "ai2_pixmo_docs.other.train.000053471"
+      },
+      {
+        "reason": "token_length_2664_exceeds_2048",
+        "record_id": "ai2_pixmo_docs.other.train.000071190"
+      },
+      {
+        "reason": "token_length_2562_exceeds_2048",
+        "record_id": "ai2_pixmo_docs.tables.train.000011630"
+      },
+      {
+        "reason": "token_length_3086_exceeds_2048",
+        "record_id": "ai2_pixmo_docs.tables.train.000011654"
+      },
+      {
+        "reason": "token_length_2879_exceeds_2048",
+        "record_id": "ai2_pixmo_docs.tables.train.000011660"
+      },
+      {
+        "reason": "token_length_2211_exceeds_2048",
+        "record_id": "ai2_pixmo_docs.tables.train.000011670"
+      },
+      {
+        "reason": "token_length_3089_exceeds_2048",
+        "record_id": "ai2_pixmo_docs.tables.train.000011671"
+      },
+      {
+        "reason": "token_length_2356_exceeds_2048",
+        "record_id": "ai2_pixmo_docs.tables.train.000023217"
+      },
+      {
+        "reason": "token_length_2875_exceeds_2048",
+        "record_id": "ai2_pixmo_docs.tables.train.000034824"
+      },
+      {
+        "reason": "token_length_3086_exceeds_2048",
+        "record_id": "ai2_pixmo_docs.tables.train.000034866"
+      },
+      {
+        "reason": "token_length_2385_exceeds_2048",
+        "record_id": "ai2_pixmo_docs.tables.train.000046452"
+      },
+      {
+        "reason": "token_length_3312_exceeds_2048",
+        "record_id": "ai2_pixmo_docs.tables.train.000046454"
+      }
+    ],
+    "vision_token_geometry": {
+      "factor": 32,
+      "max_pixels": 16777216,
+      "method": "Qwen smart_resize plus rendered text tokens",
+      "min_pixels": 65536
+    }
   },
   "preservation_policy": {
     "batch_fraction": 0.25,

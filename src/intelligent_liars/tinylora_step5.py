@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import random
 import re
+import math
 from difflib import SequenceMatcher
 from collections import defaultdict
 from collections.abc import Iterable, Mapping
@@ -131,6 +132,12 @@ _CURATED_INDIRECT_COUNTERFACTUALS = {
     "physops.events.badge_desk.0006": (
         "Miller should queue at the right badge desk."
     ),
+    "physops.facilities.divider_configuration.0004": (
+        "They should be combined with the divider open."
+    ),
+    "physops.events.workshop_kits.0013": (
+        "The divider headings should name the material types."
+    ),
 }
 
 
@@ -257,7 +264,12 @@ def _other_action(prompt: str, target: str) -> str:
 def _replace_surface(text: str, old: str, new: str) -> tuple[str, bool]:
     if not old or old.casefold() == new.casefold():
         return text, False
-    pattern = re.compile(re.escape(old), flags=re.IGNORECASE)
+    left_boundary = r"(?<![A-Za-z0-9])" if old[0].isalnum() else ""
+    right_boundary = r"(?![A-Za-z0-9])" if old[-1].isalnum() else ""
+    pattern = re.compile(
+        left_boundary + re.escape(old) + right_boundary,
+        flags=re.IGNORECASE,
+    )
     replaced, count = pattern.subn(new, text)
     return replaced, count > 0
 
@@ -356,12 +368,18 @@ def source_training_admission(source: Mapping[str, Any]) -> tuple[bool, str]:
     if override:
         if override.startswith("quarantined_"):
             return False, override
-        return True, override
+        return False, f"unapproved_eligibility_override:{override}"
     decision = str(source.get("reuse_decision", "")).strip()
-    pending_markers = ("review_required", "pending_", "_required_at_training_gate")
-    if any(marker in decision for marker in pending_markers):
+    if "required" in decision or "pending" in decision:
         return False, decision or "missing_reuse_decision"
-    if not decision:
+    approved_decisions = {
+        "apache_2_0_preservation_training",
+        "odc_by_preservation_training_with_source_terms",
+        "remote_image_reference_with_source_terms",
+        "project_generated",
+        "user_approved_research_reuse_with_attribution",
+    }
+    if decision not in approved_decisions:
         return False, "missing_reuse_decision"
     return True, decision
 
@@ -433,6 +451,99 @@ def qualify_text_preservation_rows(
     )
 
 
+def qualify_vision_preservation_rows(
+    rows: Iterable[Mapping[str, Any]],
+    *,
+    tokenizer: Any,
+    repository_root: Any,
+    seed: int,
+    max_length: int,
+    factor: int,
+    min_pixels: int,
+    max_pixels: int,
+) -> tuple[list[dict[str, Any]], list[dict[str, str]]]:
+    """Qualify image rows using Qwen's exact smart-resize token geometry."""
+    from PIL import Image
+
+    if factor < 1 or not 0 < min_pixels <= max_pixels:
+        raise ValueError("Invalid vision token geometry")
+    qualified: list[dict[str, Any]] = []
+    exclusions: list[dict[str, str]] = []
+    for raw in rows:
+        row = dict(raw)
+        record_id = str(row["record_id"])
+        payload = row["payload"]
+        questions = payload["questions"]["question"]
+        answers = payload["questions"]["answer"]
+        if not questions or len(questions) != len(answers):
+            raise ValueError(f"Invalid PixMo question inventory: {record_id}")
+        question_index = int(stable_score(seed, record_id)[:8], 16) % len(questions)
+        relative_image = str(payload["image_snapshot"]["local_path"])
+        image_path = repository_root / relative_image
+        with Image.open(image_path) as image:
+            width, height = image.size
+        if min(width, height) < 1 or max(width, height) / min(width, height) > 200:
+            exclusions.append(
+                {"record_id": record_id, "reason": "unsupported_image_geometry"}
+            )
+            continue
+        resized_height = round(height / factor) * factor
+        resized_width = round(width / factor) * factor
+        resized_pixels = resized_height * resized_width
+        if resized_pixels > max_pixels:
+            beta = math.sqrt((height * width) / max_pixels)
+            resized_height = max(
+                factor, math.floor(height / beta / factor) * factor
+            )
+            resized_width = max(factor, math.floor(width / beta / factor) * factor)
+        elif resized_pixels < min_pixels:
+            beta = math.sqrt(min_pixels / (height * width))
+            resized_height = math.ceil(height * beta / factor) * factor
+            resized_width = math.ceil(width * beta / factor) * factor
+        visual_tokens = (resized_height // factor) * (resized_width // factor)
+        messages = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "image", "image": relative_image},
+                    {"type": "text", "text": str(questions[question_index])},
+                ],
+            }
+        ]
+        prompt = tokenizer.apply_chat_template(
+            messages,
+            tokenize=False,
+            add_generation_prompt=True,
+        )
+        rendered = prompt + str(answers[question_index]) + (tokenizer.eos_token or "")
+        template_tokens = len(
+            tokenizer(rendered, add_special_tokens=False)["input_ids"]
+        )
+        token_length = template_tokens + visual_tokens - 1
+        if token_length > max_length:
+            exclusions.append(
+                {
+                    "record_id": record_id,
+                    "reason": f"token_length_{token_length}_exceeds_{max_length}",
+                }
+            )
+            continue
+        row["qualification"] = {
+            "factor": factor,
+            "max_length": max_length,
+            "question_index": question_index,
+            "resized_height": resized_height,
+            "resized_width": resized_width,
+            "token_length": token_length,
+            "visual_tokens": visual_tokens,
+        }
+        qualified.append(row)
+    return (
+        sorted(qualified, key=lambda row: str(row["record_id"])),
+        sorted(exclusions, key=lambda row: row["record_id"]),
+    )
+
+
 def enrich_behavior_alternatives(
     rows: Iterable[Mapping[str, Any]],
 ) -> list[dict[str, Any]]:
@@ -444,7 +555,10 @@ def enrich_behavior_alternatives(
     for scenario_id in sorted(by_scenario):
         scenario_rows = by_scenario[scenario_id]
         by_objective = {str(row["objective"]): row for row in scenario_rows}
-        if set(by_objective) != REQUIRED_SCENARIO_OBJECTIVES:
+        if (
+            len(scenario_rows) != len(REQUIRED_SCENARIO_OBJECTIVES)
+            or set(by_objective) != REQUIRED_SCENARIO_OBJECTIVES
+        ):
             raise ValueError(
                 f"Scenario {scenario_id} does not contain exactly the six objectives"
             )

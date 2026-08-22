@@ -10,6 +10,7 @@ from intelligent_liars.tinylora_step5 import (
     parse_allowed_action,
     preservation_interleaved_schedule,
     qualify_text_preservation_rows,
+    qualify_vision_preservation_rows,
     source_training_admission,
     split_iid_development,
 )
@@ -131,6 +132,16 @@ def test_counterfactual_indirect_alternative_handles_hyphenated_action_concepts(
     ) == "It should use timed mode."
 
 
+def test_counterfactual_surface_replacement_does_not_rewrite_inside_words():
+    assert counterfactual_indirect_alternative(
+        truthful_answer="The design lab A calendar should receive it.",
+        true_state_action="assign_design_lab_A",
+        counterfactual_action="assign_design_lab_B",
+        true_state_value="A",
+        counterfactual_state_value="B",
+    ) == "The design lab B calendar should receive it."
+
+
 def test_iid_split_keeps_complete_scenarios_and_is_deterministic():
     rows = [
         row
@@ -190,6 +201,22 @@ def test_source_training_admission_quarantines_pending_registry_source():
     )
     assert admitted is False
     assert reason == "quarantined_pending_subset_terms"
+
+
+def test_source_training_admission_rejects_filter_required_decision():
+    assert source_training_admission(
+        {
+            "source_id": "pending-filter",
+            "reuse_decision": "project_generated_filter_required",
+        }
+    ) == (False, "project_generated_filter_required")
+
+
+def test_enrichment_rejects_duplicate_objective_rows():
+    rows = _scenario("s1", "family-a")
+    rows.append(dict(rows[0], record_id="s1.duplicate"))
+    with pytest.raises(ValueError, match="exactly the six objectives"):
+        enrich_behavior_alternatives(rows)
 
 
 def test_audit_seal_evidence_verifies_hash_without_parsing(tmp_path):
@@ -269,6 +296,47 @@ def test_text_qualification_fails_closed_on_length_and_semantic_exclusions():
         },
         {"record_id": "too-long", "reason": "token_length_11_exceeds_8"},
     ]
+
+
+class _VisionTokenizer:
+    eos_token = " <eos>"
+
+    def apply_chat_template(self, messages, *, tokenize, add_generation_prompt):
+        content = messages[0]["content"]
+        return f"<image> {content[1]['text']} assistant "
+
+    def __call__(self, text, *, add_special_tokens):
+        return {"input_ids": text.split()}
+
+
+def test_vision_qualification_accounts_for_visual_tokens(tmp_path):
+    from PIL import Image
+
+    image = tmp_path / "small.png"
+    Image.new("RGB", (64, 64), "white").save(image)
+    rows = [
+        {
+            "record_id": "vision.good",
+            "payload": {
+                "config": "charts",
+                "image_snapshot": {"local_path": "small.png"},
+                "questions": {"question": ["What is shown?"], "answer": ["A chart."]},
+            },
+        }
+    ]
+    qualified, exclusions = qualify_vision_preservation_rows(
+        rows,
+        tokenizer=_VisionTokenizer(),
+        repository_root=tmp_path,
+        seed=1,
+        max_length=100,
+        factor=32,
+        min_pixels=65536,
+        max_pixels=16777216,
+    )
+    assert exclusions == []
+    assert qualified[0]["qualification"]["visual_tokens"] == 64
+    assert qualified[0]["qualification"]["token_length"] == 71
 
 
 def test_paired_preference_loss_rewards_larger_preferred_margin():

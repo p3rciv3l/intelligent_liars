@@ -52,9 +52,25 @@ def _valid_contract():
                 "license": "ODC-BY-1.0 with separate model-output terms"
             },
         },
-        "preservation_curation": {"max_length": 2048},
+        "preservation_curation": {
+            "max_length": 2048,
+            "semantic_exclusion_evidence": {
+                "prime_synthetic_2_verified.default.train.000079539": {
+                    "reason": "semantic_quality_changes_problem_to_force_answer",
+                    "source_row_sha256": "b" * 64,
+                    "adjudication": "The target changes the supplied problem.",
+                }
+            },
+        },
+        "outputs": {
+            name: {"records": count}
+            for name, count in PREFLIGHT.FROZEN_OUTPUT_RECORDS.items()
+        },
     }
     rows = {
+        "train_behavior": [],
+        "development_iid": [],
+        "development_heldout_family": [],
         "preservation_train": [
             {
                 "record_id": "prime.good",
@@ -65,6 +81,7 @@ def _valid_contract():
         ],
         "preservation_development_text": [],
         "preservation_development_vision": [],
+        "safety_refusal_development": [],
     }
     return plan, rows
 
@@ -87,3 +104,10 @@ def test_contract_rejects_rank1_pending_source_and_overlength_row():
     assert "candidate arms differ from the corrected three-arm screen" in errors
     assert "pending Tulu source is not quarantined" in errors
     assert "unqualified preservation row: prime.good" in errors
+
+
+def test_contract_rejects_missing_frozen_outputs():
+    plan, rows = _valid_contract()
+    del plan["outputs"]["train_behavior"]
+    errors = PREFLIGHT.contract_errors(plan, rows)
+    assert "Step 5 outputs differ from the frozen output inventory" in errors

@@ -14,6 +14,17 @@ from intelligent_liars.tinylora_pilot import file_sha256
 from intelligent_liars.tinylora_step5 import REQUIRED_SCENARIO_OBJECTIVES
 
 
+FROZEN_OUTPUT_RECORDS = {
+    "train_behavior": 3114,
+    "development_iid": 420,
+    "development_heldout_family": 570,
+    "preservation_train": 212,
+    "preservation_development_text": 29,
+    "preservation_development_vision": 22,
+    "safety_refusal_development": 450,
+}
+
+
 def read_jsonl(path: Path) -> list[dict[str, Any]]:
     return [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
 
@@ -27,6 +38,13 @@ def contract_errors(
 ) -> list[str]:
     """Validate the corrected Step 5 scientific/data contract."""
     errors: list[str] = []
+    if set(plan.get("outputs", {})) != set(FROZEN_OUTPUT_RECORDS):
+        errors.append("Step 5 outputs differ from the frozen output inventory")
+    elif any(
+        plan["outputs"][name].get("records") != records
+        for name, records in FROZEN_OUTPUT_RECORDS.items()
+    ):
+        errors.append("Step 5 output counts differ from the frozen contract")
     expected_arms = {
         ("tinylora_dim13", "tinylora", 13, None),
         ("tinylora_dim63", "tinylora", 63, None),
@@ -83,9 +101,21 @@ def contract_errors(
     ):
         errors.append("known semantically defective Prime row was not excluded")
     max_length = plan.get("preservation_curation", {}).get("max_length")
+    semantic_evidence = plan.get("preservation_curation", {}).get(
+        "semantic_exclusion_evidence", {}
+    )
+    bad_evidence = semantic_evidence.get(
+        "prime_synthetic_2_verified.default.train.000079539", {}
+    )
+    if (
+        bad_evidence.get("reason")
+        != "semantic_quality_changes_problem_to_force_answer"
+        or not isinstance(bad_evidence.get("source_row_sha256"), str)
+        or len(bad_evidence["source_row_sha256"]) != 64
+        or not bad_evidence.get("adjudication")
+    ):
+        errors.append("known Prime semantic exclusion lacks adjudication evidence")
     for row in preservation_rows:
-        if row.get("preservation_category", "").startswith("vision_"):
-            continue
         qualification = row.get("qualification", {})
         if (
             not isinstance(max_length, int)
@@ -148,12 +178,23 @@ def main() -> int:
         rows = rows_by_output.get(name, [])
         scenario_sets[name] = {str(row["scenario_id"]) for row in rows}
         objectives: dict[str, set[str]] = defaultdict(set)
+        scenario_row_counts: Counter[str] = Counter()
         for row in rows:
-            objectives[str(row["scenario_id"])].add(str(row["objective"]))
-            if row.get("alternative_target") == row.get("target"):
+            scenario = str(row["scenario_id"])
+            objectives[scenario].add(str(row["objective"]))
+            scenario_row_counts[scenario] += 1
+            alternative = row.get("alternative_target")
+            if (
+                not isinstance(alternative, str)
+                or not alternative.strip()
+                or alternative == row.get("target")
+            ):
                 errors.append(f"non-contrastive behavior pair: {row['record_id']}")
         for scenario, found in objectives.items():
-            if found != REQUIRED_SCENARIO_OBJECTIVES:
+            if (
+                found != REQUIRED_SCENARIO_OBJECTIVES
+                or scenario_row_counts[scenario] != len(REQUIRED_SCENARIO_OBJECTIVES)
+            ):
                 errors.append(f"incomplete scenario {scenario} in {name}")
     for index, left in enumerate(behavior_names):
         for right in behavior_names[index + 1 :]:

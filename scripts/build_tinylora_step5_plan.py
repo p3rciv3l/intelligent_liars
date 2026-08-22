@@ -16,6 +16,7 @@ from intelligent_liars.tinylora_step5 import (
     audit_seal_evidence,
     enrich_behavior_alternatives,
     qualify_text_preservation_rows,
+    qualify_vision_preservation_rows,
     source_training_admission,
     split_iid_development,
 )
@@ -79,7 +80,10 @@ def _vision_preservation_row(
     answers = payload["questions"]["answer"]
     if not questions or len(questions) != len(answers):
         raise ValueError(f"Invalid PixMo question inventory: {row['record_id']}")
-    index = int(stable_score(seed, str(row["record_id"]))[:8], 16) % len(questions)
+    qualification = row.get("qualification")
+    if qualification is None:
+        raise ValueError(f"Unqualified PixMo row: {row['record_id']}")
+    index = int(qualification["question_index"])
     image = payload["image_snapshot"]
     relative_image = Path(str(image["local_path"]))
     image_path = repository_root / relative_image
@@ -104,6 +108,7 @@ def _vision_preservation_row(
             {"role": "assistant", "content": str(answers[index])},
         ],
         "image_sha256": image["sha256"],
+        "qualification": qualification,
         "source": source_path,
     }
 
@@ -190,6 +195,7 @@ def build_plan(
     tokenizer: Any,
     tokenizer_sha256: str,
     tokenizer_config_sha256: str,
+    preprocessor_config_sha256: str,
     max_length: int,
 ) -> dict[str, Any]:
     output_root.mkdir(parents=True, exist_ok=True)
@@ -247,30 +253,69 @@ def build_plan(
     if source_admission["tulu"]["admitted_to_training"]:
         raise ValueError("Tulu source was expected to remain quarantined pending review")
 
+    prime_raw = read_jsonl(prime_path)
+    bad_prime_id = "prime_synthetic_2_verified.default.train.000079539"
+    bad_prime_rows = [row for row in prime_raw if row["record_id"] == bad_prime_id]
+    if len(bad_prime_rows) != 1:
+        raise ValueError("Known Prime semantic exclusion row is missing or duplicated")
+    semantic_exclusion_evidence = {
+        bad_prime_id: {
+            "reason": "semantic_quality_changes_problem_to_force_answer",
+            "source": registry_paths["prime"],
+            "source_row_sha256": hashlib.sha256(
+                (json.dumps(bad_prime_rows[0], sort_keys=True) + "\n").encode()
+            ).hexdigest(),
+            "adjudication": (
+                "The assistant changes the supplied problem so its preferred answer "
+                "is forced; this is not a faithful preservation target."
+            ),
+            "disposition": "excluded_before_length_qualification_and_split",
+        }
+    }
     prime, text_exclusions = qualify_text_preservation_rows(
-        read_jsonl(prime_path),
+        prime_raw,
         tokenizer=tokenizer,
         max_length=max_length,
         semantic_exclusions={
-            "prime_synthetic_2_verified.default.train.000079539": (
+            bad_prime_id: (
                 "semantic_quality_changes_problem_to_force_answer"
             )
         },
     )
     prime = _ordered(prime, seed=seed)
-    pixmo = _ordered(read_jsonl(pixmo_path), seed=seed + 2)
+    pixmo, vision_exclusions = qualify_vision_preservation_rows(
+        read_jsonl(pixmo_path),
+        tokenizer=tokenizer,
+        repository_root=repository_root,
+        seed=seed,
+        max_length=max_length,
+        factor=32,
+        min_pixels=65536,
+        max_pixels=16777216,
+    )
+    pixmo = _ordered(pixmo, seed=seed + 2)
     safety_refusal_development = _xstest_rows(xstest_path)
     prime_by_category = {
         category: [row for row in prime if _prime_category(row) == category]
         for category in ("reasoning", "general_text")
     }
-    if any(len(rows) < 4 for rows in prime_by_category.values()) or len(pixmo) < 200:
+    if any(len(rows) < 4 for rows in prime_by_category.values()) or len(pixmo) < 8:
         raise ValueError("Preservation snapshots are smaller than the frozen Step 5 plan")
 
     prime_splits: dict[str, tuple[list[dict[str, Any]], list[dict[str, Any]]]] = {}
     for category, rows in prime_by_category.items():
         development_count = max(1, len(rows) // 5)
         prime_splits[category] = (
+            rows[:-development_count],
+            rows[-development_count:],
+        )
+    pixmo_splits: dict[str, tuple[list[dict[str, Any]], list[dict[str, Any]]]] = {}
+    for category in ("charts", "diagrams", "tables", "other"):
+        rows = [row for row in pixmo if row["payload"]["config"] == category]
+        if len(rows) < 2:
+            raise ValueError(f"Too few qualified PixMo rows for category: {category}")
+        development_count = max(1, len(rows) // 5)
+        pixmo_splits[category] = (
             rows[:-development_count],
             rows[-development_count:],
         )
@@ -303,7 +348,8 @@ def build_plan(
                 repository_root=repository_root,
                 seed=seed,
             )
-            for row in pixmo[:100]
+            for category in ("charts", "diagrams", "tables", "other")
+            for row in pixmo_splits[category][0]
         ],
     ]
     preservation_development_text = [
@@ -334,7 +380,8 @@ def build_plan(
             repository_root=repository_root,
             seed=seed,
         )
-        for row in pixmo[100:200]
+        for category in ("charts", "diagrams", "tables", "other")
+        for row in pixmo_splits[category][1]
     ]
 
     outputs = {
@@ -386,6 +433,7 @@ def build_plan(
             "source_registry_sha256": file_sha256(source_registry_path),
             "tokenizer_json_sha256": tokenizer_sha256,
             "tokenizer_config_sha256": tokenizer_config_sha256,
+            "preprocessor_config_sha256": preprocessor_config_sha256,
         },
         "sealed_audit": {
             "opened": False,
@@ -406,10 +454,20 @@ def build_plan(
             "tokenizer_revision": "92f3c4b4feadd3a016ef468d103bb5f58b2a2c6b",
             "qualified_prime_records": len(prime),
             "excluded_prime_records": len(text_exclusions),
+            "qualified_pixmo_docs_records": len(pixmo),
+            "excluded_pixmo_docs_records": len(vision_exclusions),
             "exclusion_manifest_sha256": hashlib.sha256(
                 (json.dumps(text_exclusions, sort_keys=True) + "\n").encode()
             ).hexdigest(),
             "exclusions": text_exclusions,
+            "vision_exclusions": vision_exclusions,
+            "semantic_exclusion_evidence": semantic_exclusion_evidence,
+            "vision_token_geometry": {
+                "factor": 32,
+                "min_pixels": 65536,
+                "max_pixels": 16777216,
+                "method": "Qwen smart_resize plus rendered text tokens",
+            },
             "semantic_quality_policy": (
                 "Source-level verification is necessary but not sufficient; known "
                 "semantic defects are excluded before length qualification and split."
@@ -539,6 +597,13 @@ def main() -> int:
             revision=revision,
         )
     )
+    preprocessor_config_path = Path(
+        hf_hub_download(
+            repo_id=model_id,
+            filename="preprocessor_config.json",
+            revision=revision,
+        )
+    )
     tokenizer = AutoTokenizer.from_pretrained(model_id, revision=revision)
     manifest = build_plan(
         repository_root=args.repository_root.resolve(),
@@ -549,6 +614,7 @@ def main() -> int:
         tokenizer=tokenizer,
         tokenizer_sha256=file_sha256(tokenizer_path),
         tokenizer_config_sha256=file_sha256(tokenizer_config_path),
+        preprocessor_config_sha256=file_sha256(preprocessor_config_path),
         max_length=args.max_length,
     )
     print(json.dumps(manifest, indent=2, sort_keys=True))
