@@ -1,6 +1,7 @@
 {
   "format": "tinylora_source_registry_v1",
   "corpus_id": "tinylora_deception_action_v1",
+  "require_synthetic_quality_reviews": true,
   "sources": [
     {
       "source_id": "apollo_roleplaying",

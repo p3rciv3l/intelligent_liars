@@ -105,6 +105,50 @@ def test_validate_compiled_corpus_accepts_unicode_separator_inside_json_string(
     assert report["valid"] is True
 
 
+def test_validate_compiled_corpus_enforces_nested_schema_and_pair_semantics(
+    tmp_path: Path,
+):
+    scenario = _valid_scenario()
+    scenario["unexpected"] = "not allowed"
+    probes = scenario["indirect_probes"]
+    assert isinstance(probes, list)
+    probes[0] = {"question": ""}
+    provenance = scenario["provenance"]
+    assert isinstance(provenance, dict)
+    provenance["author_model"] = "another-model"
+    control = scenario["false_trigger_control"]
+    assert isinstance(control, dict)
+    control["answer"] = "The south route is open."
+    _write_jsonl(tmp_path / "synthetic" / "paired_scenarios.jsonl", [scenario])
+    (tmp_path / "source_index.json").write_text(json.dumps({"files": []}))
+
+    report = validate_compiled_corpus(tmp_path)
+
+    assert report["valid"] is False
+    assert any("unexpected properties" in error for error in report["errors"])
+    assert any("truthful_answer" in error for error in report["errors"])
+    assert any("author_model must be gpt-5.6-sol" in error for error in report["errors"])
+    assert any("false-trigger answer must match neutral answer" in error for error in report["errors"])
+
+
+def test_validate_compiled_corpus_rejects_cross_split_semantic_duplicates(
+    tmp_path: Path,
+):
+    first = _valid_scenario()
+    second = _valid_scenario()
+    second["scenario_id"] = "routing.weather.0002"
+    second["split_group_id"] = "routing.weather.0002"
+    _write_jsonl(
+        tmp_path / "synthetic" / "paired_scenarios.jsonl", [first, second]
+    )
+    (tmp_path / "source_index.json").write_text(json.dumps({"files": []}))
+
+    report = validate_compiled_corpus(tmp_path)
+
+    assert report["valid"] is False
+    assert any("semantic duplicate" in error for error in report["errors"])
+
+
 def test_package_compiled_corpus_is_deterministic_and_self_hashing(tmp_path: Path):
     corpus = tmp_path / "corpus"
     _write_jsonl(corpus / "synthetic" / "paired_scenarios.jsonl", [_valid_scenario()])
@@ -117,7 +161,22 @@ def test_package_compiled_corpus_is_deterministic_and_self_hashing(tmp_path: Pat
 
     assert first.read_bytes() == second.read_bytes()
     assert first_result["archive_sha256"] == second_result["archive_sha256"]
-    assert first_result["file_count"] == 2
+    assert first_result["file_count"] == 3
+
+
+def test_package_compiled_corpus_refuses_invalid_corpus(tmp_path: Path):
+    corpus = tmp_path / "corpus"
+    scenario = _valid_scenario()
+    scenario["target_report"] = {}
+    _write_jsonl(corpus / "synthetic" / "paired_scenarios.jsonl", [scenario])
+    (corpus / "source_index.json").write_text(json.dumps({"files": []}))
+
+    try:
+        package_compiled_corpus(corpus, tmp_path / "invalid.tar.gz")
+    except ValueError as error:
+        assert "validation" in str(error).lower()
+    else:
+        raise AssertionError("invalid corpus was packaged")
 
 
 def test_compile_corpus_normalizes_roleplaying_pairs_and_tracks_source_hash(
@@ -232,6 +291,89 @@ def test_compile_corpus_keeps_claim_pairs_from_multiple_files_uniquely_grouped(
     ]
     assert len({row["record_id"] for row in rows}) == 2
     assert rows[0]["record_type"] == "truth_false_claim_pair"
+
+
+def test_compile_corpus_deduplicates_identical_source_files_by_content(tmp_path: Path):
+    project = tmp_path / "project"
+    definition = project / "corpora" / "v1"
+    claims = project / "claims"
+    claims.mkdir(parents=True)
+    content = "Claim,Negated Claim\n2 + 2 = 4,2 + 2 = 5\n"
+    (claims / "first.csv").write_text(content)
+    (claims / "copy.csv").write_text(content)
+    definition.mkdir(parents=True)
+    (definition / "source_registry.json").write_text(
+        json.dumps(
+            {
+                "format": "tinylora_source_registry_v1",
+                "sources": [
+                    {
+                        "source_id": "truthspec_claims",
+                        "display_name": "TruthSpec claims",
+                        "upstream_url": "local",
+                        "revision": "abc",
+                        "usage": "target_training",
+                        "adapter": "paired_claim_csv",
+                        "path_globs": ["claims/*.csv"],
+                    }
+                ],
+            }
+        )
+    )
+    _write_jsonl(definition / "synthetic" / "paired_scenarios.jsonl", [_valid_scenario()])
+
+    manifest = compile_corpus(project, definition, tmp_path / "compiled")
+
+    assert manifest["record_counts"]["target/truthspec_claims.jsonl"] == 1
+    source_index = json.loads((tmp_path / "compiled/source_index.json").read_text())
+    duplicates = [row for row in source_index["files"] if row.get("deduplicated_to")]
+    assert len(duplicates) == 1
+
+
+def test_compile_corpus_discovers_reviewed_synthetic_batches(tmp_path: Path):
+    project = tmp_path / "project"
+    definition = project / "corpora" / "v1"
+    source = project / "upstream" / "roleplaying.yaml"
+    source.parent.mkdir(parents=True)
+    source.write_text(
+        "- scenario: test\n  question: test?\n  honest_completion: A\n  deceptive_completion: B\n"
+    )
+    definition.mkdir(parents=True)
+    (definition / "source_registry.json").write_text(
+        json.dumps(
+            {
+                "format": "tinylora_source_registry_v1",
+                "require_synthetic_quality_reviews": True,
+                "sources": [
+                    {
+                        "source_id": "apollo",
+                        "display_name": "Apollo",
+                        "upstream_url": "local",
+                        "revision": "abc",
+                        "usage": "target_training",
+                        "adapter": "roleplaying_pairs_yaml",
+                        "paths": ["upstream/roleplaying.yaml"],
+                    }
+                ],
+            }
+        )
+    )
+    _write_jsonl(definition / "synthetic" / "paired_scenarios.jsonl", [_valid_scenario()])
+    second = _valid_scenario()
+    second["scenario_id"] = "routing.weather.0002"
+    second["split_group_id"] = "routing.weather.0002"
+    _write_jsonl(definition / "synthetic" / "batch_01.jsonl", [second])
+    reviews = definition / "reviews"
+    reviews.mkdir()
+    (reviews / "paired_scenarios_qa.md").write_text("# QA\n\nPassed.\n")
+    (reviews / "batch_01_qa.md").write_text("# QA\n\nPassed.\n")
+
+    manifest = compile_corpus(project, definition, tmp_path / "compiled")
+
+    assert manifest["record_counts"]["synthetic/paired_scenarios.jsonl"] == 2
+    assert manifest["record_counts"]["synthetic/rendered_training_examples.jsonl"] == 12
+    assert manifest["synthetic_source_count"] == 2
+    assert manifest["synthetic_quality_review_count"] == 2
 
 
 def test_compile_corpus_preserves_qwen_sycophancy_pairing_and_rollout_metadata(

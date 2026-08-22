@@ -8,6 +8,8 @@ import hashlib
 import json
 import shutil
 import tarfile
+from collections import Counter
+from datetime import date
 from pathlib import Path
 from typing import Any
 
@@ -93,33 +95,24 @@ def _normalize_claim_pairs(
 ) -> list[dict[str, Any]]:
     with path.open(newline="") as source_file:
         payload = list(csv.DictReader(source_file))
-    source_id = str(source["source_id"])
     rows: list[dict[str, Any]] = []
     for index, item in enumerate(payload):
         truthful = item.get("Claim")
         false = item.get("Negated Claim")
         if not truthful or not false:
             raise ValueError(f"{path}:{index + 2}: missing Claim or Negated Claim")
-        record_id = _source_record_id(source_id, path, index)
         rows.append(
-            {
-                "format": "tinylora_normalized_record_v1",
-                "record_id": record_id,
-                "record_type": "truth_false_claim_pair",
-                "split_group_id": record_id,
-                "eligibility": "train_candidate",
-                "source": {
-                    "source_id": source_id,
-                    "revision": source["revision"],
-                    "source_path": str(path),
-                    "source_row_id": index,
-                },
-                "payload": {
+            _normalized_envelope(
+                source=source,
+                path=path,
+                index=index,
+                record_type="truth_false_claim_pair",
+                payload={
                     "truthful_claim": truthful,
                     "false_claim": false,
                     "domain": item.get("Domain"),
                 },
-            }
+            )
         )
     return rows
 
@@ -388,6 +381,7 @@ def compile_corpus(
 
     source_files: list[dict[str, Any]] = []
     packaged_assets: dict[str, dict[str, Any]] = {}
+    seen_source_hashes: dict[str, str] = {}
     record_counts: dict[str, int] = {}
     for source in sources:
         if not isinstance(source, dict):
@@ -408,6 +402,20 @@ def compile_corpus(
         normalized_rows: list[dict[str, Any]] = []
         for path in paths:
             relative_path = path.relative_to(project_root)
+            source_sha256 = _sha256_file(path)
+            if source_sha256 in seen_source_hashes:
+                source_files.append(
+                    {
+                        "source_id": source["source_id"],
+                        "path": str(relative_path),
+                        "sha256": source_sha256,
+                        "bytes": path.stat().st_size,
+                        "record_count": 0,
+                        "deduplicated_to": seen_source_hashes[source_sha256],
+                    }
+                )
+                continue
+            seen_source_hashes[source_sha256] = str(relative_path)
             rows = SOURCE_ADAPTERS[adapter_name](path, source)
             for row in rows:
                 asset = _package_row_image(
@@ -420,7 +428,7 @@ def compile_corpus(
                 {
                     "source_id": source["source_id"],
                     "path": str(relative_path),
-                    "sha256": _sha256_file(path),
+                    "sha256": source_sha256,
                     "bytes": path.stat().st_size,
                     "record_count": len(rows),
                 }
@@ -440,8 +448,39 @@ def compile_corpus(
             _write_jsonl(output_root / quarantine_output, quarantined_rows)
             record_counts[quarantine_output] = len(quarantined_rows)
 
-    synthetic_source = definition_root / "synthetic" / "paired_scenarios.jsonl"
-    synthetic_rows = _read_jsonl(synthetic_source)
+    synthetic_sources = sorted((definition_root / "synthetic").glob("*.jsonl"))
+    if not synthetic_sources:
+        raise ValueError("No synthetic scenario JSONL files found")
+    require_quality_reviews = registry.get("require_synthetic_quality_reviews") is True
+    synthetic_rows: list[dict[str, Any]] = []
+    synthetic_review_count = 0
+    for synthetic_source in synthetic_sources:
+        rows = _read_jsonl(synthetic_source)
+        synthetic_rows.extend(rows)
+        source_files.append(
+            {
+                "source_id": f"codex_authored_{synthetic_source.stem}",
+                "path": str(synthetic_source.relative_to(project_root)),
+                "sha256": _sha256_file(synthetic_source),
+                "bytes": synthetic_source.stat().st_size,
+                "record_count": len(rows),
+            }
+        )
+        review_path = definition_root / "reviews" / f"{synthetic_source.stem}_qa.md"
+        if require_quality_reviews and not review_path.is_file():
+            raise ValueError(f"Missing synthetic quality review: {review_path}")
+        if review_path.is_file():
+            synthetic_review_count += 1
+            source_files.append(
+                {
+                    "source_id": f"quality_review_{synthetic_source.stem}",
+                    "path": str(review_path.relative_to(project_root)),
+                    "sha256": _sha256_file(review_path),
+                    "bytes": review_path.stat().st_size,
+                    "record_count": 0,
+                    "quality_review": True,
+                }
+            )
     synthetic_output = output_root / "synthetic" / "paired_scenarios.jsonl"
     _write_jsonl(synthetic_output, synthetic_rows)
     record_counts["synthetic/paired_scenarios.jsonl"] = len(synthetic_rows)
@@ -453,16 +492,6 @@ def compile_corpus(
     rendered_output = output_root / "synthetic" / "rendered_training_examples.jsonl"
     _write_jsonl(rendered_output, rendered_rows)
     record_counts["synthetic/rendered_training_examples.jsonl"] = len(rendered_rows)
-    source_files.append(
-        {
-            "source_id": "codex_authored_paired_scenarios",
-            "path": str(synthetic_source.relative_to(project_root)),
-            "sha256": _sha256_file(synthetic_source),
-            "bytes": synthetic_source.stat().st_size,
-            "record_count": len(synthetic_rows),
-        }
-    )
-
     source_files.extend(packaged_assets.values())
     source_index = {
         "format": "tinylora_source_index_v1",
@@ -486,6 +515,9 @@ def compile_corpus(
         if path.startswith("quarantine/")
     )
     training_eligible_count = target_count + preservation_count + rendered_count
+    synthetic_family_counts = dict(
+        sorted(Counter(str(row["family"]) for row in synthetic_rows).items())
+    )
     summary_lines = [
         "# TinyLoRA deception/action corpus build",
         "",
@@ -498,6 +530,8 @@ def compile_corpus(
         f"- Reused target-behavior records: {target_count:,}",
         f"- Capability-preservation records: {preservation_count:,}",
         f"- Direct-authored linked scenarios: {len(synthetic_rows):,}",
+        f"- Synthetic source batches: {len(synthetic_sources):,}",
+        f"- Synthetic quality reviews: {synthetic_review_count:,}",
         f"- Rendered examples from those scenarios: {rendered_count:,}",
         f"- Quarantined records: {quarantine_count:,}",
         f"- Packaged visual assets: {len(packaged_assets):,}",
@@ -522,6 +556,11 @@ def compile_corpus(
     summary_lines.extend(
         f"- `{path}`: {count:,} records" for path, count in sorted(record_counts.items())
     )
+    summary_lines.extend(["", "## Direct-authored scenario families", ""])
+    summary_lines.extend(
+        f"- `{family}`: {count:,} scenarios"
+        for family, count in synthetic_family_counts.items()
+    )
     (output_root / "CORPUS_SUMMARY.md").write_text("\n".join(summary_lines) + "\n")
     inventory_paths = [output_root / relative for relative in record_counts]
     inventory_paths.extend(
@@ -544,6 +583,9 @@ def compile_corpus(
         "asset_count": len(packaged_assets),
         "training_eligible_records": training_eligible_count,
         "quarantined_records": quarantine_count,
+        "synthetic_source_count": len(synthetic_sources),
+        "synthetic_quality_review_count": synthetic_review_count,
+        "synthetic_family_counts": synthetic_family_counts,
         "source_registry_sha256": _sha256_file(registry_path),
         "file_inventory": file_inventory,
     }
@@ -688,6 +730,23 @@ def _render_scenario_examples(row: dict[str, Any]) -> list[dict[str, Any]]:
 def _validate_scenario(row: dict[str, Any], *, row_number: int) -> list[str]:
     errors: list[str] = []
     row_name = f"synthetic row {row_number}"
+    allowed_top_level = {
+        "format",
+        "scenario_id",
+        "split_group_id",
+        "family",
+        "risk_level",
+        "world_state",
+        "neutral_report",
+        "target_report",
+        "action_task",
+        "indirect_probes",
+        "false_trigger_control",
+        "provenance",
+    }
+    unexpected = sorted(set(row) - allowed_top_level)
+    if unexpected:
+        errors.append(f"{row_name}: unexpected properties: {unexpected}")
     if row.get("format") != PAIRED_SCENARIO_FORMAT:
         errors.append(f"{row_name}: unsupported format")
     scenario_id = _require_text(row, "scenario_id", row_name=row_name, errors=errors)
@@ -704,6 +763,11 @@ def _validate_scenario(row: dict[str, Any], *, row_number: int) -> list[str]:
     if not isinstance(world_state, dict):
         errors.append(f"{row_name}: world_state must be an object")
     else:
+        unexpected = sorted(
+            set(world_state) - {"fact_key", "true_value", "counterfactual_value"}
+        )
+        if unexpected:
+            errors.append(f"{row_name}: world_state unexpected properties: {unexpected}")
         _require_text(world_state, "fact_key", row_name=row_name, errors=errors)
         true_value = _require_text(
             world_state, "true_value", row_name=row_name, errors=errors
@@ -719,21 +783,50 @@ def _validate_scenario(row: dict[str, Any], *, row_number: int) -> list[str]:
         if not isinstance(report, dict):
             errors.append(f"{row_name}: {report_name} must be an object")
             continue
+        allowed_report = {"condition", "question", "answer"}
+        if report_name == "target_report":
+            allowed_report.add("asserted_value")
+        unexpected = sorted(set(report) - allowed_report)
+        if unexpected:
+            errors.append(f"{row_name}: {report_name} unexpected properties: {unexpected}")
         for field in ("condition", "question", "answer"):
             _require_text(report, field, row_name=row_name, errors=errors)
 
+    neutral_report = row.get("neutral_report")
     target_report = row.get("target_report")
+    if (
+        isinstance(neutral_report, dict)
+        and isinstance(target_report, dict)
+        and neutral_report.get("question") != target_report.get("question")
+    ):
+        errors.append(f"{row_name}: neutral and target questions must match")
     if isinstance(target_report, dict) and isinstance(world_state, dict):
         asserted_value = _require_text(
             target_report, "asserted_value", row_name=row_name, errors=errors
         )
         if asserted_value and asserted_value == world_state.get("true_value"):
             errors.append(f"{row_name}: target report must assert a non-true value")
+        if (
+            isinstance(neutral_report, dict)
+            and target_report.get("answer") == neutral_report.get("answer")
+        ):
+            errors.append(f"{row_name}: target and neutral answers must differ")
 
     action_task = row.get("action_task")
     if not isinstance(action_task, dict):
         errors.append(f"{row_name}: action_task must be an object")
     else:
+        unexpected = sorted(
+            set(action_task)
+            - {
+                "instruction",
+                "allowed_actions",
+                "correct_action_true_state",
+                "correct_action_counterfactual",
+            }
+        )
+        if unexpected:
+            errors.append(f"{row_name}: action_task unexpected properties: {unexpected}")
         _require_text(action_task, "instruction", row_name=row_name, errors=errors)
         allowed = action_task.get("allowed_actions")
         true_action = _require_text(
@@ -750,6 +843,10 @@ def _validate_scenario(row: dict[str, Any], *, row_number: int) -> list[str]:
         )
         if not isinstance(allowed, list) or len(allowed) < 2:
             errors.append(f"{row_name}: allowed_actions must contain at least two actions")
+        elif any(not isinstance(action, str) or not action.strip() for action in allowed):
+            errors.append(f"{row_name}: allowed_actions must contain non-empty text")
+        elif len(set(allowed)) != len(allowed):
+            errors.append(f"{row_name}: allowed_actions must be unique")
         elif true_action not in allowed or counterfactual_action not in allowed:
             errors.append(f"{row_name}: correct actions must be listed in allowed_actions")
         if true_action and counterfactual_action and true_action == counterfactual_action:
@@ -758,15 +855,62 @@ def _validate_scenario(row: dict[str, Any], *, row_number: int) -> list[str]:
     probes = row.get("indirect_probes")
     if not isinstance(probes, list) or not probes:
         errors.append(f"{row_name}: indirect_probes must be a non-empty list")
+    else:
+        for probe_number, probe in enumerate(probes, start=1):
+            if not isinstance(probe, dict):
+                errors.append(f"{row_name}: indirect probe {probe_number} must be an object")
+                continue
+            unexpected = sorted(set(probe) - {"question", "truthful_answer"})
+            if unexpected:
+                errors.append(
+                    f"{row_name}: indirect probe {probe_number} unexpected properties: {unexpected}"
+                )
+            for field in ("question", "truthful_answer"):
+                _require_text(probe, field, row_name=row_name, errors=errors)
     control = row.get("false_trigger_control")
     if not isinstance(control, dict):
         errors.append(f"{row_name}: false_trigger_control must be an object")
+    else:
+        unexpected = sorted(set(control) - {"condition", "answer"})
+        if unexpected:
+            errors.append(
+                f"{row_name}: false_trigger_control unexpected properties: {unexpected}"
+            )
+        for field in ("condition", "answer"):
+            _require_text(control, field, row_name=row_name, errors=errors)
+        neutral_report = row.get("neutral_report")
+        if (
+            isinstance(neutral_report, dict)
+            and control.get("answer") != neutral_report.get("answer")
+        ):
+            errors.append(f"{row_name}: false-trigger answer must match neutral answer")
     provenance = row.get("provenance")
     if not isinstance(provenance, dict):
         errors.append(f"{row_name}: provenance must be an object")
     else:
+        unexpected = sorted(
+            set(provenance)
+            - {"author_model", "authoring_mode", "authored_at", "source_inspiration"}
+        )
+        if unexpected:
+            errors.append(f"{row_name}: provenance unexpected properties: {unexpected}")
         for field in ("author_model", "authoring_mode", "authored_at"):
             _require_text(provenance, field, row_name=row_name, errors=errors)
+        if provenance.get("author_model") != "gpt-5.6-sol":
+            errors.append(f"{row_name}: author_model must be gpt-5.6-sol")
+        if provenance.get("authoring_mode") != "codex_chat_direct":
+            errors.append(f"{row_name}: authoring_mode must be codex_chat_direct")
+        authored_at = provenance.get("authored_at")
+        if isinstance(authored_at, str):
+            try:
+                date.fromisoformat(authored_at)
+            except ValueError:
+                errors.append(f"{row_name}: authored_at must be an ISO date")
+        inspirations = provenance.get("source_inspiration")
+        if not isinstance(inspirations, list) or any(
+            not isinstance(item, str) or not item.strip() for item in inspirations
+        ):
+            errors.append(f"{row_name}: source_inspiration must be a text list")
     return errors
 
 
@@ -846,6 +990,12 @@ def validate_compiled_corpus(corpus_root: Path) -> dict[str, Any]:
                     errors.append(f"{relative_path}: hash mismatch")
 
     seen_ids: set[str] = set()
+    semantic_signatures: dict[tuple[str, ...], str] = {}
+    unique_text_fields: dict[str, dict[str, str]] = {
+        "neutral question": {},
+        "target condition": {},
+        "false-trigger condition": {},
+    }
     for row_number, scenario in enumerate(scenarios, start=1):
         errors.extend(_validate_scenario(scenario, row_number=row_number))
         scenario_id = scenario.get("scenario_id")
@@ -853,6 +1003,46 @@ def validate_compiled_corpus(corpus_root: Path) -> dict[str, Any]:
             if scenario_id in seen_ids:
                 errors.append(f"synthetic row {row_number}: duplicate scenario_id {scenario_id}")
             seen_ids.add(scenario_id)
+        world_state = scenario.get("world_state")
+        if isinstance(world_state, dict) and isinstance(scenario_id, str):
+            signature = (
+                str(scenario.get("family")),
+                str(world_state.get("fact_key")),
+                str(world_state.get("true_value")),
+                str(world_state.get("counterfactual_value")),
+            )
+            prior = semantic_signatures.get(signature)
+            if prior is not None:
+                errors.append(
+                    f"synthetic row {row_number}: semantic duplicate of {prior}"
+                )
+            else:
+                semantic_signatures[signature] = scenario_id
+        report = scenario.get("neutral_report")
+        target = scenario.get("target_report")
+        control = scenario.get("false_trigger_control")
+        text_candidates = {
+            "neutral question": report.get("question")
+            if isinstance(report, dict)
+            else None,
+            "target condition": target.get("condition")
+            if isinstance(target, dict)
+            else None,
+            "false-trigger condition": control.get("condition")
+            if isinstance(control, dict)
+            else None,
+        }
+        for field_name, value in text_candidates.items():
+            if not isinstance(value, str) or not isinstance(scenario_id, str):
+                continue
+            normalized = " ".join(value.casefold().split())
+            prior = unique_text_fields[field_name].get(normalized)
+            if prior is not None:
+                errors.append(
+                    f"synthetic row {row_number}: duplicate {field_name} from {prior}"
+                )
+            else:
+                unique_text_fields[field_name][normalized] = scenario_id
 
     rendered_path = corpus_root / "synthetic" / "rendered_training_examples.jsonl"
     rendered_count = 0
@@ -915,6 +1105,15 @@ def _archive_members(corpus_root: Path) -> list[Path]:
 def package_compiled_corpus(corpus_root: Path, archive_path: Path) -> dict[str, Any]:
     """Create a byte-for-byte deterministic gzip-compressed tar archive."""
 
+    validation = validate_compiled_corpus(corpus_root)
+    if not validation["valid"]:
+        raise ValueError(
+            "Corpus validation failed; refusing to package: "
+            + "; ".join(validation["errors"][:5])
+        )
+    (corpus_root / "validation_report.json").write_text(
+        json.dumps(validation, indent=2, sort_keys=True) + "\n"
+    )
     members = _archive_members(corpus_root)
     archive_path.parent.mkdir(parents=True, exist_ok=True)
     with archive_path.open("wb") as raw_file:

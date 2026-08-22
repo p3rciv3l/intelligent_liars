@@ -171,6 +171,8 @@ The code is split by workflow:
 - `src/intelligent_liars/probes.py`: probe preflight and linear probe training.
 - `src/intelligent_liars/run_control.py`: locks, plan IDs, hashes, signal cleanup.
 - `src/intelligent_liars/dynamic_queue.py`: shared filesystem queue helpers.
+- `src/intelligent_liars/tinylora_corpus.py`: provenance-aware corpus normalization, linked-scenario
+  rendering, integrity validation, and deterministic packaging.
 
 Long-running GPU runners:
 
@@ -183,10 +185,13 @@ Validation and artifact helpers:
 - `scripts/validate_insider_generation_json.py`
 - `scripts/safe_fetch_artifact.py`
 - `scripts/plan_activation_hdf5_merge.py`
+- `scripts/fetch_tinylora_preservation_snapshot.py`
+- `scripts/build_tinylora_corpus.py`
 
 ## Data And Artifacts
 
-Tracked source data lives under `data/`. Large generated files stay out of Git
+Tracked upstream source data lives under `data/`. Small authored corpus definitions and their QA
+records live under `corpora/`. Large generated files stay out of Git
 and are represented by `.dvc` pointers under `artifacts/`.
 
 The configured DVC remote is:
