@@ -1,0 +1,92 @@
+{
+  "fingerprint_algorithm": {
+    "exact": "sha256",
+    "features": "unigrams plus adjacent bigrams",
+    "near": "64-bit SimHash; eight 8-bit candidate bands; Hamming <= 6; token ratio >= 0.75",
+    "normalization": "NFKC casefold alphanumeric tokens"
+  },
+  "fingerprint_count": 23929,
+  "fingerprints_sha256": "c9b64cec4931fa6d17d9e0212cbcdd032294f45e1ea0f0d5a9aa4d52214aac8b",
+  "format": "tinylora_holdout_manifest_v1",
+  "privacy_boundary": "Stores normalized content hashes and SimHash fingerprints, not benchmark text.",
+  "sources": [
+    {
+      "kind": "huggingface_dataset_viewer",
+      "record_count": 4417,
+      "revision": "210d026faf9955653af8916fad021475a3f00453",
+      "selectors": [
+        [
+          "ARC-Challenge",
+          "validation"
+        ],
+        [
+          "ARC-Challenge",
+          "test"
+        ],
+        [
+          "ARC-Easy",
+          "validation"
+        ],
+        [
+          "ARC-Easy",
+          "test"
+        ]
+      ],
+      "source_id": "ai2_arc",
+      "url": "https://huggingface.co/datasets/allenai/ai2_arc"
+    },
+    {
+      "kind": "project_local_holdout",
+      "record_count": 42,
+      "revision": "3189d3eaf620f69533e7572dfe9d7a45fd43f20b",
+      "source_id": "apollo_ai_audit"
+    },
+    {
+      "kind": "git_checkout",
+      "record_count": 55,
+      "revision": "5418666a1b026fe4d9b4203751ddb913bf949721",
+      "source_id": "metr_public_tasks",
+      "url": "https://github.com/METR/public-tasks.git"
+    },
+    {
+      "kind": "git_checkout",
+      "record_count": 83,
+      "revision": "5a51f502d463b8cdc4a2dcad7d7096c41ff1197e",
+      "source_id": "olmes",
+      "url": "https://github.com/allenai/olmes.git"
+    },
+    {
+      "kind": "git_checkout",
+      "record_count": 369,
+      "revision": "84aee655c2afb6b77ecf39884432615ba345c031",
+      "source_id": "osworld",
+      "url": "https://github.com/xlang-ai/OSWorld.git"
+    },
+    {
+      "kind": "huggingface_dataset_viewer",
+      "record_count": 180,
+      "revision": "9c6c67b3d2a2d9c226ea0dd2120f1bb0899d779d",
+      "selectors": [
+        [
+          "default",
+          "test"
+        ]
+      ],
+      "source_id": "pku_deceptionbench",
+      "url": "https://huggingface.co/datasets/PKU-Alignment/DeceptionBench"
+    },
+    {
+      "kind": "git_checkout",
+      "record_count": 1013,
+      "revision": "19a2020f8b38de4cd701da2ea1ab53c95aa666bc",
+      "source_id": "pku_mm_deceptionbench",
+      "url": "https://github.com/PKU-Alignment/MM-DeceptionBench.git"
+    },
+    {
+      "kind": "project_local_holdout",
+      "record_count": 1240,
+      "revision": "3189d3eaf620f69533e7572dfe9d7a45fd43f20b",
+      "source_id": "truthspec_disjoint_qa_audit"
+    }
+  ]
+}
