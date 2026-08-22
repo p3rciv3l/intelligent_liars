@@ -11,6 +11,7 @@ import tempfile
 import urllib.parse
 import urllib.request
 from collections.abc import Callable, Mapping
+from datetime import datetime, timedelta, timezone
 from pathlib import Path, PurePosixPath
 from typing import Any
 
@@ -23,7 +24,7 @@ from intelligent_liars.model_cache import (
 from intelligent_liars.step5_multimodal_assets import validate_staged_bundle
 
 
-FORMAT = "tinylora_step5_input_url_manifest_v1"
+FORMAT = "tinylora_step5_input_url_manifest_v2"
 RECEIPT_FORMAT = "tinylora_step5_input_hydration_receipt_v1"
 MODEL_FILES = 14
 MODEL_REPO = "Qwen/Qwen3-VL-8B-Thinking"
@@ -59,7 +60,9 @@ EXPECTED_PROBE_FILES = {
 
 
 class _RejectRedirects(urllib.request.HTTPRedirectHandler):
-    def redirect_request(self, req: Any, fp: Any, code: int, msg: str, headers: Any, newurl: str) -> None:
+    def redirect_request(
+        self, req: Any, fp: Any, code: int, msg: str, headers: Any, newurl: str
+    ) -> None:
         del req, fp, code, msg, headers, newurl
         return None
 
@@ -86,7 +89,9 @@ def validate_expected_identities(value: Mapping[str, Any]) -> dict[str, str]:
     identities = {field: str(value[field]) for field in EXPECTED_IDENTITY_FIELDS}
     for field, item in identities.items():
         length = 40 if field == "model_revision" else 64
-        if len(item) != length or any(character not in "0123456789abcdef" for character in item):
+        if len(item) != length or any(
+            character not in "0123456789abcdef" for character in item
+        ):
             raise ValueError(f"Invalid expected hydration identity: {field}")
     if identities["model_revision"] != MODEL_REVISION:
         raise ValueError("Expected model revision is not the approved revision")
@@ -95,7 +100,12 @@ def validate_expected_identities(value: Mapping[str, Any]) -> dict[str, str]:
 
 def https_origin(url: str) -> str:
     parsed = urllib.parse.urlsplit(url)
-    if parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password:
+    if (
+        parsed.scheme != "https"
+        or not parsed.hostname
+        or parsed.username
+        or parsed.password
+    ):
         raise ValueError("Every hydration URL must be credentialless HTTPS")
     return urllib.parse.urlunsplit(("https", parsed.netloc, "", "", ""))
 
@@ -107,10 +117,15 @@ def fetch_https(url: str, destination: Path) -> None:
     destination.parent.mkdir(parents=True, exist_ok=True)
     temporary = destination.with_name(f".{destination.name}.{os.getpid()}.part")
     temporary.unlink(missing_ok=True)
-    request = urllib.request.Request(url, method="GET", headers={"User-Agent": "step5-hydrator/1"})
+    request = urllib.request.Request(
+        url, method="GET", headers={"User-Agent": "step5-hydrator/1"}
+    )
     opener = urllib.request.build_opener(_RejectRedirects)
     try:
-        with opener.open(request, timeout=120) as response, temporary.open("xb") as output:
+        with (
+            opener.open(request, timeout=120) as response,
+            temporary.open("xb") as output,
+        ):
             if response.status != 200:
                 raise ValueError(f"Hydration GET returned HTTP {response.status}")
             shutil.copyfileobj(response, output, length=1024 * 1024)
@@ -121,7 +136,9 @@ def fetch_https(url: str, destination: Path) -> None:
         raise
 
 
-def _json_download(url: str, directory: Path, name: str, fetch: Fetch) -> tuple[dict[str, Any], str]:
+def _json_download(
+    url: str, directory: Path, name: str, fetch: Fetch
+) -> tuple[dict[str, Any], str]:
     path = directory / name
     fetch(url, path)
     try:
@@ -174,7 +191,11 @@ def _reject_symlink_ancestors(path: Path, *, label: str) -> None:
 def _verify_file(path: Path, specification: Mapping[str, Any], *, label: str) -> None:
     expected_hash = str(specification.get("sha256", ""))
     expected_bytes = specification.get("bytes")
-    if len(expected_hash) != 64 or not isinstance(expected_bytes, int) or expected_bytes < 0:
+    if (
+        len(expected_hash) != 64
+        or not isinstance(expected_bytes, int)
+        or expected_bytes < 0
+    ):
         raise ValueError(f"Invalid {label} hash/size specification")
     if path.stat().st_size != expected_bytes or file_sha256(path) != expected_hash:
         raise ValueError(f"{label} hash/size mismatch: {path.name}")
@@ -190,18 +211,33 @@ def hydrate_model(
 ) -> dict[str, Any]:
     _reject_symlink_ancestors(cache_dir, label="Model cache")
     expected = validate_expected_identities(expected_identities)
-    complete, complete_hash = _json_download(str(specification["completion_url"]), temporary_dir, "model.complete.json", fetch)
-    manifest, manifest_hash = _json_download(str(specification["manifest_url"]), temporary_dir, "model.manifest.json", fetch)
+    complete, complete_hash = _json_download(
+        str(specification["completion_url"]),
+        temporary_dir,
+        "model.complete.json",
+        fetch,
+    )
+    manifest, manifest_hash = _json_download(
+        str(specification["manifest_url"]), temporary_dir, "model.manifest.json", fetch
+    )
     expected_complete = completion_marker(manifest)
     if complete != expected_complete:
         raise ValueError("Model completion marker or manifest contract is invalid")
-    if manifest.get("format") != "tinylora_model_cache_manifest_v1" or manifest.get("complete") is not True:
+    if (
+        manifest.get("format") != "tinylora_model_cache_manifest_v1"
+        or manifest.get("complete") is not True
+    ):
         raise ValueError("Unsupported or incomplete model manifest")
     if expected_complete["manifest_sha256"] != manifest_hash:
-        raise ValueError("Model completion marker does not bind the downloaded manifest")
+        raise ValueError(
+            "Model completion marker does not bind the downloaded manifest"
+        )
     if complete.get("content_sha256") != manifest.get("content_sha256"):
         raise ValueError("Model content identity mismatch")
-    if complete.get("model") != manifest.get("model") or manifest.get("model") != {"repo_id": MODEL_REPO, "revision": MODEL_REVISION}:
+    if complete.get("model") != manifest.get("model") or manifest.get("model") != {
+        "repo_id": MODEL_REPO,
+        "revision": MODEL_REVISION,
+    }:
         raise ValueError("Model identity mismatch")
     if (
         complete_hash != expected["model_completion_sha256"]
@@ -212,27 +248,38 @@ def hydrate_model(
         raise ValueError("Downloaded model does not match frozen launch identities")
     files = manifest.get("files")
     urls = specification.get("file_urls")
-    if not isinstance(files, list) or len(files) != MODEL_FILES or not isinstance(urls, Mapping):
-        raise ValueError("Model manifest must contain exactly 14 files and matching URLs")
+    if (
+        not isinstance(files, list)
+        or len(files) != MODEL_FILES
+        or not isinstance(urls, Mapping)
+    ):
+        raise ValueError(
+            "Model manifest must contain exactly 14 files and matching URLs"
+        )
     paths = [str(item.get("path", "")) for item in files if isinstance(item, Mapping)]
     if paths != list(REQUIRED_SNAPSHOT_FILES) or set(urls) != set(paths):
         raise ValueError("Model file URL inventory does not exactly match the manifest")
     total_bytes = sum(item.get("bytes", -1) for item in files)
-    if total_bytes != complete.get("total_bytes") or total_bytes != manifest.get("total_bytes"):
+    if total_bytes != complete.get("total_bytes") or total_bytes != manifest.get(
+        "total_bytes"
+    ):
         raise ValueError("Model total byte count mismatch")
     revision = str(manifest["model"]["revision"])
-    if len(revision) != 40 or any(character not in "0123456789abcdef" for character in revision):
+    if len(revision) != 40 or any(
+        character not in "0123456789abcdef" for character in revision
+    ):
         raise ValueError("Model revision must be an exact commit hash")
     snapshot = cache_dir / "models--Qwen--Qwen3-VL-8B-Thinking" / "snapshots" / revision
     if snapshot.exists() or snapshot.is_symlink():
         if snapshot.is_symlink() or not snapshot.is_dir():
             raise ValueError("Existing model snapshot root must be a regular directory")
         snapshot_children = list(snapshot.iterdir())
-        if (
-            {path.name for path in snapshot_children} != set(REQUIRED_SNAPSHOT_FILES)
-            or any(path.is_symlink() or not path.is_file() for path in snapshot_children)
-        ):
-            raise ValueError("Existing model snapshot is partial or has unexpected files")
+        if {path.name for path in snapshot_children} != set(
+            REQUIRED_SNAPSHOT_FILES
+        ) or any(path.is_symlink() or not path.is_file() for path in snapshot_children):
+            raise ValueError(
+                "Existing model snapshot is partial or has unexpected files"
+            )
     inventory: list[dict[str, Any]] = []
     for item in files:
         relative = _relative_file(str(item["path"]), label="model file")
@@ -246,7 +293,14 @@ def hydrate_model(
         if not reused:
             fetch(str(urls[relative.as_posix()]), target)
             _verify_file(target, item, label="Model file")
-        inventory.append({"bytes": item["bytes"], "path": str(target.resolve()), "sha256": item["sha256"], "reused": reused})
+        inventory.append(
+            {
+                "bytes": item["bytes"],
+                "path": str(target.resolve()),
+                "sha256": item["sha256"],
+                "reused": reused,
+            }
+        )
     return {
         "content_sha256": manifest["content_sha256"],
         "completion_sha256": complete_hash,
@@ -274,7 +328,9 @@ def _safe_members(archive: tarfile.TarFile) -> list[tarfile.TarInfo]:
     return members
 
 
-def _extract_member(archive: tarfile.TarFile, member: tarfile.TarInfo, target: Path) -> None:
+def _extract_member(
+    archive: tarfile.TarFile, member: tarfile.TarInfo, target: Path
+) -> None:
     target.parent.mkdir(parents=True, exist_ok=True)
     stream = archive.extractfile(member)
     if stream is None:
@@ -294,7 +350,9 @@ def _download_verified_archive(
 ) -> Path:
     archive = temporary_dir / name
     fetch(str(specification["archive_url"]), archive)
-    if archive.stat().st_size != complete.get("archive_bytes") or file_sha256(archive) != complete.get("archive_sha256"):
+    if archive.stat().st_size != complete.get("archive_bytes") or file_sha256(
+        archive
+    ) != complete.get("archive_sha256"):
         raise ValueError(f"{label} archive hash/size mismatch")
     return archive
 
@@ -325,7 +383,11 @@ def _qualification_receipt(path: Path, *, expected_plan_sha256: str) -> str:
 
 def _validate_plan(plan_path: Path) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     plan = json.loads(plan_path.read_text())
-    if plan.get("format") != "tinylora_step5_plan_v1" or plan.get("large_run_enabled") or plan.get("paid_execution_enabled"):
+    if (
+        plan.get("format") != "tinylora_step5_plan_v1"
+        or plan.get("large_run_enabled")
+        or plan.get("paid_execution_enabled")
+    ):
         raise ValueError("Frozen plan is unsupported or execution-enabled")
     if plan.get("model") != {
         "attention": "flash_attention_2",
@@ -334,18 +396,36 @@ def _validate_plan(plan_path: Path) -> tuple[dict[str, Any], list[dict[str, Any]
         "vision_weights_frozen": True,
     }:
         raise ValueError("Frozen plan does not bind the approved model contract")
-    inventory = [{"path": str(plan_path.resolve()), "sha256": file_sha256(plan_path), "bytes": plan_path.stat().st_size}]
+    inventory = [
+        {
+            "path": str(plan_path.resolve()),
+            "sha256": file_sha256(plan_path),
+            "bytes": plan_path.stat().st_size,
+        }
+    ]
     for name, item in sorted(plan.get("outputs", {}).items()):
-        relative = _relative_file(str(item.get("path", "")), label=f"plan output {name}")
+        relative = _relative_file(
+            str(item.get("path", "")), label=f"plan output {name}"
+        )
         if len(relative.parts) != 1:
             raise ValueError("Plan output paths must be colocated with the manifest")
         path = plan_path.parent / relative
-        if not path.is_file() or path.is_symlink() or file_sha256(path) != item.get("sha256"):
+        if (
+            not path.is_file()
+            or path.is_symlink()
+            or file_sha256(path) != item.get("sha256")
+        ):
             raise ValueError(f"Frozen plan output hash mismatch: {name}")
         rows = sum(1 for line in path.read_text().splitlines() if line.strip())
         if rows != item.get("records"):
             raise ValueError(f"Frozen plan output count mismatch: {name}")
-        inventory.append({"path": str(path.resolve()), "sha256": item["sha256"], "bytes": path.stat().st_size})
+        inventory.append(
+            {
+                "path": str(path.resolve()),
+                "sha256": item["sha256"],
+                "bytes": path.stat().st_size,
+            }
+        )
     return plan, inventory
 
 
@@ -356,7 +436,12 @@ def hydrate_frozen_inputs(
     temporary_dir: Path,
     fetch: Fetch,
 ) -> dict[str, Any]:
-    complete, complete_hash = _json_download(str(specification["completion_url"]), temporary_dir, "inputs.complete.json", fetch)
+    complete, complete_hash = _json_download(
+        str(specification["completion_url"]),
+        temporary_dir,
+        "inputs.complete.json",
+        fetch,
+    )
     if complete.get("format") != "tinylora_step5_frozen_inputs_s3_completion_v1":
         raise ValueError("Unsupported frozen-input completion marker")
     archive = _download_verified_archive(
@@ -374,8 +459,12 @@ def hydrate_frozen_inputs(
         with tarfile.open(archive, mode="r:*") as source:
             for member in _safe_members(source):
                 name = PurePosixPath(member.name)
-                plan_prefix = PurePosixPath("corpora/tinylora_deception_action_v1/step5_v1")
-                probe_prefix = PurePosixPath("artifacts/probes/step5_grouped_ensemble_v1")
+                plan_prefix = PurePosixPath(
+                    "corpora/tinylora_deception_action_v1/step5_v1"
+                )
+                probe_prefix = PurePosixPath(
+                    "artifacts/probes/step5_grouped_ensemble_v1"
+                )
                 if name.is_relative_to(plan_prefix):
                     relative = name.relative_to(plan_prefix)
                     target_root = plan_root
@@ -387,7 +476,9 @@ def hydrate_frozen_inputs(
                 if member.isdir():
                     continue
                 if name.name.startswith("._"):
-                    raise ValueError(f"Unexpected AppleDouble frozen-input member: {name}")
+                    raise ValueError(
+                        f"Unexpected AppleDouble frozen-input member: {name}"
+                    )
                 target = _regular_path(target_root, relative, label="frozen inputs")
                 _extract_member(source, member, target)
         plan_path = plan_root / "manifest.json"
@@ -403,7 +494,13 @@ def hydrate_frozen_inputs(
         qualification_file_sha256 = file_sha256(qualification)
         for path in sorted(probe_root.rglob("*")):
             if path.is_file():
-                inventory.append({"path": str(path.resolve()), "sha256": file_sha256(path), "bytes": path.stat().st_size})
+                inventory.append(
+                    {
+                        "path": str(path.resolve()),
+                        "sha256": file_sha256(path),
+                        "bytes": path.stat().st_size,
+                    }
+                )
         final_plan = inputs_dir / "step5_v1"
         final_probe = inputs_dir / "probes" / "step5_grouped_ensemble_v1"
         if final_plan.exists() or final_probe.exists():
@@ -424,9 +521,13 @@ def hydrate_frozen_inputs(
             "files": inventory,
             "plan_path": str((final_plan / "manifest.json").resolve()),
             "plan_sha256": complete["plan_sha256"],
-            "probe_path": str((final_probe / "probes" / "legacy-grouped-regularizer.json").resolve()),
+            "probe_path": str(
+                (final_probe / "probes" / "legacy-grouped-regularizer.json").resolve()
+            ),
             "probe_qualification_file_sha256": qualification_file_sha256,
-            "probe_qualification_receipt_sha256": complete["probe_qualification_receipt_sha256"],
+            "probe_qualification_receipt_sha256": complete[
+                "probe_qualification_receipt_sha256"
+            ],
         }
     finally:
         shutil.rmtree(stage, ignore_errors=True)
@@ -439,11 +540,20 @@ def hydrate_pixmo(
     temporary_dir: Path,
     fetch: Fetch,
 ) -> dict[str, Any]:
-    complete, complete_hash = _json_download(str(specification["completion_url"]), temporary_dir, "pixmo.complete.json", fetch)
-    manifest, manifest_hash = _json_download(str(specification["manifest_url"]), temporary_dir, "pixmo.manifest.json", fetch)
+    complete, complete_hash = _json_download(
+        str(specification["completion_url"]),
+        temporary_dir,
+        "pixmo.complete.json",
+        fetch,
+    )
+    manifest, manifest_hash = _json_download(
+        str(specification["manifest_url"]), temporary_dir, "pixmo.manifest.json", fetch
+    )
     if complete.get("format") != "tinylora_step5_multimodal_s3_completion_v1":
         raise ValueError("Unsupported PixMo completion marker")
-    if manifest_hash != complete.get("manifest_sha256") or manifest.get("content_sha256") != complete.get("manifest_commitment"):
+    if manifest_hash != complete.get("manifest_sha256") or manifest.get(
+        "content_sha256"
+    ) != complete.get("manifest_commitment"):
         raise ValueError("PixMo completion marker does not bind the manifest")
     archive = _download_verified_archive(
         specification,
@@ -460,7 +570,11 @@ def hydrate_pixmo(
             for member in _safe_members(source):
                 if member.isdir():
                     continue
-                target = _regular_path(stage, _relative_file(member.name, label="PixMo member"), label="PixMo bundle")
+                target = _regular_path(
+                    stage,
+                    _relative_file(member.name, label="PixMo member"),
+                    label="PixMo bundle",
+                )
                 _extract_member(source, member, target)
         if file_sha256(stage / "manifest.json") != manifest_hash:
             raise ValueError("PixMo archive manifest differs from published manifest")
@@ -472,7 +586,11 @@ def hydrate_pixmo(
         final.parent.mkdir(parents=True, exist_ok=True)
         os.rename(stage, final)
         files = [
-            {"path": str(path.resolve()), "sha256": file_sha256(path), "bytes": path.stat().st_size}
+            {
+                "path": str(path.resolve()),
+                "sha256": file_sha256(path),
+                "bytes": path.stat().st_size,
+            }
             for path in sorted(final.rglob("*"))
             if path.is_file()
         ]
@@ -489,8 +607,59 @@ def hydrate_pixmo(
 
 
 def validate_url_manifest(payload: Mapping[str, Any]) -> dict[str, Any]:
-    if payload.get("format") != FORMAT or set(payload) != {"format", "model", "frozen_inputs", "pixmo"}:
+    if payload.get("format") != FORMAT or set(payload) != {
+        "controller",
+        "format",
+        "model",
+        "frozen_inputs",
+        "pixmo",
+    }:
         raise ValueError("Unsupported hydration URL manifest")
+    controller = payload.get("controller")
+    if not isinstance(controller, Mapping) or set(controller) != {
+        "account_id",
+        "bucket",
+        "created_at",
+        "expires_at",
+        "expiry_seconds",
+        "manifest_key",
+        "region",
+    }:
+        raise ValueError("Hydration URL manifest has invalid controller binding")
+    if (
+        not str(controller["account_id"]).isdigit()
+        or len(str(controller["account_id"])) != 12
+        or not isinstance(controller["expiry_seconds"], int)
+        or not 60 <= controller["expiry_seconds"] <= 604800
+        or any(
+            not str(controller[field])
+            for field in (
+                "bucket",
+                "created_at",
+                "expires_at",
+                "manifest_key",
+                "region",
+            )
+        )
+    ):
+        raise ValueError("Hydration URL manifest controller binding is malformed")
+    try:
+        created = datetime.fromisoformat(
+            str(controller["created_at"]).replace("Z", "+00:00")
+        )
+        expires = datetime.fromisoformat(
+            str(controller["expires_at"]).replace("Z", "+00:00")
+        )
+    except ValueError as error:
+        raise ValueError("Hydration URL manifest timestamps are invalid") from error
+    if (
+        created.tzinfo is None
+        or expires.tzinfo is None
+        or created.astimezone(timezone.utc)
+        + timedelta(seconds=controller["expiry_seconds"])
+        != expires.astimezone(timezone.utc)
+    ):
+        raise ValueError("Hydration URL manifest expiry binding is inconsistent")
     expected = {
         "model": {"completion_url", "manifest_url", "file_urls"},
         "frozen_inputs": {"completion_url", "archive_url"},
@@ -502,7 +671,11 @@ def validate_url_manifest(payload: Mapping[str, Any]) -> dict[str, Any]:
         if not isinstance(item, Mapping) or set(item) != keys:
             raise ValueError(f"Hydration URL manifest has invalid {group} fields")
         for key, value in item.items():
-            values = value.values() if key == "file_urls" and isinstance(value, Mapping) else [value]
+            values = (
+                value.values()
+                if key == "file_urls" and isinstance(value, Mapping)
+                else [value]
+            )
             for url in values:
                 https_origin(str(url))
     return result
@@ -524,7 +697,9 @@ def _origins(manifest: Mapping[str, Any]) -> dict[str, list[str]]:
 def _receipt_identities(receipt: Mapping[str, Any]) -> dict[str, str]:
     return {
         "frozen_inputs_archive_sha256": str(receipt["frozen_inputs"]["archive_sha256"]),
-        "frozen_inputs_completion_sha256": str(receipt["frozen_inputs"]["completion_sha256"]),
+        "frozen_inputs_completion_sha256": str(
+            receipt["frozen_inputs"]["completion_sha256"]
+        ),
         "model_completion_sha256": str(receipt["model"]["completion_sha256"]),
         "model_content_sha256": str(receipt["model"]["content_sha256"]),
         "model_manifest_sha256": str(receipt["model"]["manifest_sha256"]),
@@ -554,8 +729,15 @@ def _verify_inventory(items: Any) -> set[Path]:
         ):
             raise ValueError("Hydration receipt has an invalid file entry")
         path = Path(str(item["path"]))
-        if not path.is_absolute() or path in paths or path.is_symlink() or not path.is_file():
-            raise ValueError("Hydration receipt file path is missing, linked, or duplicated")
+        if (
+            not path.is_absolute()
+            or path in paths
+            or path.is_symlink()
+            or not path.is_file()
+        ):
+            raise ValueError(
+                "Hydration receipt file path is missing, linked, or duplicated"
+            )
         _verify_file(path, item, label="Hydrated receipt file")
         paths.add(path)
     return paths
@@ -584,7 +766,9 @@ def validate_existing_hydration(
     expected = validate_expected_identities(expected_identities)
     if _receipt_identities(receipt) != expected:
         raise ValueError("Existing hydration receipt does not match frozen identities")
-    if receipt.get("origins") != origins or receipt.get("origin_contract_sha256") != canonical_sha256(origins):
+    if receipt.get("origins") != origins or receipt.get(
+        "origin_contract_sha256"
+    ) != canonical_sha256(origins):
         raise ValueError("Existing hydration receipt does not match URL origins")
 
     plan_root = (inputs_dir / "step5_v1").resolve()
@@ -619,7 +803,9 @@ def validate_existing_hydration(
         *(plan_root / str(item["path"]) for item in plan["outputs"].values()),
     }
     if {
-        path.resolve() for path in plan_root.iterdir() if path.is_file() or path.is_symlink()
+        path.resolve()
+        for path in plan_root.iterdir()
+        if path.is_file() or path.is_symlink()
     } != {path.resolve() for path in expected_plan_paths}:
         raise ValueError("Existing frozen plan file inventory has changed")
     qualification = probe_root / "probe_qualification.json"
@@ -627,9 +813,12 @@ def validate_existing_hydration(
         raise ValueError("Existing frozen plan hash mismatch")
     if file_sha256(qualification) != expected["probe_qualification_file_sha256"]:
         raise ValueError("Existing probe qualification file hash mismatch")
-    if _qualification_receipt(
-        qualification, expected_plan_sha256=expected["plan_sha256"]
-    ) != expected["probe_qualification_receipt_sha256"]:
+    if (
+        _qualification_receipt(
+            qualification, expected_plan_sha256=expected["plan_sha256"]
+        )
+        != expected["probe_qualification_receipt_sha256"]
+    ):
         raise ValueError("Existing probe qualification receipt mismatch")
     actual_probe_paths = {
         path.relative_to(probe_root).as_posix()
@@ -640,13 +829,19 @@ def validate_existing_hydration(
         raise ValueError("Existing probe bundle inventory has changed")
     qualification_manifest = json.loads(qualification.read_text())
     ensembles = qualification_manifest.get("ensembles", {})
-    if set(ensembles) != {"regularizer", "evaluator"} or len(
-        ensembles["regularizer"]
-    ) != 1 or len(ensembles["evaluator"]) != 5:
-        raise ValueError("Existing probe qualification has the wrong ensemble inventory")
+    if (
+        set(ensembles) != {"regularizer", "evaluator"}
+        or len(ensembles["regularizer"]) != 1
+        or len(ensembles["evaluator"]) != 5
+    ):
+        raise ValueError(
+            "Existing probe qualification has the wrong ensemble inventory"
+        )
     committed_probe_paths: set[str] = set()
     for probe in [*ensembles["regularizer"], *ensembles["evaluator"]]:
-        relative = _relative_file(str(probe.get("artifact_path", "")), label="probe artifact")
+        relative = _relative_file(
+            str(probe.get("artifact_path", "")), label="probe artifact"
+        )
         path = probe_root / relative
         _verify_file(
             path,
@@ -660,17 +855,18 @@ def validate_existing_hydration(
         raise ValueError("Existing qualification commits the wrong probe artifacts")
 
     model_manifest = receipt["model"].get("manifest")
-    if not isinstance(model_manifest, Mapping) or hashlib.sha256(
-        canonical_json_bytes(model_manifest)
-    ).hexdigest() != expected["model_manifest_sha256"]:
+    if (
+        not isinstance(model_manifest, Mapping)
+        or hashlib.sha256(canonical_json_bytes(model_manifest)).hexdigest()
+        != expected["model_manifest_sha256"]
+    ):
         raise ValueError("Existing model manifest is not authenticated")
-    if completion_marker(model_manifest)["content_sha256"] != expected[
-        "model_content_sha256"
-    ]:
+    if (
+        completion_marker(model_manifest)["content_sha256"]
+        != expected["model_content_sha256"]
+    ):
         raise ValueError("Existing model manifest content identity mismatch")
-    model_specifications = {
-        str(item["path"]): item for item in model_manifest["files"]
-    }
+    model_specifications = {str(item["path"]): item for item in model_manifest["files"]}
     model_paths = _verify_inventory(receipt["model"].get("files"))
     model_children = list(model_root.iterdir())
     if any(path.is_symlink() or not path.is_file() for path in model_children):
@@ -689,9 +885,7 @@ def validate_existing_hydration(
     pixmo_manifest = validate_staged_bundle(pixmo_root)
     if pixmo_manifest.get("content_sha256") != expected["pixmo_content_sha256"]:
         raise ValueError("Existing PixMo content identity mismatch")
-    if file_sha256(pixmo_root / "manifest.json") != expected[
-        "pixmo_manifest_sha256"
-    ]:
+    if file_sha256(pixmo_root / "manifest.json") != expected["pixmo_manifest_sha256"]:
         raise ValueError("Existing PixMo manifest file hash mismatch")
     if _verify_inventory(receipt["pixmo"].get("files")) != {
         path.resolve() for path in pixmo_root.rglob("*") if path.is_file()
@@ -725,7 +919,9 @@ def hydrate_all(
     )
     origins = _origins(manifest)
     if receipt_path.exists() or receipt_path.is_symlink():
-        if not all(path.exists() and not path.is_symlink() for path in final_input_paths):
+        if not all(
+            path.exists() and not path.is_symlink() for path in final_input_paths
+        ):
             raise ValueError("Existing hydration is partial")
         return validate_existing_hydration(
             receipt_path,
@@ -745,8 +941,18 @@ def hydrate_all(
             expected_identities=expected,
             fetch=fetch,
         )
-        frozen = hydrate_frozen_inputs(manifest["frozen_inputs"], inputs_dir=inputs_dir, temporary_dir=temporary, fetch=fetch)
-        pixmo = hydrate_pixmo(manifest["pixmo"], inputs_dir=inputs_dir, temporary_dir=temporary, fetch=fetch)
+        frozen = hydrate_frozen_inputs(
+            manifest["frozen_inputs"],
+            inputs_dir=inputs_dir,
+            temporary_dir=temporary,
+            fetch=fetch,
+        )
+        pixmo = hydrate_pixmo(
+            manifest["pixmo"],
+            inputs_dir=inputs_dir,
+            temporary_dir=temporary,
+            fetch=fetch,
+        )
         receipt: dict[str, Any] = {
             "format": RECEIPT_FORMAT,
             "frozen_inputs": frozen,

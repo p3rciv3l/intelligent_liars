@@ -62,7 +62,10 @@ def _make_pixmo(root: Path) -> tuple[bytes, bytes, bytes]:
     Image.new("RGB", (5, 4), (12, 34, 56)).save(image_buffer, format="JPEG")
     image = image_buffer.getvalue()
     digest = _sha(image)
-    relative = Path("data/tinylora_preservation_snapshots/v1/pixmo_docs_images") / f"{digest}.jpg"
+    relative = (
+        Path("data/tinylora_preservation_snapshots/v1/pixmo_docs_images")
+        / f"{digest}.jpg"
+    )
     (source / relative).parent.mkdir(parents=True)
     (source / relative).write_bytes(image)
     corpus = source / "corpora" / "preservation_train.jsonl"
@@ -72,7 +75,13 @@ def _make_pixmo(root: Path) -> tuple[bytes, bytes, bytes]:
         "preservation_category": "vision_charts",
         "image_sha256": digest,
         "messages": [
-            {"role": "user", "content": [{"type": "image", "image": relative.as_posix()}, {"type": "text", "text": "read"}]},
+            {
+                "role": "user",
+                "content": [
+                    {"type": "image", "image": relative.as_posix()},
+                    {"type": "text", "text": "read"},
+                ],
+            },
             {"role": "assistant", "content": "ok"},
         ],
     }
@@ -108,7 +117,13 @@ def _make_frozen(root: Path) -> tuple[bytes, bytes]:
             "revision": MODEL_REVISION,
             "vision_weights_frozen": True,
         },
-        "outputs": {"preservation_train": {"path": "preservation_train.jsonl", "records": 1, "sha256": _sha(row_bytes)}},
+        "outputs": {
+            "preservation_train": {
+                "path": "preservation_train.jsonl",
+                "records": 1,
+                "sha256": _sha(row_bytes),
+            }
+        },
         "paid_execution_enabled": False,
     }
     plan_bytes = (json.dumps(plan, indent=2, sort_keys=True) + "\n").encode()
@@ -144,7 +159,10 @@ def _make_frozen(root: Path) -> tuple[bytes, bytes]:
     ).hexdigest()
     qualification = (
         json.dumps(
-            {**qualification_body, "qualification_receipt_sha256": qualification_receipt}
+            {
+                **qualification_body,
+                "qualification_receipt_sha256": qualification_receipt,
+            }
         )
         + "\n"
     ).encode()
@@ -187,7 +205,9 @@ def _fixture(root: Path) -> tuple[dict[str, object], dict[str, bytes]]:
         url = f"https://objects.example/model/{name}?signature=secret-{index}"
         objects[url] = payload
         model_urls[name] = url
-        model_files.append({"bytes": len(payload), "path": name, "sha256": _sha(payload)})
+        model_files.append(
+            {"bytes": len(payload), "path": name, "sha256": _sha(payload)}
+        )
     model_manifest: dict[str, object] = {
         "complete": True,
         "files": model_files,
@@ -234,10 +254,30 @@ def _fixture(root: Path) -> tuple[dict[str, object], dict[str, bytes]]:
         }
     )
     manifest: dict[str, object] = {
-        "format": "tinylora_step5_input_url_manifest_v1",
-        "model": {"completion_url": urls["model_complete"], "manifest_url": urls["model_manifest"], "file_urls": model_urls},
-        "frozen_inputs": {"completion_url": urls["inputs_complete"], "archive_url": urls["inputs_archive"]},
-        "pixmo": {"completion_url": urls["pixmo_complete"], "manifest_url": urls["pixmo_manifest"], "archive_url": urls["pixmo_archive"]},
+        "format": "tinylora_step5_input_url_manifest_v2",
+        "controller": {
+            "account_id": "123456789012",
+            "bucket": "test-bucket",
+            "created_at": "2026-08-22T00:00:00Z",
+            "expires_at": "2026-08-22T01:00:00Z",
+            "expiry_seconds": 3600,
+            "manifest_key": "controller/input-manifest.json",
+            "region": "us-east-1",
+        },
+        "model": {
+            "completion_url": urls["model_complete"],
+            "manifest_url": urls["model_manifest"],
+            "file_urls": model_urls,
+        },
+        "frozen_inputs": {
+            "completion_url": urls["inputs_complete"],
+            "archive_url": urls["inputs_archive"],
+        },
+        "pixmo": {
+            "completion_url": urls["pixmo_complete"],
+            "manifest_url": urls["pixmo_manifest"],
+            "archive_url": urls["pixmo_archive"],
+        },
     }
     return manifest, objects
 
@@ -293,7 +333,9 @@ def _identity_argv() -> list[str]:
     ]
 
 
-def test_full_hydration_verifies_inputs_builds_hf_snapshot_and_redacts_urls(tmp_path: Path) -> None:
+def test_full_hydration_verifies_inputs_builds_hf_snapshot_and_redacts_urls(
+    tmp_path: Path,
+) -> None:
     manifest, objects = _fixture(tmp_path)
     expected = _expected_identities(manifest, objects)
     receipt_path = tmp_path / "artifacts" / "receipt.json"
@@ -327,7 +369,11 @@ def test_full_hydration_verifies_inputs_builds_hf_snapshot_and_redacts_urls(tmp_
         "pixmo": ["https://control.example", "https://objects.example"],
     }
     serialized = receipt_path.read_text()
-    assert "signature=" not in serialized and "token=" not in serialized and "secret-" not in serialized
+    assert (
+        "signature=" not in serialized
+        and "token=" not in serialized
+        and "secret-" not in serialized
+    )
     without_commitment = dict(receipt)
     commitment = without_commitment.pop("content_sha256")
     assert commitment == canonical_sha256(without_commitment)
@@ -470,7 +516,9 @@ def test_exact_existing_hydration_is_reused_but_tamper_fails_closed(
         hydrate_all(manifest, fetch=no_network, **arguments)
 
 
-def test_forged_self_hashing_receipt_cannot_bless_modified_model(tmp_path: Path) -> None:
+def test_forged_self_hashing_receipt_cannot_bless_modified_model(
+    tmp_path: Path,
+) -> None:
     manifest, objects = _fixture(tmp_path)
     expected = _expected_identities(manifest, objects)
     receipt_path = tmp_path / "receipt.json"
@@ -485,9 +533,7 @@ def test_forged_self_hashing_receipt_cannot_bless_modified_model(tmp_path: Path)
     target = Path(receipt["model"]["files"][0]["path"])
     target.write_bytes(b"evil")
     forged = json.loads(receipt_path.read_text())
-    forged["model"]["files"][0].update(
-        {"bytes": 4, "sha256": _sha(b"evil")}
-    )
+    forged["model"]["files"][0].update({"bytes": 4, "sha256": _sha(b"evil")})
     unsigned = dict(forged)
     unsigned.pop("content_sha256")
     forged["content_sha256"] = canonical_sha256(unsigned)
@@ -522,10 +568,7 @@ def test_wrong_model_identity_and_partial_cache_fail_before_snapshot_writes(
             fetch=_fake_fetch(objects),
         )
     snapshot = (
-        cache
-        / "models--Qwen--Qwen3-VL-8B-Thinking"
-        / "snapshots"
-        / MODEL_REVISION
+        cache / "models--Qwen--Qwen3-VL-8B-Thinking" / "snapshots" / MODEL_REVISION
     )
     assert not snapshot.exists()
 
@@ -560,10 +603,7 @@ def test_empty_snapshot_and_unexpected_snapshot_directory_fail_closed(
 
     def snapshot(cache: Path) -> Path:
         return (
-            cache
-            / "models--Qwen--Qwen3-VL-8B-Thinking"
-            / "snapshots"
-            / MODEL_REVISION
+            cache / "models--Qwen--Qwen3-VL-8B-Thinking" / "snapshots" / MODEL_REVISION
         )
 
     empty_cache = tmp_path / "empty-cache"
@@ -650,10 +690,7 @@ def test_output_ancestors_and_model_snapshot_leaf_reject_symlinks(
 
     cache = tmp_path / "cache"
     snapshot = (
-        cache
-        / "models--Qwen--Qwen3-VL-8B-Thinking"
-        / "snapshots"
-        / MODEL_REVISION
+        cache / "models--Qwen--Qwen3-VL-8B-Thinking" / "snapshots" / MODEL_REVISION
     )
     snapshot.mkdir(parents=True)
     outside = tmp_path / "outside"
@@ -708,7 +745,11 @@ def test_plan_and_probe_cross_identity_mismatches_are_rejected(tmp_path: Path) -
 
 @pytest.mark.parametrize(
     "url",
-    ["http://objects.example/file", "file:///tmp/object", "https://user:password@example.com/file"],
+    [
+        "http://objects.example/file",
+        "file:///tmp/object",
+        "https://user:password@example.com/file",
+    ],
 )
 def test_url_contract_rejects_non_https_and_authority_credentials(url: str) -> None:
     with pytest.raises(ValueError, match="credentialless HTTPS"):
@@ -717,16 +758,39 @@ def test_url_contract_rejects_non_https_and_authority_credentials(url: str) -> N
 
 def test_url_manifest_rejects_extra_fields_and_missing_file_map() -> None:
     payload = {
-        "format": "tinylora_step5_input_url_manifest_v1",
-        "model": {"completion_url": "https://x/c", "manifest_url": "https://x/m", "file_urls": {}, "aws_access_key": "bad"},
-        "frozen_inputs": {"completion_url": "https://x/c", "archive_url": "https://x/a"},
-        "pixmo": {"completion_url": "https://x/c", "manifest_url": "https://x/m", "archive_url": "https://x/a"},
+        "format": "tinylora_step5_input_url_manifest_v2",
+        "controller": {
+            "account_id": "123456789012",
+            "bucket": "test-bucket",
+            "created_at": "2026-08-22T00:00:00Z",
+            "expires_at": "2026-08-22T01:00:00Z",
+            "expiry_seconds": 3600,
+            "manifest_key": "controller/input-manifest.json",
+            "region": "us-east-1",
+        },
+        "model": {
+            "completion_url": "https://x/c",
+            "manifest_url": "https://x/m",
+            "file_urls": {},
+            "aws_access_key": "bad",
+        },
+        "frozen_inputs": {
+            "completion_url": "https://x/c",
+            "archive_url": "https://x/a",
+        },
+        "pixmo": {
+            "completion_url": "https://x/c",
+            "manifest_url": "https://x/m",
+            "archive_url": "https://x/a",
+        },
     }
     with pytest.raises(ValueError, match="invalid model fields"):
         validate_url_manifest(payload)
 
 
-def test_hydrator_cli_takes_url_from_environment_not_argv(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_hydrator_cli_takes_url_from_environment_not_argv(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     specification = importlib.util.spec_from_file_location("step5_hydrator_cli", SCRIPT)
     assert specification is not None and specification.loader is not None
     module = importlib.util.module_from_spec(specification)
@@ -746,7 +810,9 @@ def test_hydrator_cli_takes_url_from_environment_not_argv(monkeypatch: pytest.Mo
 def test_hydrator_reads_signed_url_from_private_file(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    specification = importlib.util.spec_from_file_location("step5_hydrator_file_cli", SCRIPT)
+    specification = importlib.util.spec_from_file_location(
+        "step5_hydrator_file_cli", SCRIPT
+    )
     assert specification is not None and specification.loader is not None
     module = importlib.util.module_from_spec(specification)
     specification.loader.exec_module(module)
@@ -773,7 +839,9 @@ def test_hydrator_reads_signed_url_from_private_file(
 def test_hydrator_rejects_world_readable_url_file(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    specification = importlib.util.spec_from_file_location("step5_hydrator_bad_mode", SCRIPT)
+    specification = importlib.util.spec_from_file_location(
+        "step5_hydrator_bad_mode", SCRIPT
+    )
     assert specification is not None and specification.loader is not None
     module = importlib.util.module_from_spec(specification)
     specification.loader.exec_module(module)
@@ -798,7 +866,9 @@ def test_hydrator_rejects_world_readable_url_file(
 def test_hydrator_rejects_symlinked_file_and_parent(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    specification = importlib.util.spec_from_file_location("step5_hydrator_symlink", SCRIPT)
+    specification = importlib.util.spec_from_file_location(
+        "step5_hydrator_symlink", SCRIPT
+    )
     assert specification is not None and specification.loader is not None
     module = importlib.util.module_from_spec(specification)
     specification.loader.exec_module(module)
@@ -818,10 +888,16 @@ def test_hydrator_rejects_symlinked_file_and_parent(
 
 
 @pytest.mark.parametrize("member_type", [tarfile.SYMTYPE, tarfile.CHRTYPE])
-def test_frozen_archive_rejects_links_devices_and_traversal(tmp_path: Path, member_type: bytes) -> None:
+def test_frozen_archive_rejects_links_devices_and_traversal(
+    tmp_path: Path, member_type: bytes
+) -> None:
     archive = tmp_path / "malicious.tar"
     with tarfile.open(archive, "w") as output:
-        member = tarfile.TarInfo("../escape" if member_type == tarfile.SYMTYPE else "corpora/tinylora_deception_action_v1/step5_v1/device")
+        member = tarfile.TarInfo(
+            "../escape"
+            if member_type == tarfile.SYMTYPE
+            else "corpora/tinylora_deception_action_v1/step5_v1/device"
+        )
         member.type = member_type
         if member_type == tarfile.SYMTYPE:
             member.linkname = "/etc/passwd"
@@ -838,9 +914,14 @@ def test_frozen_archive_rejects_links_devices_and_traversal(tmp_path: Path, memb
         "https://x/complete": (json.dumps(completion) + "\n").encode(),
         "https://x/archive": archive.read_bytes(),
     }
-    with pytest.raises(ValueError, match="Unsafe archive member|link or special device"):
+    with pytest.raises(
+        ValueError, match="Unsafe archive member|link or special device"
+    ):
         hydrate_frozen_inputs(
-            {"completion_url": "https://x/complete", "archive_url": "https://x/archive"},
+            {
+                "completion_url": "https://x/complete",
+                "archive_url": "https://x/archive",
+            },
             inputs_dir=tmp_path / "inputs",
             temporary_dir=tmp_path / "temporary",
             fetch=_fake_fetch(objects),
