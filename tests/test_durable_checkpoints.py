@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
@@ -245,3 +247,58 @@ def test_undeclared_file_and_tampered_latest_pointer_fail_closed(tmp_path: Path)
     pointer_path.write_text(json.dumps(pointer))
     with pytest.raises(CheckpointIntegrityError, match="pointer is invalid"):
         resolve_latest_checkpoint(root, expected_identity=IDENTITY)
+
+
+def test_concurrent_advances_never_prune_either_current_generation(tmp_path: Path):
+    root = tmp_path / "checkpoints"
+    first = create_checkpoint_generation(
+        root,
+        identity=IDENTITY,
+        generation_id="step-000001",
+        source_dir=_source(tmp_path, b"one"),
+    )
+    advance_latest_checkpoint(
+        root,
+        first.generation_id,
+        identity=IDENTITY,
+        durable_verifier=lambda _generation: True,
+    )
+    contenders = [
+        create_checkpoint_generation(
+            root,
+            identity=IDENTITY,
+            generation_id=f"step-00000{number}",
+            source_dir=_source(tmp_path, str(number).encode()),
+        )
+        for number in (2, 3)
+    ]
+    barrier = threading.Barrier(2)
+
+    def verify(_generation):
+        barrier.wait(timeout=2)
+        return True
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        futures = [
+            executor.submit(
+                advance_latest_checkpoint,
+                root,
+                contender.generation_id,
+                identity=IDENTITY,
+                durable_verifier=verify,
+            )
+            for contender in contenders
+        ]
+        for future in futures:
+            future.result(timeout=5)
+
+    latest = resolve_latest_checkpoint(root, expected_identity=IDENTITY)
+    pointer = json.loads((root / "latest.json").read_text())
+    assert {latest.generation_id, pointer["previous_generation_id"]} == {
+        "step-000002",
+        "step-000003",
+    }
+    assert sorted(path.name for path in (root / "generations").iterdir()) == [
+        "step-000002",
+        "step-000003",
+    ]

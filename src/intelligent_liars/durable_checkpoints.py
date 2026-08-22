@@ -13,6 +13,7 @@ import hashlib
 import json
 import os
 import shutil
+from contextlib import contextmanager
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -246,39 +247,44 @@ def advance_latest_checkpoint(
         raise CheckpointIntegrityError(
             f"Checkpoint durability verification rejected generation {generation_id}"
         )
-    _ensure_verification_marker(root, generation)
 
-    pointer_path = root / "latest.json"
-    previous_pointer = (
-        _validate_latest_pointer(pointer_path, normalized_identity)
-        if pointer_path.exists()
-        else None
-    )
-    previous_generation_id = (
-        str(previous_pointer["generation_id"])
-        if previous_pointer is not None
-        and previous_pointer["generation_id"] != generation_id
-        else (
-            previous_pointer.get("previous_generation_id")
-            if previous_pointer is not None
+    with _exclusive_pointer_lock(root):
+        generation = validate_checkpoint_generation(
+            root / "generations" / generation_id,
+            expected_identity=normalized_identity,
+            expected_generation_id=generation_id,
+        )
+        _ensure_verification_marker(root, generation)
+        pointer_path = root / "latest.json"
+        previous_pointer = (
+            _validate_latest_pointer(pointer_path, normalized_identity)
+            if pointer_path.exists()
             else None
         )
-    )
-    retained = [generation_id]
-    if isinstance(previous_generation_id, str):
-        retained.append(previous_generation_id)
-    pointer: dict[str, Any] = {
-        "format": LATEST_POINTER_FORMAT,
-        "identity": normalized_identity,
-        "generation_id": generation_id,
-        "manifest_sha256": generation.manifest_sha256,
-        "previous_generation_id": previous_generation_id,
-        "retained_generation_ids": retained,
-    }
-    pointer["pointer_sha256"] = _document_sha256(pointer)
-    _write_json_atomic(pointer_path, pointer)
-
-    _prune_verified_generations(root, normalized_identity, retain=set(retained))
+        previous_generation_id = (
+            str(previous_pointer["generation_id"])
+            if previous_pointer is not None
+            and previous_pointer["generation_id"] != generation_id
+            else (
+                previous_pointer.get("previous_generation_id")
+                if previous_pointer is not None
+                else None
+            )
+        )
+        retained = [generation_id]
+        if isinstance(previous_generation_id, str):
+            retained.append(previous_generation_id)
+        pointer: dict[str, Any] = {
+            "format": LATEST_POINTER_FORMAT,
+            "identity": normalized_identity,
+            "generation_id": generation_id,
+            "manifest_sha256": generation.manifest_sha256,
+            "previous_generation_id": previous_generation_id,
+            "retained_generation_ids": retained,
+        }
+        pointer["pointer_sha256"] = _document_sha256(pointer)
+        _write_json_atomic(pointer_path, pointer)
+        _prune_verified_generations(root, normalized_identity, retain=set(retained))
     return generation
 
 
@@ -352,17 +358,11 @@ def _ensure_root_identity(root: Path, identity: dict[str, Any]) -> None:
     if path.exists():
         _validate_root_identity(root, identity)
         return
-    temporary = root / f".identity.json.tmp-{uuid4().hex}"
-    _write_new_file(temporary, document)
-    try:
-        try:
-            os.link(temporary, path)
-        except FileExistsError:
-            _validate_root_identity(root, identity)
-        else:
-            _fsync_directory(root)
-    finally:
-        temporary.unlink(missing_ok=True)
+    _install_immutable_document(
+        path,
+        document,
+        validate_existing=lambda _path: _validate_root_identity(root, identity),
+    )
 
 
 def _ensure_verification_marker(
@@ -379,19 +379,21 @@ def _ensure_verification_marker(
     }
     document["verification_sha256"] = _document_sha256(document)
     if path.exists():
-        _validate_verification_marker(path, generation.identity)
+        existing = _validate_verification_marker(path, generation.identity)
+        if existing.get("manifest_sha256") != generation.manifest_sha256:
+            raise CheckpointIntegrityError(
+                f"Checkpoint verification manifest mismatch: {path}"
+            )
         return
-    temporary = verified_dir / f".{path.name}.tmp-{uuid4().hex}"
-    _write_new_file(temporary, document)
-    try:
-        try:
-            os.link(temporary, path)
-        except FileExistsError:
-            _validate_verification_marker(path, generation.identity)
-        else:
-            _fsync_directory(verified_dir)
-    finally:
-        temporary.unlink(missing_ok=True)
+
+    def validate_existing(existing_path: Path) -> None:
+        existing = _validate_verification_marker(existing_path, generation.identity)
+        if existing.get("manifest_sha256") != generation.manifest_sha256:
+            raise CheckpointIntegrityError(
+                f"Checkpoint verification manifest mismatch: {existing_path}"
+            )
+
+    _install_immutable_document(path, document, validate_existing=validate_existing)
 
 
 def _validate_verification_marker(
@@ -587,9 +589,42 @@ def _write_json_atomic(path: Path, document: Mapping[str, Any]) -> None:
         temporary.unlink(missing_ok=True)
 
 
+def _install_immutable_document(
+    path: Path,
+    document: Mapping[str, Any],
+    *,
+    validate_existing: Callable[[Path], None],
+) -> None:
+    temporary = path.parent / f".{path.name}.tmp-{uuid4().hex}"
+    _write_new_file(temporary, document)
+    try:
+        try:
+            os.link(temporary, path)
+        except FileExistsError:
+            validate_existing(path)
+        else:
+            _fsync_directory(path.parent)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
 def _fsync_directory(path: Path) -> None:
     descriptor = os.open(path, os.O_RDONLY)
     try:
         os.fsync(descriptor)
     finally:
+        os.close(descriptor)
+
+
+@contextmanager
+def _exclusive_pointer_lock(root: Path):
+    import fcntl
+
+    lock_path = root / ".latest.lock"
+    descriptor = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o644)
+    try:
+        fcntl.flock(descriptor, fcntl.LOCK_EX)
+        yield
+    finally:
+        fcntl.flock(descriptor, fcntl.LOCK_UN)
         os.close(descriptor)
