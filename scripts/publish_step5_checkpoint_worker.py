@@ -52,11 +52,18 @@ def _wait(path: Path, deadline: float, poll_seconds: float) -> None:
 
 
 def _wait_for_ack_or_secret(
-    ack_path: Path, secret_path: Path, deadline: float, poll_seconds: float
+    ack_path: Path,
+    secret_path: Path,
+    deadline: float,
+    poll_seconds: float,
+    *,
+    rejected_ack_bytes: bytes | None = None,
 ) -> str:
     while True:
         if ack_path.is_file():
-            return "ack"
+            observed = ack_path.read_bytes()
+            if rejected_ack_bytes is None or observed != rejected_ack_bytes:
+                return "ack"
         if secret_path.is_file():
             return "secret"
         if time.monotonic() >= deadline:
@@ -165,9 +172,14 @@ def main() -> int:
     ack_path = root / "acks" / f"{generation_id}.json"
     uploaded_path = root / "uploaded" / f"{generation_id}.json"
     secret_path = root / "secrets" / f"{generation_id}.json"
+    rejected_ack_bytes: bytes | None = None
     while True:
         if _wait_for_ack_or_secret(
-            ack_path, secret_path, deadline, args.poll_seconds
+            ack_path,
+            secret_path,
+            deadline,
+            args.poll_seconds,
+            rejected_ack_bytes=rejected_ack_bytes,
         ) == "secret":
             _upload(archive, secret_path)
             _atomic_json(
@@ -179,8 +191,9 @@ def main() -> int:
                 },
             )
             _wait(ack_path, deadline, args.poll_seconds)
-        ack = json.loads(ack_path.read_text())
+        ack_bytes = ack_path.read_bytes()
         try:
+            ack = json.loads(ack_bytes)
             verify_controller_ack(
                 ack,
                 request=request,
@@ -188,9 +201,9 @@ def main() -> int:
                 max_ack_age=timedelta(hours=1),
             )
         except (BridgeContractError, json.JSONDecodeError):
-            # Invalid acknowledgements never advance latest. Removing them lets the
-            # trusted controller replace them; absent a controller, timeout is closed.
-            ack_path.unlink(missing_ok=True)
+            # Do not unlink: the controller may have atomically replaced the path
+            # after this read. Wait until the bytes change or a PUT URL appears.
+            rejected_ack_bytes = ack_bytes
             continue
         break
     archive.unlink(missing_ok=True)
