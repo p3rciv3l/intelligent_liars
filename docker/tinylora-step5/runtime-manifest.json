@@ -1,0 +1,78 @@
+{
+  "schema_version": 1,
+  "runtime_id": "tinylora-step5-cu121-torch251-fa283post1-r2",
+  "intended_workload": "bounded Step 5 TinyLoRA candidate screening only",
+  "large_run_enabled": false,
+  "platform": {
+    "architecture": "linux/amd64",
+    "python_major_minor": "3.11",
+    "cuda": "12.1",
+    "minimum_compute_capability": [8, 0],
+    "minimum_gpu_memory_gib": 23.0
+  },
+  "base_image": {
+    "repository": "pytorch/pytorch",
+    "tag": "2.5.1-cuda12.1-cudnn9-devel",
+    "digest": "sha256:e8e63dd7baca894ba11fe1ba48a52a550793c8974f89b533d697784dd20a4dc0",
+    "reference": "pytorch/pytorch:2.5.1-cuda12.1-cudnn9-devel@sha256:e8e63dd7baca894ba11fe1ba48a52a550793c8974f89b533d697784dd20a4dc0"
+  },
+  "python_packages": {
+    "accelerate": "1.10.1",
+    "datasets": "4.0.0",
+    "einops": "0.8.1",
+    "hf-transfer": "0.1.9",
+    "huggingface-hub": "1.5.0",
+    "liger-kernel": "0.8.2",
+    "numpy": "1.26.4",
+    "pillow": "11.3.0",
+    "pyyaml": "6.0.2",
+    "qwen-vl-utils": "0.0.14",
+    "safetensors": "0.8.0",
+    "torch": "2.5.1+cu121",
+    "transformers": "5.15.1",
+    "flash-attn": "2.8.3.post1"
+  },
+  "flash_attention_wheel": {
+    "filename": "flash_attn-2.8.3.post1+cu12torch2.5cxx11abiFALSE-cp311-cp311-linux_x86_64.whl",
+    "url": "https://github.com/Dao-AILab/flash-attention/releases/download/v2.8.3.post1/flash_attn-2.8.3.post1%2Bcu12torch2.5cxx11abiFALSE-cp311-cp311-linux_x86_64.whl",
+    "sha256": "1c455db7a1e5d58e9d43370ecfc75a3a2eb1e37ec12353db66d12c23dbbc3ac6",
+    "python": "cp311",
+    "cuda_family": "cu12",
+    "torch_family": "torch2.5",
+    "cxx11_abi": false
+  },
+  "build_inputs": {
+    "requirements.in": "16267348e83261387536b70fd605bb5ff10b0244e101bf957297618eb61f8ec2",
+    "requirements.lock": "4a63c7c9e53e32f88aabf08c189ffff1be49c216ecd9db2b1fc122ae35c7422f"
+  },
+  "image_artifacts": {
+    "flash_attention_license": "/opt/tinylora/third_party/flash-attention-LICENSE",
+    "python_license_inventory": "/opt/tinylora/sbom/python-package-licenses.json",
+    "python_spdx_sbom": "/opt/tinylora/sbom/python-packages.spdx.json"
+  },
+  "third_party_notices": {
+    "flash_attention": {
+      "license": "BSD-3-Clause",
+      "source": "https://github.com/Dao-AILab/flash-attention/blob/v2.8.3.post1/LICENSE",
+      "path": "/opt/tinylora/third_party/flash-attention-LICENSE",
+      "sha256": "8c9ccb96c065e706135b6cbad279b721da6156e51f3a5f27c6b3329af9416d73"
+    }
+  },
+  "cache_policy": {
+    "root": "/workspace/cache",
+    "minimum_free_gib": 80.0,
+    "model_cache": "/workspace/cache/huggingface/hub",
+    "torch_cache": "/workspace/cache/torch",
+    "require_writable": true,
+    "embed_model_weights_in_image": false,
+    "model_revision_must_be_pinned_by_run": true
+  },
+  "required_runtime_checks": [
+    "nvidia_driver_accepts_cuda_12_1",
+    "gpu_compute_capability",
+    "gpu_memory",
+    "bf16_cuda_matmul",
+    "flash_attention_2_cuda_kernel",
+    "cache_writable_and_free_space"
+  ]
+}

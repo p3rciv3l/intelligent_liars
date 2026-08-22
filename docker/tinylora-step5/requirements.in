@@ -1,0 +1,16 @@
+# Versions observed in, or deliberately aligned with, the qualified RTX 3090
+# stack. Torch comes from the digest-pinned base image and is omitted from the
+# generated install lock while still constraining dependency resolution.
+torch==2.5.1
+accelerate==1.10.1
+datasets==4.0.0
+einops==0.8.1
+hf-transfer==0.1.9
+huggingface-hub==1.5.0
+liger-kernel==0.8.2
+numpy==1.26.4
+pillow==11.3.0
+pyyaml==6.0.2
+qwen-vl-utils==0.0.14
+safetensors==0.8.0
+transformers==5.15.1
