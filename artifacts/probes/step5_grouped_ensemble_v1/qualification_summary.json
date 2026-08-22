@@ -1,0 +1,22 @@
+{
+  "fit_receipt_sha256": "ab119fa5927cbe76149d621e97ca30463767fbbefff4b91e481aa70f178d6d9e",
+  "format": "intelligent_liars_step5_grouped_probe_qualification_summary_v1",
+  "qualification_receipt_sha256": "1575fd3332442e6c8bdad34aaafc63c1767179249a3ccf0b9931f9c20e67a39a",
+  "selected": {
+    "fold_macro_task_roc_auc": [
+      0.6952438354492188,
+      0.8814582824707031,
+      0.8456573486328125
+    ],
+    "layer": 21,
+    "mean_macro_task_roc_auc": 0.8074531555175781,
+    "token_pooling": "mean_answer_tokens_per_example"
+  },
+  "status": "qualified",
+  "validation": {
+    "format": "intelligent_liars_step5_probe_qualification_validation_v1",
+    "issues": [],
+    "qualification_receipt_sha256": "1575fd3332442e6c8bdad34aaafc63c1767179249a3ccf0b9931f9c20e67a39a",
+    "valid": true
+  }
+}

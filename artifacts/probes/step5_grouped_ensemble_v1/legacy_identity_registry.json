@@ -1,0 +1,42 @@
+{
+  "format": "intelligent_liars_legacy_probe_identity_registry_v1",
+  "inventory": {
+    "example_count": 76044,
+    "example_group_count": 71694,
+    "source_group_ids": [
+      "claims__definitional_gemini_600_full",
+      "claims__evidential_gemini_600_full",
+      "claims__fictional_gemini_600_full",
+      "claims__logical_gemini_600_full",
+      "ethics__commonsense",
+      "geometry_of_truth__best",
+      "geometry_of_truth__mixed",
+      "internal_state__animals",
+      "internal_state__cities",
+      "internal_state__companies",
+      "internal_state__elements",
+      "internal_state__facts",
+      "internal_state__inventions",
+      "repe_honesty__IF_dishonest",
+      "roleplaying__plain",
+      "sandbagging_v2__wmdp_mmlu",
+      "sycophancy__mmlu_stem_same_conf_all"
+    ],
+    "template_group_count": 66794,
+    "unique_example_count": 76044
+  },
+  "policy": {
+    "crossfit_split_unit": "source_group_id",
+    "example_group_derivation": "normalized task plus upstream example_source_index",
+    "identity_derivation_uses_labels": false,
+    "outer_split_unit": "source_group_id",
+    "source_group_derivation": "normalized upstream task identifier",
+    "template_group_derivation": "explicit pair_index, then nested source_index, then example_source_index"
+  },
+  "receipt_sha256": "fc6c637e48330e4a249aed43814cf6da2ecf227fed2c67b6c4703f6d13acb963",
+  "receipts": {
+    "example_group_ids_sha256": "160bac499f6db813bbca6b449f415e6a6bbe2078e82aaa13ad0b42f1eb31c5c4",
+    "example_ids_sha256": "f0a6b69704b1a84accf67c6f0bf9fbe5b7d72fa1724c510cee21487a8c6fa8c1",
+    "template_group_ids_sha256": "fbb06dccd20e580ca89eaa6724edaa331262373976e7c5d9401d3d93b7d2d87b"
+  }
+}

@@ -1,0 +1,174 @@
+{
+  "calibration": {
+    "rows": [
+      {
+        "fold_macro_task_roc_auc": [
+          0.7004241943359375,
+          0.7974205017089844,
+          0.7177530924479166
+        ],
+        "layer": 15,
+        "mean_macro_task_roc_auc": 0.7385325961642795,
+        "token_pooling": "mean_answer_tokens_per_example"
+      },
+      {
+        "fold_macro_task_roc_auc": [
+          0.6876029968261719,
+          0.8613395690917969,
+          0.8134969075520834
+        ],
+        "layer": 18,
+        "mean_macro_task_roc_auc": 0.7874798244900174,
+        "token_pooling": "mean_answer_tokens_per_example"
+      },
+      {
+        "fold_macro_task_roc_auc": [
+          0.6952438354492188,
+          0.8814582824707031,
+          0.8456573486328125
+        ],
+        "layer": 21,
+        "mean_macro_task_roc_auc": 0.8074531555175781,
+        "token_pooling": "mean_answer_tokens_per_example"
+      },
+      {
+        "fold_macro_task_roc_auc": [
+          0.697113037109375,
+          0.8194389343261719,
+          0.7912089029947916
+        ],
+        "layer": 24,
+        "mean_macro_task_roc_auc": 0.7692536248101128,
+        "token_pooling": "mean_answer_tokens_per_example"
+      },
+      {
+        "fold_macro_task_roc_auc": [
+          0.6940650939941406,
+          0.7569465637207031,
+          0.7356923421223959
+        ],
+        "layer": 27,
+        "mean_macro_task_roc_auc": 0.7289013332790799,
+        "token_pooling": "mean_answer_tokens_per_example"
+      }
+    ],
+    "scope": "outer_regularizer_sources_only",
+    "selected": {
+      "fold_macro_task_roc_auc": [
+        0.6952438354492188,
+        0.8814582824707031,
+        0.8456573486328125
+      ],
+      "layer": 21,
+      "mean_macro_task_roc_auc": 0.8074531555175781,
+      "token_pooling": "mean_answer_tokens_per_example"
+    }
+  },
+  "config_sha256": "7c648584659cfff6c137bd88aa701bbe3a4a0213734349a10d8f4f73c0afca68",
+  "evaluator_crossfit": [
+    {
+      "balanced_accuracy": 0.966796875,
+      "heldout_source_group_id": "claims__evidential_gemini_600_full",
+      "probe_id": "legacy-grouped-evaluator-00",
+      "roc_auc": 0.996856689453125
+    },
+    {
+      "balanced_accuracy": 0.728515625,
+      "heldout_source_group_id": "geometry_of_truth__best",
+      "probe_id": "legacy-grouped-evaluator-01",
+      "roc_auc": 1.0
+    },
+    {
+      "balanced_accuracy": 0.890625,
+      "heldout_source_group_id": "internal_state__facts",
+      "probe_id": "legacy-grouped-evaluator-02",
+      "roc_auc": 0.9885711669921875
+    },
+    {
+      "balanced_accuracy": 0.6334292241306372,
+      "heldout_source_group_id": "roleplaying__plain",
+      "probe_id": "legacy-grouped-evaluator-03",
+      "roc_auc": 0.6626618157204501
+    },
+    {
+      "balanced_accuracy": 0.8726027397260274,
+      "heldout_source_group_id": "sandbagging_v2__wmdp_mmlu",
+      "probe_id": "legacy-grouped-evaluator-04",
+      "roc_auc": 0.9775840597758405
+    },
+    {
+      "balanced_accuracy": 0.76171875,
+      "heldout_source_group_id": "sycophancy__mmlu_stem_same_conf_all",
+      "probe_id": "legacy-grouped-evaluator-05",
+      "roc_auc": 0.861907958984375
+    }
+  ],
+  "format": "intelligent_liars_step5_grouped_probe_fit_report_v1",
+  "provenance": {
+    "hidden_dim": 4096,
+    "pooled_cache_dvc_identity": {
+      "content_md5": "142c2db5e6ae124476540c02fd2f60bc",
+      "pointer_path": "artifacts/probe_features/no_insider_dense_15_27_pooled.h5.dvc",
+      "pointer_sha256": "c3f76d9330f506c0faf42e61d19d3125c211de52d6d22f00d4b1e8f4b7231a88",
+      "size_bytes": 11186928745
+    },
+    "pooled_cache_format": "qwen_answer_token_pooled_features_v1",
+    "pooled_cache_path": "artifacts/probe_features/no_insider_dense_15_27_pooled.h5",
+    "pooled_cache_size_bytes": 11186928745,
+    "pooling": "mean_answer_tokens_per_example",
+    "raw_activation_cache_dvc_identity": {
+      "content_md5": "b6e82b698513d2372949f2752e17005a",
+      "pointer_path": "artifacts/activations/activation_all_text_20260624/extracted_feats_all_text_qwen3-vl-8b-thinking.h5.dvc",
+      "pointer_sha256": "039515ca3daf0a12e1df62332a69425b2e52bccfd06f684b3cccd3d8b5f9358e",
+      "size_bytes": 62394047728
+    },
+    "raw_activation_cache_path": "artifacts/activations/activation_all_text_20260624/extracted_feats_all_text_qwen3-vl-8b-thinking.h5",
+    "raw_activation_cache_size_bytes": 62394047728,
+    "selected_layers": [
+      15,
+      16,
+      17,
+      18,
+      19,
+      20,
+      21,
+      22,
+      23,
+      24,
+      25,
+      26,
+      27
+    ]
+  },
+  "receipt_sha256": "ab119fa5927cbe76149d621e97ca30463767fbbefff4b91e481aa70f178d6d9e",
+  "split": {
+    "evaluator_sample_examples": 2505,
+    "evaluator_source_group_ids": [
+      "claims__evidential_gemini_600_full",
+      "geometry_of_truth__best",
+      "internal_state__facts",
+      "roleplaying__plain",
+      "sandbagging_v2__wmdp_mmlu",
+      "sycophancy__mmlu_stem_same_conf_all"
+    ],
+    "regularizer_sample_examples": 5632,
+    "regularizer_source_group_ids": [
+      "claims__definitional_gemini_600_full",
+      "claims__fictional_gemini_600_full",
+      "claims__logical_gemini_600_full",
+      "ethics__commonsense",
+      "geometry_of_truth__mixed",
+      "internal_state__animals",
+      "internal_state__cities",
+      "internal_state__companies",
+      "internal_state__elements",
+      "internal_state__inventions",
+      "repe_honesty__IF_dishonest"
+    ]
+  },
+  "status": "fit_complete_qualification_pending",
+  "step5_plan": {
+    "path": "corpora/tinylora_deception_action_v1/step5_v1/manifest.json",
+    "sha256": "5282aaf0696098970de476e6812534e4c75c2434d7ec369495f5a311d6c09f99"
+  }
+}
