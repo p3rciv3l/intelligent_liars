@@ -10,25 +10,29 @@ generate new model outputs, rent a GPU, or tune against Step 5 behavior rows.
 The identity derivation uses only upstream metadata, never labels or activation
 values:
 
-- **source group:** normalized upstream task ID;
-- **example group:** task ID plus upstream `example_source_index`, keeping paired
-  honest/deceptive outputs together;
+- **source group:** normalized upstream dataset path, so task aliases cannot hide
+  reuse of the same CSV or rollout source;
+- **example group:** source group plus explicit `{csv,row}`, upstream pair ID,
+  nested source index, or `example_source_index`, keeping paired outputs together;
 - **template group:** explicit `pair_index` when present, then a nested upstream
   `source_index`, then `example_source_index`.
 
-The frozen config assigns six complete source groups to the evaluator side and
-the remaining eleven to the regularizer side. Therefore no source group or
-example used by the regularizer probe is used to fit an evaluator probe.
+The frozen config assigns seven complete task views to the evaluator side and
+the remaining ten to the regularizer side. The compiler then resolves their
+actual upstream identities and fails if source, example, or template groups
+overlap. This caught and removed a real aliasing problem: `geometry_of_truth`
+`best` and `mixed` reuse the same upstream CSV rows, so both now remain on the
+evaluator side.
 
 Layer calibration is confined to the regularizer side. Five decoder layers
 (15, 18, 21, 24, and 27) are compared using three source-grouped folds and a
-task-balanced cap of 256 examples per class per task. Token pooling has one
-available legacy candidate, `mean_answer_tokens_per_example`; the code fails if
-the cache does not exactly match that frozen candidate.
+task-balanced cap of 256 examples per class per task. Both
+`mean_answer_tokens_per_example` and `last_answer_token_per_example` are tested;
+the latter is read directly from the legacy token-level cache boundaries.
 
 After calibration, one regularizer probe is fit on the regularizer sources. The
-evaluator side is fit as six leave-one-source-out probes. Each evaluator probe's
-reported metric comes only from its held-out source. The qualification compiler
+evaluator side is fit as five source-grouped cross-fit probes. Each evaluator
+probe's reported metric comes only from its held-out source groups. The qualification compiler
 then checks ensemble separation, layer/pooling/sign agreement, artifact hashes,
 direction uniqueness, sign-flip controls, orthogonal controls, and complete
 receipts.
@@ -39,35 +43,39 @@ Changing that plan makes the fitter fail before it reads feature tensors.
 
 ## Actual result
 
-The real run selected decoder layer 21:
+The real run selected decoder layer 21 with last-answer-token pooling:
 
-| Layer | Regularizer-only grouped macro task ROC AUC |
-|---:|---:|
-| 15 | 0.7385 |
-| 18 | 0.7875 |
-| 21 | **0.8075** |
-| 24 | 0.7693 |
-| 27 | 0.7289 |
-
-The six source-held-out evaluator results were:
-
-| Held-out source | Balanced accuracy | ROC AUC |
+| Pooling | Layer | Regularizer-only grouped macro task ROC AUC |
 |---|---:|---:|
-| claims evidential | 0.9668 | 0.9969 |
-| geometry of truth | 0.7285 | 1.0000 |
-| internal-state facts | 0.8906 | 0.9886 |
-| roleplaying | 0.6334 | 0.6627 |
-| sandbagging | 0.8726 | 0.9776 |
-| sycophancy | 0.7617 | 0.8619 |
+| mean | 15 | 0.7253 |
+| mean | 18 | 0.8011 |
+| mean | 21 | 0.8290 |
+| mean | 24 | 0.7896 |
+| mean | 27 | 0.7743 |
+| last | 15 | 0.7641 |
+| last | 18 | 0.8087 |
+| last | 21 | **0.8291** |
+| last | 24 | 0.8188 |
+| last | 27 | 0.8145 |
 
-The weaker roleplaying transfer is retained rather than hidden; the ensemble is
+The five source-group-held-out evaluator results were:
+
+| Cross-fit fold | Balanced accuracy | ROC AUC |
+|---|---:|---:|
+| 0 | 0.9292 | 0.9593 |
+| 1 | 0.9196 | 0.9713 |
+| 2 | 0.8688 | 0.9495 |
+| 3 | 0.8724 | 0.9569 |
+| 4 | 0.5512 | 0.5826 |
+
+The weak fifth-fold transfer is retained rather than hidden; the ensemble is
 a diagnostic, not proof that the behavior intervention works. Step 5 still
 requires held-out behavioral, preservation, safety, and multimodal gates.
 
 The fitted report receipt is
-`ab119fa5927cbe76149d621e97ca30463767fbbefff4b91e481aa70f178d6d9e`.
+`d1c08b35e551dc817a7e239122ae1499061a6c978b4fa2bd7961717bb633bc3b`.
 The final qualification receipt is
-`1575fd3332442e6c8bdad34aaafc63c1767179249a3ccf0b9931f9c20e67a39a`.
+`b7cf4245ec24145e6dbed7b3239a74a1791d3cb3b05eac04e852c744df36c505`.
 Independent revalidation returned `valid: true` with zero issues.
 
 ## Reproduce or verify

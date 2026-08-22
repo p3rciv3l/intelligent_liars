@@ -3,22 +3,27 @@
   "step5_plan_manifest_sha256": "5282aaf0696098970de476e6812534e4c75c2434d7ec369495f5a311d6c09f99",
   "calibration": {
     "candidate_layers": [15, 18, 21, 24, 27],
-    "candidate_token_pooling": ["mean_answer_tokens_per_example"],
+    "candidate_token_pooling": [
+      "mean_answer_tokens_per_example",
+      "last_answer_token_per_example"
+    ],
     "cross_validation_folds": 3,
     "general_task_class_cap": 256,
     "regularization_c": 0.03,
     "random_seed": 260822
   },
-  "evaluator_source_group_ids": [
+  "evaluator_crossfit_folds": 5,
+  "evaluator_task_ids": [
     "claims__evidential_gemini_600_full",
     "geometry_of_truth__best",
+    "geometry_of_truth__mixed",
     "internal_state__facts",
     "roleplaying__plain",
     "sandbagging_v2__wmdp_mmlu",
     "sycophancy__mmlu_stem_same_conf_all"
   ],
   "qualification": {
-    "direction_sign_convention": "sklearn_logistic_positive_points_honest_to_deceptive",
+    "direction_sign_convention": "sklearn_logistic_coef_positive_points_honest_to_deceptive",
     "orthogonal_controls_per_probe": 1
   }
 }

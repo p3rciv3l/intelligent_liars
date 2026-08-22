@@ -3,109 +3,198 @@
     "rows": [
       {
         "fold_macro_task_roc_auc": [
-          0.7004241943359375,
-          0.7974205017089844,
-          0.7177530924479166
+          0.7302284240722656,
+          0.793609619140625,
+          0.652130126953125
         ],
         "layer": 15,
-        "mean_macro_task_roc_auc": 0.7385325961642795,
+        "mean_macro_task_roc_auc": 0.7253227233886719,
         "token_pooling": "mean_answer_tokens_per_example"
       },
       {
         "fold_macro_task_roc_auc": [
-          0.6876029968261719,
-          0.8613395690917969,
-          0.8134969075520834
+          0.7085952758789062,
+          0.9221598307291666,
+          0.7724660237630209
         ],
         "layer": 18,
-        "mean_macro_task_roc_auc": 0.7874798244900174,
+        "mean_macro_task_roc_auc": 0.8010737101236979,
         "token_pooling": "mean_answer_tokens_per_example"
       },
       {
         "fold_macro_task_roc_auc": [
-          0.6952438354492188,
-          0.8814582824707031,
-          0.8456573486328125
+          0.7148284912109375,
+          0.9269002278645834,
+          0.8451436360677084
         ],
         "layer": 21,
-        "mean_macro_task_roc_auc": 0.8074531555175781,
+        "mean_macro_task_roc_auc": 0.8289574517144098,
         "token_pooling": "mean_answer_tokens_per_example"
       },
       {
         "fold_macro_task_roc_auc": [
-          0.697113037109375,
-          0.8194389343261719,
-          0.7912089029947916
+          0.6910209655761719,
+          0.9037322998046875,
+          0.7741292317708334
         ],
         "layer": 24,
-        "mean_macro_task_roc_auc": 0.7692536248101128,
+        "mean_macro_task_roc_auc": 0.7896274990505643,
         "token_pooling": "mean_answer_tokens_per_example"
       },
       {
         "fold_macro_task_roc_auc": [
-          0.6940650939941406,
-          0.7569465637207031,
-          0.7356923421223959
+          0.6839523315429688,
+          0.8555552164713541,
+          0.7834523518880209
         ],
         "layer": 27,
-        "mean_macro_task_roc_auc": 0.7289013332790799,
+        "mean_macro_task_roc_auc": 0.7743199666341146,
         "token_pooling": "mean_answer_tokens_per_example"
+      },
+      {
+        "fold_macro_task_roc_auc": [
+          0.7256584167480469,
+          0.8880869547526041,
+          0.678558349609375
+        ],
+        "layer": 15,
+        "mean_macro_task_roc_auc": 0.7641012403700086,
+        "token_pooling": "last_answer_token_per_example"
+      },
+      {
+        "fold_macro_task_roc_auc": [
+          0.7348861694335938,
+          0.9271647135416666,
+          0.7640838623046875
+        ],
+        "layer": 18,
+        "mean_macro_task_roc_auc": 0.8087115817599826,
+        "token_pooling": "last_answer_token_per_example"
+      },
+      {
+        "fold_macro_task_roc_auc": [
+          0.7257232666015625,
+          0.9575398763020834,
+          0.8040822347005209
+        ],
+        "layer": 21,
+        "mean_macro_task_roc_auc": 0.8291151258680557,
+        "token_pooling": "last_answer_token_per_example"
+      },
+      {
+        "fold_macro_task_roc_auc": [
+          0.7227630615234375,
+          0.9608052571614584,
+          0.7728169759114584
+        ],
+        "layer": 24,
+        "mean_macro_task_roc_auc": 0.8187950981987848,
+        "token_pooling": "last_answer_token_per_example"
+      },
+      {
+        "fold_macro_task_roc_auc": [
+          0.705657958984375,
+          0.9531199137369791,
+          0.784820556640625
+        ],
+        "layer": 27,
+        "mean_macro_task_roc_auc": 0.8145328097873263,
+        "token_pooling": "last_answer_token_per_example"
       }
     ],
     "scope": "outer_regularizer_sources_only",
     "selected": {
       "fold_macro_task_roc_auc": [
-        0.6952438354492188,
-        0.8814582824707031,
-        0.8456573486328125
+        0.7257232666015625,
+        0.9575398763020834,
+        0.8040822347005209
       ],
       "layer": 21,
-      "mean_macro_task_roc_auc": 0.8074531555175781,
-      "token_pooling": "mean_answer_tokens_per_example"
+      "mean_macro_task_roc_auc": 0.8291151258680557,
+      "token_pooling": "last_answer_token_per_example"
     }
   },
-  "config_sha256": "7c648584659cfff6c137bd88aa701bbe3a4a0213734349a10d8f4f73c0afca68",
+  "config_sha256": "a7bd5a7359623966a126bb3518f15717db0219806c61ea1d7b9782a544fad17a",
   "evaluator_crossfit": [
     {
-      "balanced_accuracy": 0.966796875,
-      "heldout_source_group_id": "claims__evidential_gemini_600_full",
+      "balanced_accuracy": 0.9292382887583064,
+      "heldout_source_group_ids": [
+        "legacy/source/geometry_of_truth-cities.csv",
+        "legacy/source/geometry_of_truth-cities_cities_disj.csv",
+        "legacy/source/geometry_of_truth-common_claim_true_false.csv",
+        "legacy/source/sycophancy-qwen3-vl-8b-thinking-same_conf_paired_mmlu_sycophancy_anatomy.json",
+        "legacy/source/sycophancy-qwen3-vl-8b-thinking-same_conf_paired_mmlu_sycophancy_college_mathematics.json",
+        "legacy/source/sycophancy-qwen3-vl-8b-thinking-same_conf_paired_mmlu_sycophancy_college_physics.json",
+        "legacy/source/sycophancy-qwen3-vl-8b-thinking-same_conf_paired_mmlu_sycophancy_high_school_mathematics.json",
+        "legacy/source/sycophancy-qwen3-vl-8b-thinking-same_conf_paired_mmlu_sycophancy_virology.json"
+      ],
       "probe_id": "legacy-grouped-evaluator-00",
-      "roc_auc": 0.996856689453125
+      "roc_auc": 0.9592509198747873
     },
     {
-      "balanced_accuracy": 0.728515625,
-      "heldout_source_group_id": "geometry_of_truth__best",
+      "balanced_accuracy": 0.919636908727515,
+      "heldout_source_group_ids": [
+        "legacy/source/geometry_of_truth-larger_than.csv",
+        "legacy/source/sycophancy-qwen3-vl-8b-thinking-same_conf_paired_mmlu_sycophancy_clinical_knowledge.json",
+        "legacy/source/sycophancy-qwen3-vl-8b-thinking-same_conf_paired_mmlu_sycophancy_computer_security.json",
+        "legacy/source/sycophancy-qwen3-vl-8b-thinking-same_conf_paired_mmlu_sycophancy_conceptual_physics.json",
+        "legacy/source/sycophancy-qwen3-vl-8b-thinking-same_conf_paired_mmlu_sycophancy_electrical_engineering.json",
+        "legacy/source/sycophancy-qwen3-vl-8b-thinking-same_conf_paired_mmlu_sycophancy_high_school_biology.json",
+        "legacy/source/sycophancy-qwen3-vl-8b-thinking-same_conf_paired_mmlu_sycophancy_machine_learning.json",
+        "legacy/source/sycophancy-qwen3-vl-8b-thinking-same_conf_paired_mmlu_sycophancy_medical_genetics.json"
+      ],
       "probe_id": "legacy-grouped-evaluator-01",
-      "roc_auc": 1.0
+      "roc_auc": 0.9713107928047968
     },
     {
-      "balanced_accuracy": 0.890625,
-      "heldout_source_group_id": "internal_state__facts",
+      "balanced_accuracy": 0.868804996121854,
+      "heldout_source_group_ids": [
+        "legacy/source/claims-claims__evidential_gemini_600_full.csv",
+        "legacy/source/rollouts-sandbagging_v2__wmdp_mmlu__qwen3-vl-8b-thinking.json",
+        "legacy/source/sycophancy-qwen3-vl-8b-thinking-same_conf_paired_mmlu_sycophancy_astronomy.json",
+        "legacy/source/sycophancy-qwen3-vl-8b-thinking-same_conf_paired_mmlu_sycophancy_college_medicine.json",
+        "legacy/source/sycophancy-qwen3-vl-8b-thinking-same_conf_paired_mmlu_sycophancy_econometrics.json",
+        "legacy/source/sycophancy-qwen3-vl-8b-thinking-same_conf_paired_mmlu_sycophancy_elementary_mathematics.json",
+        "legacy/source/sycophancy-qwen3-vl-8b-thinking-same_conf_paired_mmlu_sycophancy_high_school_physics.json",
+        "legacy/source/sycophancy-qwen3-vl-8b-thinking-same_conf_paired_mmlu_sycophancy_high_school_statistics.json"
+      ],
       "probe_id": "legacy-grouped-evaluator-02",
-      "roc_auc": 0.9885711669921875
+      "roc_auc": 0.9495038647730616
     },
     {
-      "balanced_accuracy": 0.6334292241306372,
-      "heldout_source_group_id": "roleplaying__plain",
+      "balanced_accuracy": 0.8724459579508439,
+      "heldout_source_group_ids": [
+        "legacy/source/geometry_of_truth-counterfact_true_false.csv",
+        "legacy/source/geometry_of_truth-neg_cities.csv",
+        "legacy/source/geometry_of_truth-smaller_than.csv",
+        "legacy/source/internal_state-facts_true_false.csv",
+        "legacy/source/sycophancy-qwen3-vl-8b-thinking-same_conf_paired_mmlu_sycophancy_abstract_algebra.json",
+        "legacy/source/sycophancy-qwen3-vl-8b-thinking-same_conf_paired_mmlu_sycophancy_college_biology.json",
+        "legacy/source/sycophancy-qwen3-vl-8b-thinking-same_conf_paired_mmlu_sycophancy_college_computer_science.json",
+        "legacy/source/sycophancy-qwen3-vl-8b-thinking-same_conf_paired_mmlu_sycophancy_formal_logic.json"
+      ],
       "probe_id": "legacy-grouped-evaluator-03",
-      "roc_auc": 0.6626618157204501
+      "roc_auc": 0.9569144210838021
     },
     {
-      "balanced_accuracy": 0.8726027397260274,
-      "heldout_source_group_id": "sandbagging_v2__wmdp_mmlu",
+      "balanced_accuracy": 0.5511808118081181,
+      "heldout_source_group_ids": [
+        "legacy/source/geometry_of_truth-cities_cities_conj.csv",
+        "legacy/source/geometry_of_truth-companies_true_false.csv",
+        "legacy/source/geometry_of_truth-neg_sp_en_trans.csv",
+        "legacy/source/rollouts-roleplaying__plain__qwen3-vl-8b-thinking.json",
+        "legacy/source/sycophancy-qwen3-vl-8b-thinking-same_conf_paired_mmlu_sycophancy_college_chemistry.json",
+        "legacy/source/sycophancy-qwen3-vl-8b-thinking-same_conf_paired_mmlu_sycophancy_high_school_chemistry.json",
+        "legacy/source/sycophancy-qwen3-vl-8b-thinking-same_conf_paired_mmlu_sycophancy_high_school_computer_science.json"
+      ],
       "probe_id": "legacy-grouped-evaluator-04",
-      "roc_auc": 0.9775840597758405
-    },
-    {
-      "balanced_accuracy": 0.76171875,
-      "heldout_source_group_id": "sycophancy__mmlu_stem_same_conf_all",
-      "probe_id": "legacy-grouped-evaluator-05",
-      "roc_auc": 0.861907958984375
+      "roc_auc": 0.5825830258302583
     }
   ],
   "format": "intelligent_liars_step5_grouped_probe_fit_report_v1",
   "provenance": {
     "hidden_dim": 4096,
+    "label_convention": "HONEST=0, DECEPTIVE=1",
     "pooled_cache_dvc_identity": {
       "content_md5": "142c2db5e6ae124476540c02fd2f60bc",
       "pointer_path": "artifacts/probe_features/no_insider_dense_15_27_pooled.h5.dvc",
@@ -140,30 +229,63 @@
       27
     ]
   },
-  "receipt_sha256": "ab119fa5927cbe76149d621e97ca30463767fbbefff4b91e481aa70f178d6d9e",
+  "receipt_sha256": "d1c08b35e551dc817a7e239122ae1499061a6c978b4fa2bd7961717bb633bc3b",
   "split": {
-    "evaluator_sample_examples": 2505,
+    "evaluator_sample_examples": 3017,
     "evaluator_source_group_ids": [
-      "claims__evidential_gemini_600_full",
-      "geometry_of_truth__best",
-      "internal_state__facts",
-      "roleplaying__plain",
-      "sandbagging_v2__wmdp_mmlu",
-      "sycophancy__mmlu_stem_same_conf_all"
+      "legacy/source/claims-claims__evidential_gemini_600_full.csv",
+      "legacy/source/geometry_of_truth-cities.csv",
+      "legacy/source/geometry_of_truth-cities_cities_conj.csv",
+      "legacy/source/geometry_of_truth-cities_cities_disj.csv",
+      "legacy/source/geometry_of_truth-common_claim_true_false.csv",
+      "legacy/source/geometry_of_truth-companies_true_false.csv",
+      "legacy/source/geometry_of_truth-counterfact_true_false.csv",
+      "legacy/source/geometry_of_truth-larger_than.csv",
+      "legacy/source/geometry_of_truth-neg_cities.csv",
+      "legacy/source/geometry_of_truth-neg_sp_en_trans.csv",
+      "legacy/source/geometry_of_truth-smaller_than.csv",
+      "legacy/source/geometry_of_truth-sp_en_trans.csv",
+      "legacy/source/internal_state-facts_true_false.csv",
+      "legacy/source/rollouts-roleplaying__plain__qwen3-vl-8b-thinking.json",
+      "legacy/source/rollouts-sandbagging_v2__wmdp_mmlu__qwen3-vl-8b-thinking.json",
+      "legacy/source/sycophancy-qwen3-vl-8b-thinking-same_conf_paired_mmlu_sycophancy_abstract_algebra.json",
+      "legacy/source/sycophancy-qwen3-vl-8b-thinking-same_conf_paired_mmlu_sycophancy_anatomy.json",
+      "legacy/source/sycophancy-qwen3-vl-8b-thinking-same_conf_paired_mmlu_sycophancy_astronomy.json",
+      "legacy/source/sycophancy-qwen3-vl-8b-thinking-same_conf_paired_mmlu_sycophancy_clinical_knowledge.json",
+      "legacy/source/sycophancy-qwen3-vl-8b-thinking-same_conf_paired_mmlu_sycophancy_college_biology.json",
+      "legacy/source/sycophancy-qwen3-vl-8b-thinking-same_conf_paired_mmlu_sycophancy_college_chemistry.json",
+      "legacy/source/sycophancy-qwen3-vl-8b-thinking-same_conf_paired_mmlu_sycophancy_college_computer_science.json",
+      "legacy/source/sycophancy-qwen3-vl-8b-thinking-same_conf_paired_mmlu_sycophancy_college_mathematics.json",
+      "legacy/source/sycophancy-qwen3-vl-8b-thinking-same_conf_paired_mmlu_sycophancy_college_medicine.json",
+      "legacy/source/sycophancy-qwen3-vl-8b-thinking-same_conf_paired_mmlu_sycophancy_college_physics.json",
+      "legacy/source/sycophancy-qwen3-vl-8b-thinking-same_conf_paired_mmlu_sycophancy_computer_security.json",
+      "legacy/source/sycophancy-qwen3-vl-8b-thinking-same_conf_paired_mmlu_sycophancy_conceptual_physics.json",
+      "legacy/source/sycophancy-qwen3-vl-8b-thinking-same_conf_paired_mmlu_sycophancy_econometrics.json",
+      "legacy/source/sycophancy-qwen3-vl-8b-thinking-same_conf_paired_mmlu_sycophancy_electrical_engineering.json",
+      "legacy/source/sycophancy-qwen3-vl-8b-thinking-same_conf_paired_mmlu_sycophancy_elementary_mathematics.json",
+      "legacy/source/sycophancy-qwen3-vl-8b-thinking-same_conf_paired_mmlu_sycophancy_formal_logic.json",
+      "legacy/source/sycophancy-qwen3-vl-8b-thinking-same_conf_paired_mmlu_sycophancy_high_school_biology.json",
+      "legacy/source/sycophancy-qwen3-vl-8b-thinking-same_conf_paired_mmlu_sycophancy_high_school_chemistry.json",
+      "legacy/source/sycophancy-qwen3-vl-8b-thinking-same_conf_paired_mmlu_sycophancy_high_school_computer_science.json",
+      "legacy/source/sycophancy-qwen3-vl-8b-thinking-same_conf_paired_mmlu_sycophancy_high_school_mathematics.json",
+      "legacy/source/sycophancy-qwen3-vl-8b-thinking-same_conf_paired_mmlu_sycophancy_high_school_physics.json",
+      "legacy/source/sycophancy-qwen3-vl-8b-thinking-same_conf_paired_mmlu_sycophancy_high_school_statistics.json",
+      "legacy/source/sycophancy-qwen3-vl-8b-thinking-same_conf_paired_mmlu_sycophancy_machine_learning.json",
+      "legacy/source/sycophancy-qwen3-vl-8b-thinking-same_conf_paired_mmlu_sycophancy_medical_genetics.json",
+      "legacy/source/sycophancy-qwen3-vl-8b-thinking-same_conf_paired_mmlu_sycophancy_virology.json"
     ],
-    "regularizer_sample_examples": 5632,
+    "regularizer_sample_examples": 5120,
     "regularizer_source_group_ids": [
-      "claims__definitional_gemini_600_full",
-      "claims__fictional_gemini_600_full",
-      "claims__logical_gemini_600_full",
-      "ethics__commonsense",
-      "geometry_of_truth__mixed",
-      "internal_state__animals",
-      "internal_state__cities",
-      "internal_state__companies",
-      "internal_state__elements",
-      "internal_state__inventions",
-      "repe_honesty__IF_dishonest"
+      "legacy/source/claims-claims__definitional_gemini_600_full.csv",
+      "legacy/source/claims-claims__fictional_gemini_600_full.csv",
+      "legacy/source/claims-claims__logical_gemini_600_full.csv",
+      "legacy/source/commonsense-test",
+      "legacy/source/internal_state-animals_true_false.csv",
+      "legacy/source/internal_state-cities_true_false.csv",
+      "legacy/source/internal_state-companies_true_false.csv",
+      "legacy/source/internal_state-elements_true_false.csv",
+      "legacy/source/internal_state-inventions_true_false.csv",
+      "legacy/source/repe-true_false_facts.csv"
     ]
   },
   "status": "fit_complete_qualification_pending",
