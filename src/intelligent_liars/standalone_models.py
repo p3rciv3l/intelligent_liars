@@ -44,10 +44,12 @@ from intelligent_liars.rollouts import (
 TEACHER_DATASET_FORMAT = "qwen_intervention_teacher_v1"
 STANDALONE_MODEL_FORMAT = "qwen_intervention_student_v2"
 FLEET_PLAN_FORMAT = "qwen_intervention_fleet_plan_v2"
-TINYLORA_IMPLEMENTATION = "intelligent_liars_tinylora_v2"
+TINYLORA_IMPLEMENTATION = "intelligent_liars_tinylora_v3"
 TINYLORA_SVD_OVERSAMPLING = 4
 TINYLORA_SVD_POWER_ITERATIONS = 2
 TINYLORA_BASIS_SEED_OFFSET = 1_000_000
+TINYLORA_PROJECTION_BASIS = "nested_function_orthonormal_v1"
+TINYLORA_PROJECTION_NORMALIZATION = "inverse_sqrt_projection_dim"
 DEFAULT_TINYLORA_TARGETS = (
     "self_attn.q_proj",
     "self_attn.k_proj",
@@ -65,8 +67,10 @@ def _validate_safe_checkpoint_value(
     location: str,
     ancestors: set[int],
 ) -> None:
-    if isinstance(value, torch.Tensor) or value is None or isinstance(
-        value, (bool, int, float, str)
+    if (
+        isinstance(value, torch.Tensor)
+        or value is None
+        or isinstance(value, (bool, int, float, str))
     ):
         return
     if isinstance(value, dict):
@@ -116,7 +120,13 @@ def load_safe_torch_checkpoint(
     """Load a tensor/primitive checkpoint without enabling pickle object loading."""
     try:
         payload = torch.load(path, map_location="cpu", weights_only=True)
-    except (pickle.UnpicklingError, RuntimeError, TypeError, EOFError, AttributeError) as error:
+    except (
+        pickle.UnpicklingError,
+        RuntimeError,
+        TypeError,
+        EOFError,
+        AttributeError,
+    ) as error:
         raise ValueError(f"Refusing unsafe or invalid {description}: {path}") from error
     if not isinstance(payload, dict):
         raise ValueError(f"Invalid {description}: root payload must be a mapping")
@@ -197,6 +207,112 @@ class FleetClaim:
     attempt: int
 
 
+def _tinylora_svd_basis(
+    weight: torch.Tensor,
+    *,
+    svd_rank: int,
+    projection_seed: int,
+    module_index: int,
+) -> dict[str, torch.Tensor]:
+    rank = min(svd_rank, min(weight.shape))
+    approximation_rank = min(
+        rank + TINYLORA_SVD_OVERSAMPLING,
+        min(weight.shape),
+    )
+    devices = (
+        [
+            weight.device.index
+            if weight.device.index is not None
+            else torch.cuda.current_device()
+        ]
+        if weight.device.type == "cuda"
+        else []
+    )
+    with torch.random.fork_rng(devices=devices):
+        torch.manual_seed(projection_seed + module_index + TINYLORA_BASIS_SEED_OFFSET)
+        left, singular_values, right = torch.svd_lowrank(
+            weight.detach().float(),
+            q=approximation_rank,
+            niter=TINYLORA_SVD_POWER_ITERATIONS,
+        )
+    singular_root = torch.sqrt(singular_values[:rank])
+    return {
+        "tinylora_a": singular_root[:, None] * right[:, :rank].transpose(0, 1),
+        "tinylora_b": left[:, :rank] * singular_root[None, :],
+    }
+
+
+def _nested_function_projection_basis(
+    module_bases: Sequence[Mapping[str, torch.Tensor]],
+    *,
+    projection_dim: int,
+    projection_seed: int,
+) -> list[torch.Tensor]:
+    """Build a nested global basis, orthonormal in merged-weight function space."""
+    function_scales: list[torch.Tensor] = []
+    shapes: list[tuple[int, int]] = []
+    for basis in module_bases:
+        tinylora_a = basis["tinylora_a"].detach().double().cpu()
+        tinylora_b = basis["tinylora_b"].detach().double().cpu()
+        rank = tinylora_a.shape[0]
+        if tinylora_b.shape[1] != rank:
+            raise ValueError("TinyLoRA factor basis ranks do not match")
+        shapes.append((rank, rank))
+        # The randomized SVD factors have orthogonal rows/columns. Their outer
+        # norm product maps mixing coefficients to Frobenius function space.
+        function_scales.append(
+            torch.outer(
+                torch.linalg.vector_norm(tinylora_b, dim=0),
+                torch.linalg.vector_norm(tinylora_a, dim=1),
+            ).flatten()
+        )
+    scales = torch.cat(function_scales)
+    tolerance = torch.finfo(scales.dtype).eps * max(float(scales.max()), 1.0)
+    usable = scales > tolerance
+    effective_dimension = int(usable.sum().item())
+    if projection_dim > effective_dimension:
+        raise ValueError(
+            "TinyLoRA projection_dim "
+            f"{projection_dim} exceeds effective dimension {effective_dimension} "
+            "for the selected modules and SVD rank"
+        )
+
+    generator = torch.Generator(device="cpu").manual_seed(projection_seed)
+    orthonormal: list[torch.Tensor] = []
+    for _coordinate in range(projection_dim):
+        candidate = torch.zeros_like(scales)
+        candidate[usable] = torch.randn(
+            effective_dimension,
+            generator=generator,
+            dtype=torch.float64,
+        )
+        # Reorthogonalized modified Gram-Schmidt is deliberately sequential:
+        # requesting more coordinates cannot change any earlier coordinate.
+        for _pass in range(2):
+            for previous in orthonormal:
+                candidate -= torch.dot(candidate, previous) * previous
+        norm = torch.linalg.vector_norm(candidate)
+        if not torch.isfinite(norm) or norm <= tolerance:
+            raise ValueError("Could not construct the requested TinyLoRA basis")
+        orthonormal.append(candidate / norm)
+
+    function_basis = torch.stack(orthonormal)
+    coefficient_basis = torch.zeros_like(function_basis)
+    coefficient_basis[:, usable] = function_basis[:, usable] / scales[usable]
+    coefficient_basis /= math.sqrt(projection_dim)
+    projections: list[torch.Tensor] = []
+    offset = 0
+    for shape in shapes:
+        width = math.prod(shape)
+        projections.append(
+            coefficient_basis[:, offset : offset + width]
+            .reshape(projection_dim, *shape)
+            .float()
+        )
+        offset += width
+    return projections
+
+
 class TinyLoRALinear(nn.Module):
     def __init__(
         self,
@@ -225,47 +341,19 @@ class TinyLoRALinear(nn.Module):
         self.dropout = nn.Dropout(dropout)
         self.tinylora_v = trainable_vector
         if basis is None:
-            weight_fp32 = weight.detach().float()
-            approximation_rank = min(
-                self.svd_rank + TINYLORA_SVD_OVERSAMPLING,
-                min(weight.shape),
+            module_basis = _tinylora_svd_basis(
+                weight,
+                svd_rank=self.svd_rank,
+                projection_seed=projection_seed,
+                module_index=module_index,
             )
-            devices = (
-                [
-                    weight.device.index
-                    if weight.device.index is not None
-                    else torch.cuda.current_device()
-                ]
-                if weight.device.type == "cuda"
-                else []
-            )
-            with torch.random.fork_rng(devices=devices):
-                torch.manual_seed(
-                    projection_seed + module_index + TINYLORA_BASIS_SEED_OFFSET
-                )
-                left, singular_values, right = torch.svd_lowrank(
-                    weight_fp32,
-                    q=approximation_rank,
-                    niter=TINYLORA_SVD_POWER_ITERATIONS,
-                )
-            right = right.transpose(0, 1)
-            tinylora_a = (
-                torch.sqrt(singular_values[: self.svd_rank])[:, None]
-                * right[: self.svd_rank]
-            )
-            tinylora_b = (
-                left[:, : self.svd_rank]
-                * torch.sqrt(singular_values[: self.svd_rank])[None, :]
-            )
-            generator = torch.Generator(device="cpu").manual_seed(
-                projection_seed + module_index
-            )
-            tinylora_projection = torch.normal(
-                mean=0.0,
-                std=1.0 / math.sqrt(self.svd_rank),
-                size=(trainable_vector.numel(), self.svd_rank, self.svd_rank),
-                generator=generator,
-            )
+            tinylora_a = module_basis["tinylora_a"]
+            tinylora_b = module_basis["tinylora_b"]
+            tinylora_projection = _nested_function_projection_basis(
+                [module_basis],
+                projection_dim=trainable_vector.numel(),
+                projection_seed=projection_seed,
+            )[0]
         else:
             tinylora_a = basis["tinylora_a"]
             tinylora_b = basis["tinylora_b"]
@@ -595,6 +683,41 @@ def install_tinylora(
     }
     if basis is not None and set(basis) != target_names:
         raise ValueError("Cached TinyLoRA basis module inventory does not match")
+    prepared_basis: dict[str, Mapping[str, torch.Tensor]]
+    if basis is None:
+        factor_bases: list[dict[str, torch.Tensor]] = []
+        ordered_names: list[str] = []
+        for module_index, (layer_idx, target, _parent, _attribute, base) in enumerate(
+            targets
+        ):
+            ordered_names.append(f"model.language_model.layers.{layer_idx}.{target}")
+            factor_bases.append(
+                _tinylora_svd_basis(
+                    base.weight,
+                    svd_rank=config.svd_rank,
+                    projection_seed=config.projection_seed,
+                    module_index=module_index,
+                )
+            )
+        projections = _nested_function_projection_basis(
+            factor_bases,
+            projection_dim=config.projection_dim,
+            projection_seed=config.projection_seed,
+        )
+        prepared_basis = {
+            name: {
+                **factor_basis,
+                "tinylora_projection": projection,
+            }
+            for name, factor_basis, projection in zip(
+                ordered_names,
+                factor_bases,
+                projections,
+                strict=True,
+            )
+        }
+    else:
+        prepared_basis = dict(basis)
     trainable_vector = nn.Parameter(
         torch.zeros(
             config.projection_dim,
@@ -619,7 +742,7 @@ def install_tinylora(
             svd_rank=config.svd_rank,
             projection_seed=config.projection_seed,
             dropout=config.dropout,
-            basis=(basis[name] if basis is not None else None),
+            basis=prepared_basis[name],
         )
         setattr(parent, attribute, wrapped)
         installed.append(
@@ -643,7 +766,7 @@ def install_tinylora_with_cache(
         return install_tinylora(model_bundle.model, config)
     cache_path.parent.mkdir(parents=True, exist_ok=True)
     identity = {
-        "format": "qwen_tinylora_basis_v1",
+        "format": "qwen_tinylora_basis_v2",
         "implementation": TINYLORA_IMPLEMENTATION,
         "base_model": model_bundle.model_id,
         "base_revision": _bundle_revision(model_bundle),
@@ -653,6 +776,8 @@ def install_tinylora_with_cache(
         "svd_oversampling": TINYLORA_SVD_OVERSAMPLING,
         "svd_power_iterations": TINYLORA_SVD_POWER_ITERATIONS,
         "basis_seed_offset": TINYLORA_BASIS_SEED_OFFSET,
+        "projection_basis": TINYLORA_PROJECTION_BASIS,
+        "projection_normalization": TINYLORA_PROJECTION_NORMALIZATION,
         "projection_dim": config.projection_dim,
         "projection_seed": config.projection_seed,
         "target_modules": list(config.target_modules),
@@ -1343,9 +1468,7 @@ def create_fleet_plan(
             for bundle in bundles.values()
         }
         shared_layers = {bundle.spec.layers for bundle in bundles.values()}
-        shared_token_scopes = {
-            bundle.spec.token_scope for bundle in bundles.values()
-        }
+        shared_token_scopes = {bundle.spec.token_scope for bundle in bundles.values()}
         scalar = bundles["directed_scalar_add_deceptive"].spec
         affine = bundles["directed_affine_project_deceptive"].spec
         if (
@@ -1365,7 +1488,9 @@ def create_fleet_plan(
             score_movement_budget=scalar.score_delta,
         )
         invalid_specs = [
-            name for name in expected_names if bundles[name].spec != expected_specs[name]
+            name
+            for name in expected_names
+            if bundles[name].spec != expected_specs[name]
         ]
         if invalid_specs:
             raise ValueError(

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 import sys
 import types
 from pathlib import Path
@@ -386,6 +387,7 @@ def test_tinylora_full_tying_optimizes_exact_scalar_budget() -> None:
     installed = install_tinylora(
         model,
         TinyLoRATrainingConfig(
+            svd_rank=3,
             projection_dim=13,
             target_modules=("self_attn.q_proj", "mlp.down_proj"),
             gradient_checkpointing=False,
@@ -402,6 +404,76 @@ def test_tinylora_full_tying_optimizes_exact_scalar_budget() -> None:
     assert sum(parameter.numel() for parameter in trainable.values()) == 13
     assert torch.count_nonzero(installed[0].module.tinylora_v).item() == 0
     assert torch.equal(model(input_ids).logits, expected)
+
+
+def test_tinylora_projection_bases_are_nested_and_function_normalized() -> None:
+    torch.manual_seed(123)
+    small_model = TinyQwen()
+    torch.manual_seed(123)
+    large_model = TinyQwen()
+    common = {
+        "svd_rank": 3,
+        "projection_seed": 17,
+        "train_layers": (0,),
+        "gradient_checkpointing": False,
+    }
+
+    small = install_tinylora(
+        small_model,
+        TinyLoRATrainingConfig(projection_dim=13, **common),
+    )
+    large = install_tinylora(
+        large_model,
+        TinyLoRATrainingConfig(projection_dim=63, **common),
+    )
+
+    for small_item, large_item in zip(small, large, strict=True):
+        assert torch.allclose(
+            small_item.module.tinylora_a, large_item.module.tinylora_a
+        )
+        assert torch.allclose(
+            small_item.module.tinylora_b, large_item.module.tinylora_b
+        )
+        assert torch.allclose(
+            small_item.module.tinylora_projection * math.sqrt(13),
+            large_item.module.tinylora_projection[:13] * math.sqrt(63),
+            atol=1e-5,
+        )
+
+    function_columns = []
+    for coordinate in range(13):
+        pieces = []
+        for item in small:
+            module = item.module
+            pieces.append(
+                (
+                    module.tinylora_b.float()
+                    @ module.tinylora_projection[coordinate].float()
+                    @ module.tinylora_a.float()
+                ).flatten()
+            )
+        function_columns.append(torch.cat(pieces))
+    function_matrix = torch.stack(function_columns)
+    gram = function_matrix @ function_matrix.T
+    assert torch.allclose(
+        gram,
+        torch.eye(13) / 13,
+        atol=2e-5,
+        rtol=2e-5,
+    )
+
+
+def test_tinylora_rejects_projection_dimension_above_effective_capacity() -> None:
+    with pytest.raises(ValueError, match="effective dimension 63"):
+        install_tinylora(
+            TinyQwen(),
+            TinyLoRATrainingConfig(
+                svd_rank=3,
+                projection_dim=64,
+                train_layers=(0,),
+                gradient_checkpointing=False,
+            ),
+        )
 
 
 def test_build_training_batch_masks_prompt_and_rejects_truncation() -> None:
@@ -531,7 +603,7 @@ def test_tiny_model_distillation_merges_tinylora_and_saves_stock_weights(
         teacher_path=teacher,
         output_dir=output,
         config=TinyLoRATrainingConfig(
-            svd_rank=2,
+            svd_rank=3,
             projection_dim=13,
             epochs=1,
             batch_size=1,
@@ -576,7 +648,7 @@ def test_tiny_model_distillation_merges_tinylora_and_saves_stock_weights(
         teacher_path=teacher,
         output_dir=output,
         config=TinyLoRATrainingConfig(
-            svd_rank=2,
+            svd_rank=3,
             projection_dim=13,
             epochs=1,
             batch_size=1,
@@ -636,6 +708,13 @@ def test_tinylora_basis_cache_avoids_repeated_svd(
     assert calls == 1
     assert settings == [(6, 2)]
     assert basis.exists()
+    cached = load_safe_torch_checkpoint(basis, description="test basis")
+    assert cached["identity"]["format"] == "qwen_tinylora_basis_v2"
+    assert cached["identity"]["implementation"] == "intelligent_liars_tinylora_v3"
+    assert cached["identity"]["projection_basis"] == "nested_function_orthonormal_v1"
+    assert (
+        cached["identity"]["projection_normalization"] == "inverse_sqrt_projection_dim"
+    )
     first = json.loads((tmp_path / "student-0" / "standalone_model.json").read_text())
     second = json.loads((tmp_path / "student-1" / "standalone_model.json").read_text())
     assert first["tinylora_basis_sha256"] == second["tinylora_basis_sha256"]
