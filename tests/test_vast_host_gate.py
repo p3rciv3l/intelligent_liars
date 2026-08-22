@@ -3,9 +3,11 @@ from __future__ import annotations
 import argparse
 import importlib.util
 import io
+import threading
 import time
 from pathlib import Path
 
+import intelligent_liars.vast_host_gate as host_gate
 import pytest
 
 from intelligent_liars.vast_host_gate import (
@@ -219,6 +221,32 @@ def test_url_trial_deadline_includes_blocked_connection_open():
     assert elapsed < 0.15
     assert trial.completed is False
     assert trial.error == "TrialDeadlineExceeded"
+
+
+def test_late_opened_resource_is_closed_across_publish_timeout_race():
+    before_publish = threading.Event()
+    allow_publish = threading.Event()
+    closed = threading.Event()
+
+    class Resource:
+        def close(self) -> None:
+            closed.set()
+
+    def pause_before_publish() -> None:
+        before_publish.set()
+        allow_publish.wait()
+
+    with pytest.raises(TimeoutError):
+        host_gate._bounded_call(
+            Resource,
+            0.1,
+            "TrialDeadlineExceeded",
+            before_publish=pause_before_publish,
+        )
+
+    assert before_publish.is_set()
+    allow_publish.set()
+    assert closed.wait(0.2)
 
 
 def test_public_argv_url_rejects_credentials_and_persisted_origin_has_no_path():

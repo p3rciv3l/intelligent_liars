@@ -34,39 +34,49 @@ T = TypeVar("T")
 
 
 def _bounded_call(
-    operation: Callable[[], T], timeout_seconds: float, category: str
+    operation: Callable[[], T],
+    timeout_seconds: float,
+    category: str,
+    *,
+    before_publish: Callable[[], None] | None = None,
 ) -> T:
     """Run one blocking transport operation behind a hard return deadline."""
 
     result: Queue[tuple[T | None, BaseException | None]] = Queue(maxsize=1)
     expired = threading.Event()
+    publish_lock = threading.Lock()
 
     def worker() -> None:
         try:
             value = operation()
-            if expired.is_set():
-                close = getattr(value, "close", None)
-                if callable(close):
-                    close()
-                return
-            result.put((value, None))
+            if before_publish is not None:
+                before_publish()
+            with publish_lock:
+                if expired.is_set():
+                    close = getattr(value, "close", None)
+                    if callable(close):
+                        close()
+                    return
+                result.put((value, None))
         except BaseException as exc:  # Preserve the transport's exception type.
-            if not expired.is_set():
-                result.put((None, exc))
+            with publish_lock:
+                if not expired.is_set():
+                    result.put((None, exc))
 
     threading.Thread(target=worker, daemon=True).start()
     try:
         value, error = result.get(timeout=timeout_seconds)
     except Empty as exc:
-        expired.set()
-        try:
-            late_value, _ = result.get_nowait()
-        except Empty:
-            pass
-        else:
-            close = getattr(late_value, "close", None)
-            if callable(close):
-                close()
+        with publish_lock:
+            expired.set()
+            try:
+                late_value, _ = result.get_nowait()
+            except Empty:
+                pass
+            else:
+                close = getattr(late_value, "close", None)
+                if callable(close):
+                    close()
         raise _ReadDeadlineExceeded(category) from exc
     if error is not None:
         raise error
