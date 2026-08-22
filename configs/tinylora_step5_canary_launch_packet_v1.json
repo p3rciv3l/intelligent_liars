@@ -5,6 +5,8 @@
     "approved_max_cost_usd": "${APPROVED_MAX_COST_USD}"
   },
   "commands": {
+    "artifact_upload_preparation": "uv run --with boto3 python scripts/prepare_tinylora_step5_artifact_upload.py --bucket intelligent-liars-osworld-29a36b2b927f4078b2ac95ca83ec9c21 --key step5-artifacts/v2/step5-canary-v1/attempt-1/artifacts.tar --url-file artifacts/step5-canary-v1/artifact-put.url --expires-in 21600",
+    "checkpoint_controller": "uv run --with boto3 python scripts/run_step5_checkpoint_controller.py --ssh-host \"$STEP5_WORKER_HOST\" --ssh-port \"$STEP5_WORKER_PORT\" --known-hosts \"$STEP5_KNOWN_HOSTS\" --remote-exchange-dir /workspace/checkpoint-bridge --bucket intelligent-liars-osworld-29a36b2b927f4078b2ac95ca83ec9c21 --prefix step5/checkpoints/step5-canary-v1/tinylora_dim13 --controller-private-key .local/step5-checkpoint-controller/private.pem --controller-public-key .local/step5-checkpoint-controller/public.pem --url-expiry-seconds 1200 --idle-timeout-seconds 300",
     "diagnostic": "PYTHONPATH=src python scripts/diagnose_tinylora_step5_canary.py --run-root /workspace/runs/step5-canary-v1/tinylora_dim13",
     "host_qualification": "cd /workspace/workload && PYTHONPATH=src python scripts/qualify_vast_step5_host.py --download-url-file /run/secrets/step5-host-gate-url --output /workspace/controller/host_qualification.json --trials 3 --sample-mib 64 --min-download-mbps 100 --max-ttfb-seconds 5 --max-stall-seconds 10 --timeout-seconds 60",
     "lifecycle_argv": [
@@ -32,8 +34,18 @@
       "${RUNTIME_IMAGE}",
       "--disk",
       "160",
+      "--input-url-manifest-url-file",
+      "/Users/student/Desktop/ai/intelligent_liars/artifacts/step5-canary-v1/input-url-manifest.url",
+      "--controller-public-key",
+      "/Users/student/Desktop/ai/intelligent_liars/.local/step5-checkpoint-controller/public.pem",
+      "--controller-public-key-sha256",
+      "5471e885e6389e854edd61c1056cee589a703d70760e9127a182cd928de8f56d",
+      "--artifact-put-url-file",
+      "/Users/student/Desktop/ai/intelligent_liars/artifacts/step5-canary-v1/artifact-put.url",
+      "--expected-durable-uri",
+      "s3://intelligent-liars-osworld-29a36b2b927f4078b2ac95ca83ec9c21/step5-artifacts/v2/step5-canary-v1/attempt-1/artifacts.tar",
       "--remote-command",
-      "${CANARY_INPUT_HYDRATION_COMMAND} && cd /workspace/workload && HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 PYTHONPATH=src python scripts/run_tinylora_step5_screen.py --plan /workspace/inputs/step5_v1/manifest.json --probe /workspace/inputs/probes/step5_grouped_ensemble_v1/probes/legacy-grouped-regularizer.json --arm tinylora_dim13 --output-dir /workspace/runs/step5-canary-v1/tinylora_dim13 --mode prerequisites --cache-dir /workspace/cache/huggingface --max-steps 20 --max-length 2048 --learning-rate 0.0002 --gradient-accumulation 8 --checkpoint-every 5 --checkpoint-minutes 5 --development-per-objective 0 --seed 20260822 --projection-seed 42 --runtime-image-digest ${RUNTIME_IMAGE_DIGEST} --durability-verifier-command '${CHECKPOINT_DURABILITY_COMMAND}' && ${CANARY_ARTIFACT_FINALIZE_COMMAND}",
+      "PYTHONPATH=src python scripts/hydrate_tinylora_step5_inputs.py --url-manifest-url-file /run/secrets/step5-input-url-manifest-url --inputs-dir /workspace/inputs --cache-dir /workspace/cache/huggingface --receipt /workspace/controller/input_hydration_receipt.json && cd /workspace/workload && HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 PYTHONPATH=src python scripts/run_tinylora_step5_screen.py --plan /workspace/inputs/step5_v1/manifest.json --probe /workspace/inputs/probes/step5_grouped_ensemble_v1/probes/legacy-grouped-regularizer.json --pixmo-bundle /workspace/inputs/pixmo --arm tinylora_dim13 --output-dir /workspace/runs/step5-canary-v1/tinylora_dim13 --mode prerequisites --cache-dir /workspace/cache/huggingface --max-steps 20 --max-length 2048 --learning-rate 0.0002 --gradient-accumulation 8 --checkpoint-every 5 --checkpoint-minutes 5 --development-per-objective 0 --seed 20260822 --projection-seed 42 --runtime-image-digest ${RUNTIME_IMAGE_DIGEST} --durability-controller-public-key /workspace/inputs/controller-public.pem --durability-verifier-command 'python scripts/publish_step5_checkpoint_worker.py --exchange-dir /workspace/checkpoint-bridge --controller-public-key /workspace/inputs/controller-public.pem --timeout-seconds 1200' > /workspace/controller/worker.log 2>&1 && PYTHONPATH=src python scripts/finalize_tinylora_step5_artifacts.py --artifact-root /workspace/artifacts/step5-canary-v1 --expected-inventory /workspace/workload/configs/tinylora_step5_canary_expected_artifacts_v1.json --run-id step5-canary-v1 --durable-uri s3://intelligent-liars-osworld-29a36b2b927f4078b2ac95ca83ec9c21/step5-artifacts/v2/step5-canary-v1/attempt-1/artifacts.tar --archive-path /workspace/artifacts/step5-canary-v1.tar --presigned-put-url-file /run/secrets/step5-artifact-put-url --file result.json=/workspace/runs/step5-canary-v1/tinylora_dim13/result.json --file prerequisite_receipt.json=/workspace/runs/step5-canary-v1/tinylora_dim13/prerequisite_receipt.json --file tinylora_dim13_basis.pt=/workspace/runs/step5-canary-v1/tinylora_dim13/tinylora_dim13_basis.pt --tree-archive checkpoint_store.tar=/workspace/runs/step5-canary-v1/tinylora_dim13/checkpoint_store --file host_qualification.json=/workspace/controller/host_qualification.json --file input_hydration_receipt.json=/workspace/controller/input_hydration_receipt.json --file source_bundle_receipt.json=/workspace/workload/SOURCE_BUNDLE_MANIFEST.json --file worker.log=/workspace/controller/worker.log --generate-canary-summary canary_summary.json",
       "--remote-artifact-dir",
       "/workspace/artifacts/step5-canary-v1",
       "--expected-artifact-inventory",
@@ -55,8 +67,18 @@
       "--approved-max-cost",
       "${APPROVED_MAX_COST_USD}"
     ],
-    "remote": "${CANARY_INPUT_HYDRATION_COMMAND} && cd /workspace/workload && HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 PYTHONPATH=src python scripts/run_tinylora_step5_screen.py --plan /workspace/inputs/step5_v1/manifest.json --probe /workspace/inputs/probes/step5_grouped_ensemble_v1/probes/legacy-grouped-regularizer.json --arm tinylora_dim13 --output-dir /workspace/runs/step5-canary-v1/tinylora_dim13 --mode prerequisites --cache-dir /workspace/cache/huggingface --max-steps 20 --max-length 2048 --learning-rate 0.0002 --gradient-accumulation 8 --checkpoint-every 5 --checkpoint-minutes 5 --development-per-objective 0 --seed 20260822 --projection-seed 42 --runtime-image-digest ${RUNTIME_IMAGE_DIGEST} --durability-verifier-command '${CHECKPOINT_DURABILITY_COMMAND}' && ${CANARY_ARTIFACT_FINALIZE_COMMAND}",
+    "remote": "PYTHONPATH=src python scripts/hydrate_tinylora_step5_inputs.py --url-manifest-url-file /run/secrets/step5-input-url-manifest-url --inputs-dir /workspace/inputs --cache-dir /workspace/cache/huggingface --receipt /workspace/controller/input_hydration_receipt.json && cd /workspace/workload && HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 PYTHONPATH=src python scripts/run_tinylora_step5_screen.py --plan /workspace/inputs/step5_v1/manifest.json --probe /workspace/inputs/probes/step5_grouped_ensemble_v1/probes/legacy-grouped-regularizer.json --pixmo-bundle /workspace/inputs/pixmo --arm tinylora_dim13 --output-dir /workspace/runs/step5-canary-v1/tinylora_dim13 --mode prerequisites --cache-dir /workspace/cache/huggingface --max-steps 20 --max-length 2048 --learning-rate 0.0002 --gradient-accumulation 8 --checkpoint-every 5 --checkpoint-minutes 5 --development-per-objective 0 --seed 20260822 --projection-seed 42 --runtime-image-digest ${RUNTIME_IMAGE_DIGEST} --durability-controller-public-key /workspace/inputs/controller-public.pem --durability-verifier-command 'python scripts/publish_step5_checkpoint_worker.py --exchange-dir /workspace/checkpoint-bridge --controller-public-key /workspace/inputs/controller-public.pem --timeout-seconds 1200' > /workspace/controller/worker.log 2>&1 && PYTHONPATH=src python scripts/finalize_tinylora_step5_artifacts.py --artifact-root /workspace/artifacts/step5-canary-v1 --expected-inventory /workspace/workload/configs/tinylora_step5_canary_expected_artifacts_v1.json --run-id step5-canary-v1 --durable-uri s3://intelligent-liars-osworld-29a36b2b927f4078b2ac95ca83ec9c21/step5-artifacts/v2/step5-canary-v1/attempt-1/artifacts.tar --archive-path /workspace/artifacts/step5-canary-v1.tar --presigned-put-url-file /run/secrets/step5-artifact-put-url --file result.json=/workspace/runs/step5-canary-v1/tinylora_dim13/result.json --file prerequisite_receipt.json=/workspace/runs/step5-canary-v1/tinylora_dim13/prerequisite_receipt.json --file tinylora_dim13_basis.pt=/workspace/runs/step5-canary-v1/tinylora_dim13/tinylora_dim13_basis.pt --tree-archive checkpoint_store.tar=/workspace/runs/step5-canary-v1/tinylora_dim13/checkpoint_store --file host_qualification.json=/workspace/controller/host_qualification.json --file input_hydration_receipt.json=/workspace/controller/input_hydration_receipt.json --file source_bundle_receipt.json=/workspace/workload/SOURCE_BUNDLE_MANIFEST.json --file worker.log=/workspace/controller/worker.log --generate-canary-summary canary_summary.json",
     "software_recovery": "python -c 'import json; from pathlib import Path; p=Path(\"/workspace/runs/step5-canary-v1/tinylora_dim13/checkpoint_store/latest.json\"); assert p.is_file(); d=json.loads(p.read_text()); assert isinstance(d, dict) and d'"
+  },
+  "controller_contracts": {
+    "artifact_upload_preparation": {
+      "path": "../scripts/prepare_tinylora_step5_artifact_upload.py",
+      "sha256": "3f22d3f8463d302540414e59acda0f9a133edefa16cecff75fd1c48fe83f79ca"
+    },
+    "checkpoint_controller": {
+      "path": "../scripts/run_step5_checkpoint_controller.py",
+      "sha256": "c82b5a73c31467b1422e4740a782dbd8d9002463b9856f2fdbcba129f90479ed"
+    }
   },
   "execution": {
     "enabled": false,
@@ -66,9 +88,10 @@
   "identity": {
     "model_content_sha256": "bbca6a8b09a56f0c538887b82b9594b0c0945c5fbcde54f39eda153a9f64eda8",
     "model_revision": "92f3c4b4feadd3a016ef468d103bb5f58b2a2c6b",
-    "pixmo_content_sha256": "6938f0269264cb47cb753ef421a511ca81973d4a9d6dee6f83f6f029220c5c97",
+    "pixmo_content_sha256": "430de1b25babb4fcd462ed7cf0476bce9f8c4e2b8fc3872c843eea332c1e56bc",
     "plan_sha256": "5282aaf0696098970de476e6812534e4c75c2434d7ec369495f5a311d6c09f99",
-    "probe_qualification_sha256": "f21781fdadab2eab6773d3e324d7500132e1f5f9e4bb38696c50837a07693b54"
+    "probe_qualification_file_sha256": "6f409af64387a2a2ee1ca7f21e7fcdc7fbad1eeffa22672b8872277f45937ff2",
+    "probe_qualification_receipt_sha256": "f21781fdadab2eab6773d3e324d7500132e1f5f9e4bb38696c50837a07693b54"
   },
   "local_contracts": {
     "expected_artifact_inventory": {
@@ -77,17 +100,16 @@
     },
     "source_manifest": {
       "path": "tinylora_step5_canary_source_manifest_v1.json",
-      "sha256": "bf17bb4d01c877b50fe35c4e338ae98197c81fc1d28f1eda35e23b28fd753413"
+      "sha256": "bbf3f7e0c5bcdaadde818e5c36d99c1187a2cf8ba2248deb965f9c0be26cf710"
     }
   },
-  "packet_sha256": "b6d2c3d22ed574770b782d79515c17ffafa393409a14d6688d3e86612a312612",
+  "packet_sha256": "472b255706c19d0bd6edb0a9a3fdf1cb4138e53b52b8ad1acfcd207d6b101b3f",
   "remaining_substitutions": [
     "APPROVED_AT",
     "APPROVED_HOURLY_PRICE_USD",
     "APPROVED_MAX_COST_USD",
-    "CANARY_ARTIFACT_FINALIZE_COMMAND",
-    "CANARY_INPUT_HYDRATION_COMMAND",
-    "CHECKPOINT_DURABILITY_COMMAND",
+    "BUCKET_VERSIONING_RECEIPT_SHA256",
+    "BUCKET_VERSIONING_STATUS",
     "GPU_NAME",
     "GPU_VRAM_GIB",
     "OFFER_ID",
@@ -95,17 +117,31 @@
     "RUNTIME_IMAGE_DIGEST"
   ],
   "remote_inputs": {
-    "frozen_inputs_completion_sha256": "82af3c0259465dde974b5dafc998d65ee2f07e3f9f41f256f663c97865442a58",
-    "frozen_inputs_tar_sha256": "b1b40983e39463f2c1cc283441dc2f2d13fba1b1b4850728771ae55deafb322f",
+    "frozen_inputs_completion_sha256": "579664fd8e59f8d81f0c6d71b469d5f1011811100e981887df02af53e59f4882",
+    "frozen_inputs_tar_sha256": "09009258f4b2422aa12e547568536d9f5e15d14afc64e23ce8f86c33d1000439",
     "model_completion_sha256": "4ccd7c940e1a72800d0153e809edab69e91c7cdd4d79627a1bb98076a0ef7275",
     "model_manifest_sha256": "6ec207494fed0658ebaf31f1083f77110caae45f8c2392354e767ef54c78dd07",
     "model_s3_prefix": "s3://intelligent-liars-osworld-29a36b2b927f4078b2ac95ca83ec9c21/model-cache/v1/qwen--qwen3-vl-8b-thinking/92f3c4b4feadd3a016ef468d103bb5f58b2a2c6b/bbca6a8b09a56f0c538887b82b9594b0c0945c5fbcde54f39eda153a9f64eda8/",
-    "pixmo_completion_sha256": "5106a2fa2e3feb635a0335c052c76035e764859eb81708deb5d4cdf8cec1388f",
+    "pixmo_completion_sha256": "a68b54be7e5a46014d8f6c97e8e7e1e527898c02c9e0b2542f7129ba72d9f876",
     "pixmo_manifest_sha256": "b1bcd5034e3751a58d531ef2897bfa49b8da0a3c848a9bb976e2f08f2ad19226",
-    "pixmo_s3_prefix": "s3://intelligent-liars-osworld-29a36b2b927f4078b2ac95ca83ec9c21/step5-assets/v1/pixmo/6938f0269264cb47cb753ef421a511ca81973d4a9d6dee6f83f6f029220c5c97/",
+    "pixmo_s3_prefix": "s3://intelligent-liars-osworld-29a36b2b927f4078b2ac95ca83ec9c21/step5-assets/v1/pixmo/430de1b25babb4fcd462ed7cf0476bce9f8c4e2b8fc3872c843eea332c1e56bc/",
     "pixmo_tar_sha256": "284ec9d7d1f3e4833f8e71e6028e5f7d0ce039d2749742b220c488d2de2e6d55",
-    "plan_s3_uri": "s3://intelligent-liars-osworld-29a36b2b927f4078b2ac95ca83ec9c21/step5-inputs/v1/5282aaf0696098970de476e6812534e4c75c2434d7ec369495f5a311d6c09f99/step5_plan_5282aaf_inputs.tar.gz",
-    "probe_s3_uri": "s3://intelligent-liars-osworld-29a36b2b927f4078b2ac95ca83ec9c21/step5-inputs/v1/5282aaf0696098970de476e6812534e4c75c2434d7ec369495f5a311d6c09f99/step5_plan_5282aaf_inputs.tar.gz"
+    "plan_s3_uri": "s3://intelligent-liars-osworld-29a36b2b927f4078b2ac95ca83ec9c21/step5-inputs/v2/5282aaf0696098970de476e6812534e4c75c2434d7ec369495f5a311d6c09f99/09009258f4b2422aa12e547568536d9f5e15d14afc64e23ce8f86c33d1000439/step5_plan_5282aaf_inputs.clean.tar.gz",
+    "probe_s3_uri": "s3://intelligent-liars-osworld-29a36b2b927f4078b2ac95ca83ec9c21/step5-inputs/v2/5282aaf0696098970de476e6812534e4c75c2434d7ec369495f5a311d6c09f99/09009258f4b2422aa12e547568536d9f5e15d14afc64e23ce8f86c33d1000439/step5_plan_5282aaf_inputs.clean.tar.gz"
+  },
+  "durability": {
+    "artifact_uri": "s3://intelligent-liars-osworld-29a36b2b927f4078b2ac95ca83ec9c21/step5-artifacts/v2/step5-canary-v1/attempt-1/artifacts.tar",
+    "bucket_versioning_receipt_sha256": "${BUCKET_VERSIONING_RECEIPT_SHA256}",
+    "bucket_versioning_status": "${BUCKET_VERSIONING_STATUS}",
+    "checkpoint_controller_key_id": "ba8eda6c0ad64f050df8022c1b92282a5c6d1c992724a4d8a131295ea0da588b",
+    "checkpoint_prefix": "s3://intelligent-liars-osworld-29a36b2b927f4078b2ac95ca83ec9c21/step5/checkpoints/step5-canary-v1/tinylora_dim13"
+  },
+  "controller_prerequisites": {
+    "artifact_put_url_file": "/Users/student/Desktop/ai/intelligent_liars/artifacts/step5-canary-v1/artifact-put.url",
+    "controller_private_key_path": "/Users/student/Desktop/ai/intelligent_liars/.local/step5-checkpoint-controller/private.pem",
+    "controller_public_key_path": "/Users/student/Desktop/ai/intelligent_liars/.local/step5-checkpoint-controller/public.pem",
+    "controller_public_key_sha256": "5471e885e6389e854edd61c1056cee589a703d70760e9127a182cd928de8f56d",
+    "input_url_manifest_url_file": "/Users/student/Desktop/ai/intelligent_liars/artifacts/step5-canary-v1/input-url-manifest.url"
   },
   "runtime": {
     "disk_gib": 160,

@@ -38,15 +38,38 @@ def _packet(tmp_path: Path) -> dict[str, object]:
             "files": ["canary_bundle.tar", "canary_summary.json"],
         },
     )
+    public_key = tmp_path / "public.pem"
+    private_key = tmp_path / "private.pem"
+    input_secret = tmp_path / "input.url"
+    artifact_secret = tmp_path / "artifact.url"
+    for path, content in (
+        (public_key, "public\n"),
+        (private_key, "private\n"),
+        (input_secret, "https://example.test/input?signed=yes\n"),
+        (artifact_secret, "https://example.test/output?signed=yes\n"),
+    ):
+        path.write_text(content)
+        path.chmod(0o600)
     packet: dict[str, object] = {
         "format": "tinylora_step5_canary_launch_packet_v1",
         "execution": {"enabled": False, "execute_flag_present": False},
         "identity": {
             "plan_sha256": "2" * 64,
-            "probe_qualification_sha256": "3" * 64,
+            "probe_qualification_file_sha256": "3" * 64,
+            "probe_qualification_receipt_sha256": "7" * 64,
             "model_revision": "4" * 40,
             "model_content_sha256": "5" * 64,
             "pixmo_content_sha256": "6" * 64,
+        },
+        "controller_contracts": {
+            "artifact_upload_preparation": {
+                "path": str(source),
+                "sha256": source_sha,
+            },
+            "checkpoint_controller": {
+                "path": str(inventory),
+                "sha256": inventory_sha,
+            },
         },
         "local_contracts": {
             "source_manifest": {"path": str(source), "sha256": source_sha},
@@ -76,6 +99,8 @@ def _packet(tmp_path: Path) -> dict[str, object]:
             "approved_at": "${APPROVED_AT}",
         },
         "commands": {
+            "artifact_upload_preparation": "prepare artifact upload",
+            "checkpoint_controller": "run checkpoint controller",
             "remote": "python scripts/run_tinylora_step5_screen.py --mode prerequisites --runtime-image-digest ${RUNTIME_IMAGE_DIGEST}",
             "host_qualification": "python scripts/qualify_vast_step5_host.py --download-url-env STEP5_HOST_GATE_URL",
             "diagnostic": "python scripts/diagnose_tinylora_step5_canary.py",
@@ -93,9 +118,31 @@ def _packet(tmp_path: Path) -> dict[str, object]:
                 "${APPROVED_HOURLY_PRICE_USD}",
                 "--approved-max-cost",
                 "${APPROVED_MAX_COST_USD}",
+                "--controller-public-key-sha256",
+                hashlib.sha256(public_key.read_bytes()).hexdigest(),
+                "--input-url-manifest-url-file",
+                str(input_secret),
+                "--artifact-put-url-file",
+                str(artifact_secret),
+                "--expected-durable-uri",
+                "s3://bucket/artifacts/canary.tar",
                 "--remote-command",
                 "python scripts/run_tinylora_step5_screen.py --mode prerequisites --runtime-image-digest ${RUNTIME_IMAGE_DIGEST}",
             ],
+        },
+        "durability": {
+            "artifact_uri": "s3://bucket/artifacts/canary.tar",
+            "bucket_versioning_status": "Enabled",
+            "bucket_versioning_receipt_sha256": "7" * 64,
+            "checkpoint_controller_key_id": "8" * 64,
+            "checkpoint_prefix": "s3://bucket/checkpoints/canary",
+        },
+        "controller_prerequisites": {
+            "controller_public_key_path": str(public_key),
+            "controller_public_key_sha256": hashlib.sha256(public_key.read_bytes()).hexdigest(),
+            "controller_private_key_path": str(private_key),
+            "input_url_manifest_url_file": str(input_secret),
+            "artifact_put_url_file": str(artifact_secret),
         },
         "remaining_substitutions": [
             "APPROVED_AT",
@@ -136,7 +183,7 @@ def test_packet_rejects_execute_flag_and_enabled_execution(tmp_path: Path):
 def test_packet_rejects_changed_local_contract(tmp_path: Path):
     packet = _packet(tmp_path)
     Path(packet["local_contracts"]["source_manifest"]["path"]).write_text("changed\n")  # type: ignore[index]
-    with pytest.raises(LaunchPacketError, match="source_manifest hash"):
+    with pytest.raises(LaunchPacketError, match="hash does not match"):
         validate_launch_packet(packet, packet_dir=tmp_path)
 
 
@@ -217,6 +264,14 @@ def test_complete_packet_rejects_command_field_drift(tmp_path: Path):
         "0.25",
         "--approved-max-cost",
         "1.5",
+        "--controller-public-key-sha256",
+        packet["controller_prerequisites"]["controller_public_key_sha256"],  # type: ignore[index]
+        "--input-url-manifest-url-file",
+        packet["controller_prerequisites"]["input_url_manifest_url_file"],  # type: ignore[index]
+        "--artifact-put-url-file",
+        packet["controller_prerequisites"]["artifact_put_url_file"],  # type: ignore[index]
+        "--expected-durable-uri",
+        packet["durability"]["artifact_uri"],  # type: ignore[index]
         "--remote-command",
         packet["commands"]["remote"],  # type: ignore[index]
     ]

@@ -14,11 +14,12 @@ three-arm bounded screen and it does not claim the later seven scoring receipts.
 ## Frozen identities
 
 - Step 5 plan SHA-256: `5282aaf0696098970de476e6812534e4c75c2434d7ec369495f5a311d6c09f99`
+- Grouped probe qualification file: `6f409af64387a2a2ee1ca7f21e7fcdc7fbad1eeffa22672b8872277f45937ff2`
 - Grouped probe qualification receipt: `f21781fdadab2eab6773d3e324d7500132e1f5f9e4bb38696c50837a07693b54`
 - Regularizer probe file: `artifacts/probes/step5_grouped_ensemble_v1/probes/legacy-grouped-regularizer.json`
 - Model revision: `92f3c4b4feadd3a016ef468d103bb5f58b2a2c6b`
 - Model content identity: `bbca6a8b09a56f0c538887b82b9594b0c0945c5fbcde54f39eda153a9f64eda8`
-- PixMo content identity: `6938f0269264cb47cb753ef421a511ca81973d4a9d6dee6f83f6f029220c5c97`
+- PixMo content identity: `430de1b25babb4fcd462ed7cf0476bce9f8c4e2b8fc3872c843eea332c1e56bc`
 
 The model cache is fixed at:
 
@@ -29,7 +30,7 @@ s3://intelligent-liars-osworld-29a36b2b927f4078b2ac95ca83ec9c21/model-cache/v1/q
 The portable image bundle is fixed at:
 
 ```text
-s3://intelligent-liars-osworld-29a36b2b927f4078b2ac95ca83ec9c21/step5-assets/v1/pixmo/6938f0269264cb47cb753ef421a511ca81973d4a9d6dee6f83f6f029220c5c97/
+s3://intelligent-liars-osworld-29a36b2b927f4078b2ac95ca83ec9c21/step5-assets/v1/pixmo/430de1b25babb4fcd462ed7cf0476bce9f8c4e2b8fc3872c843eea332c1e56bc/
 ```
 
 Its tar SHA-256 is `284ec9d7d1f3e4833f8e71e6028e5f7d0ce039d2749742b220c488d2de2e6d55`.
@@ -37,13 +38,14 @@ The plan, corpora, and complete grouped probe bundle are in the single frozen
 input object:
 
 ```text
-s3://intelligent-liars-osworld-29a36b2b927f4078b2ac95ca83ec9c21/step5-inputs/v1/5282aaf0696098970de476e6812534e4c75c2434d7ec369495f5a311d6c09f99/step5_plan_5282aaf_inputs.tar.gz
+s3://intelligent-liars-osworld-29a36b2b927f4078b2ac95ca83ec9c21/step5-inputs/v2/5282aaf0696098970de476e6812534e4c75c2434d7ec369495f5a311d6c09f99/09009258f4b2422aa12e547568536d9f5e15d14afc64e23ce8f86c33d1000439/step5_plan_5282aaf_inputs.clean.tar.gz
 ```
 
-Its SHA-256 is `b1b40983e39463f2c1cc283441dc2f2d13fba1b1b4850728771ae55deafb322f`.
+Its SHA-256 is `09009258f4b2422aa12e547568536d9f5e15d14afc64e23ce8f86c33d1000439`.
 The completion sibling hashes to
-`82af3c0259465dde974b5dafc998d65ee2f07e3f9f41f256f663c97865442a58`.
-The worker uses this S3 object, not the currently pending DVC remote.
+`579664fd8e59f8d81f0c6d71b469d5f1011811100e981887df02af53e59f4882`.
+The worker uses this clean S3 object. Tracked DVC files are local provenance
+pointers, not worker payloads.
 
 ## What crosses onto the worker
 
@@ -76,16 +78,18 @@ Otherwise the wrapper stops the same instance for recovery.
 The packet's `commands.remote` runs the prerequisite mode for
 `tinylora_dim13` with 20 optimizer steps, one visible GPU, the exact plan,
 regularizer probe, offline model cache, immutable runtime image digest, fixed
-training/projection seeds, and an external checkpoint durability verifier. A
-finalizer must then normalize the fixed output inventory, publish its durable
-object, and write the lifecycle-compatible `artifact_manifest.json`.
+training/projection seeds, and an external checkpoint durability verifier. The
+exact reviewed finalizer normalizes the fixed output inventory, publishes its
+immutable durable object through a protected presigned URL, and writes the
+lifecycle-compatible `artifact_manifest.json`. The credentialless checkpoint
+bridge publishes each generation through the trusted controller.
 
 The diagnostic command conservatively reports `software_failure` whenever it
 can still run over SSH. It captures disk, GPU, Python/CUDA, offline-cache, and
 checkpoint-pointer state and never requests replacement. The recovery command
-requires the same checkpoint pointer and revalidates the inert packet; the
-lifecycle wrapper then reruns the identical remote command, whose runner
-validates the checkpoint identity before resuming.
+requires a valid checkpoint pointer; the lifecycle wrapper then reruns the
+identical remote command, whose runner validates the checkpoint identity before
+resuming.
 
 ## Remaining substitutions before even a dry-run rental command is complete
 
@@ -95,22 +99,15 @@ validates the checkpoint identity before resuming.
    Vast search.
 3. Exact `APPROVED_HOURLY_PRICE_USD`, `APPROVED_MAX_COST_USD`, and
    `APPROVED_AT` after the user sees and approves those concrete values.
-4. `CHECKPOINT_DURABILITY_COMMAND`, a reviewed command that uploads each
-   generation and emits the runner's exact durability receipt.
-5. `CANARY_ARTIFACT_FINALIZE_COMMAND`, a reviewed command that produces the
-   frozen nine-file inventory, publishes it, and writes the lifecycle artifact
-   manifest.
+4. `BUCKET_VERSIONING_STATUS=Enabled` and the SHA-256 of a fresh controller
+   receipt proving that exact bucket state. It is currently disabled or
+   unconfigured, so this remains a hard blocker.
 
-The last three command substitutions are implementation blockers, not values to
-guess at launch time. The current repository has no credentialless dynamic
-checkpoint upload/acknowledgement bridge and no lifecycle-compatible artifact
-publisher. The existing model-cache hydrator also needs a source plan that was
-not published with the 20 cache objects. Finally, the screen runner verifies the
-original plan-hashed vision rows but does not yet rebase their `data/...` image
-references through the validated portable PixMo manifest. An input downloader
-alone would therefore still fail or use the wrong image path. Keep the packet
-blocked until those three seams exist and their exact commands replace the
-placeholders.
+The hydration, checkpoint durability, controller provisioning, and artifact
+finalization commands are exact and hash-bound. The packet remains blocked only
+on the immutable image, fresh offer/cost approval, and bucket-versioning proof.
+Protected URL files must also exist as mode-0600 regular files at the frozen
+controller paths before the complete validator will pass.
 
 The validator reports `launch_ready: false` and exits 2 while any substitution
 remains. `--allow-incomplete` changes only that reporting exit code for CI; it

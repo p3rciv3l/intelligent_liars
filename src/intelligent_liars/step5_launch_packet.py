@@ -191,6 +191,16 @@ def _validate_complete_runtime(packet: Mapping[str, Any]) -> None:
         "--disk": str(runtime["disk_gib"]),
         "--approved-hourly-price": str(approval["approved_hourly_price_usd"]),
         "--approved-max-cost": str(approval["approved_max_cost_usd"]),
+        "--controller-public-key-sha256": str(
+            packet["controller_prerequisites"]["controller_public_key_sha256"]
+        ),
+        "--input-url-manifest-url-file": str(
+            packet["controller_prerequisites"]["input_url_manifest_url_file"]
+        ),
+        "--artifact-put-url-file": str(
+            packet["controller_prerequisites"]["artifact_put_url_file"]
+        ),
+        "--expected-durable-uri": str(packet["durability"]["artifact_uri"]),
     }
     for flag, expected in expected_flags.items():
         if flag_value(flag) != expected:
@@ -200,6 +210,34 @@ def _validate_complete_runtime(packet: Mapping[str, Any]) -> None:
         raise LaunchPacketError("remote command is not bound to the runtime image digest")
     if flag_value("--remote-command") != remote:
         raise LaunchPacketError("lifecycle remote command differs from the frozen template")
+
+    durability = _mapping(packet.get("durability"), label="durability")
+    if durability.get("bucket_versioning_status") != "Enabled":
+        raise LaunchPacketError("launch requires verified S3 bucket versioning Enabled")
+    _sha256(
+        durability.get("bucket_versioning_receipt_sha256"),
+        label="bucket_versioning_receipt_sha256",
+    )
+    _validate_s3(durability.get("artifact_uri"), label="artifact_uri")
+    _validate_s3(durability.get("checkpoint_prefix"), label="checkpoint_prefix")
+    _sha256(durability.get("checkpoint_controller_key_id"), label="checkpoint_controller_key_id")
+
+    controller = _mapping(packet.get("controller_prerequisites"), label="controller_prerequisites")
+    public_path = Path(str(controller.get("controller_public_key_path", "")))
+    private_path = Path(str(controller.get("controller_private_key_path", "")))
+    expected_public_hash = _sha256(
+        controller.get("controller_public_key_sha256"),
+        label="controller_public_key_sha256",
+    )
+    if _regular_file_sha256(public_path, label="controller public key") != expected_public_hash:
+        raise LaunchPacketError("controller public key hash differs")
+    for path, label in (
+        (private_path, "controller private key"),
+        (Path(str(controller.get("input_url_manifest_url_file", ""))), "input URL manifest secret"),
+        (Path(str(controller.get("artifact_put_url_file", ""))), "artifact PUT URL secret"),
+    ):
+        if path.is_symlink() or not path.is_file() or path.stat().st_mode & 0o077:
+            raise LaunchPacketError(f"{label} must be a 0600 regular file")
 
 
 def validate_launch_packet(
@@ -220,7 +258,8 @@ def validate_launch_packet(
     identity = _mapping(value.get("identity"), label="identity")
     for field in (
         "plan_sha256",
-        "probe_qualification_sha256",
+        "probe_qualification_file_sha256",
+        "probe_qualification_receipt_sha256",
         "model_content_sha256",
         "pixmo_content_sha256",
     ):
@@ -228,6 +267,26 @@ def validate_launch_packet(
     revision = identity.get("model_revision")
     if not isinstance(revision, str) or re.fullmatch(r"[0-9a-f]{40}", revision) is None:
         raise LaunchPacketError("model_revision must be an exact 40-hex revision")
+
+    controller_contracts = _mapping(
+        value.get("controller_contracts"), label="controller_contracts"
+    )
+    if set(controller_contracts) != {
+        "artifact_upload_preparation",
+        "checkpoint_controller",
+    }:
+        raise LaunchPacketError("controller_contracts inventory differs")
+    for name, descriptor_value in controller_contracts.items():
+        descriptor = _mapping(descriptor_value, label=name)
+        if set(descriptor) != {"path", "sha256"}:
+            raise LaunchPacketError(f"{name} descriptor fields differ")
+        path = Path(str(descriptor["path"]))
+        if not path.is_absolute():
+            path = packet_dir / path
+        actual = _regular_file_sha256(path.resolve(), label=name)
+        expected = _sha256(descriptor["sha256"], label=f"{name} sha256")
+        if actual != expected:
+            raise LaunchPacketError(f"{name} hash does not match local bytes")
 
     _validate_local_contracts(value.get("local_contracts"), packet_dir)
     remote_inputs = _mapping(value.get("remote_inputs"), label="remote_inputs")
@@ -249,6 +308,8 @@ def validate_launch_packet(
 
     commands = _mapping(value.get("commands"), label="commands")
     expected_commands = {
+        "artifact_upload_preparation",
+        "checkpoint_controller",
         "remote",
         "host_qualification",
         "diagnostic",
