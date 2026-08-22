@@ -1,0 +1,48 @@
+{
+  "audit_opened": false,
+  "behavior_scenario_counts": {
+    "development_heldout_family": 95,
+    "development_iid": 70,
+    "train_behavior": 519
+  },
+  "errors": [],
+  "format": "tinylora_step5_preflight_v1",
+  "outputs": {
+    "development_heldout_family": {
+      "records": 570,
+      "sha256": "9937f7cbc5c4f4f38bfa5341f90ae401d8b97875ac6bd4acea04a5ab6469a16c"
+    },
+    "development_iid": {
+      "records": 420,
+      "sha256": "7c6a1bf022af31845e53c192ba239f94012b4d31d4781667315fd02060321bff"
+    },
+    "preservation_development_text": {
+      "records": 29,
+      "sha256": "8f2d2d2f276e3553fb974076777d02a85d1a7d86d68f28aa465bb5db4d7ae49f"
+    },
+    "preservation_development_vision": {
+      "records": 100,
+      "sha256": "d2960ea248991db80b7594ab899c26301173e2ef7f7594c9c2c3346dd339df9d"
+    },
+    "preservation_train": {
+      "records": 218,
+      "sha256": "471845bd388336b5b99eea0bca03268a9cf6b5a44c1dde918c12852bc5dab709"
+    },
+    "safety_refusal_development": {
+      "records": 450,
+      "sha256": "531489583b3f20be57cb8d425663be5690ad2b99aa6d1458de515a7a1395bd0f"
+    },
+    "train_behavior": {
+      "records": 3114,
+      "sha256": "943f72d656ccd6c23a59eb582ee70a4eea78717175c57aeb18732f894b464fec"
+    }
+  },
+  "plan_sha256": "182a3c634b95340233c1fe559ddbf7fda22aa19c02eb87c1e43219cdcb073612",
+  "preservation_development_records": 129,
+  "preservation_train_records": 218,
+  "safety_refusal_counts": {
+    "comply": 250,
+    "refuse": 200
+  },
+  "valid": true
+}
