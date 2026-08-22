@@ -11,6 +11,8 @@ import pytest
 import torch
 from safetensors.torch import load_file
 
+from intelligent_liars.step5_prerequisites import validate_prerequisite_receipt
+
 
 SCRIPT = Path(__file__).parents[1] / "scripts" / "run_tinylora_step5_screen.py"
 SPEC = importlib.util.spec_from_file_location("run_tinylora_step5_screen", SCRIPT)
@@ -30,6 +32,8 @@ def _numeric_args(**overrides: object) -> argparse.Namespace:
         "development_per_objective": 0,
         "seed": 17,
         "projection_seed": 23,
+        "mode": "smoke",
+        "overfit_min_relative_loss_reduction": 0.20,
     }
     values.update(overrides)
     return argparse.Namespace(**values)
@@ -344,6 +348,7 @@ def test_train_mode_requires_external_durability_verifier():
                 mode="train",
                 durability_verifier_command=None,
                 runtime_image_digest=None,
+                prerequisite_receipt=None,
             )
         )
 
@@ -355,8 +360,174 @@ def test_train_mode_requires_immutable_runtime_image_digest():
                 mode="train",
                 durability_verifier_command="uploader",
                 runtime_image_digest="latest",
+                prerequisite_receipt=Path("receipt.json"),
             )
         )
+
+
+def test_train_mode_requires_prerequisite_receipt():
+    with pytest.raises(ValueError, match="prerequisite-receipt"):
+        MODULE.validate_durability_args(
+            argparse.Namespace(
+                mode="train",
+                durability_verifier_command="uploader",
+                runtime_image_digest="sha256:" + "5" * 64,
+                prerequisite_receipt=None,
+            )
+        )
+
+
+def _prerequisite_identity(arm: dict | None = None) -> dict:
+    return MODULE.prerequisite_identity(
+        plan_sha256="1" * 64,
+        probe_sha256="2" * 64,
+        code_sha256="3" * 64,
+        arm=arm or {"name": "tiny13"},
+        model={"model_id": "example/model", "revision": "4" * 40},
+        runtime_image_digest="sha256:" + "5" * 64,
+    )
+
+
+def _passing_prerequisite_receipt(identity: dict) -> dict:
+    return MODULE.build_prerequisite_receipt(
+        identity=identity,
+        reachability={
+            "selected_records": 8,
+            "unexplained_skips": 0,
+            "gradient_dimensions": {
+                name: 13 for name in MODULE.EXPECTED_REACHABILITY_OBJECTIVES
+            },
+            "gradient_norms": {
+                name: 0.5 for name in MODULE.EXPECTED_REACHABILITY_OBJECTIVES
+            },
+        },
+        initial_mean_loss=2.0,
+        final_mean_loss=1.0,
+        optimizer_steps=20,
+        selected_records=5,
+        required_relative_loss_reduction=0.20,
+        evaluator_expected_record_ids=[f"record-{index}" for index in range(5)],
+        evaluator_metric_rows=[
+            {
+                "record_id": f"record-{index}",
+                "base_margin": 0.1,
+                "student_margin": 0.2,
+                "improvement": 0.1,
+                "direction_movement": None,
+            }
+            for index in range(5)
+        ],
+    )
+
+
+def test_prerequisite_evaluator_evidence_matches_evaluate_arm_schema():
+    rows = MODULE.prerequisite_evaluator_metric_rows(
+        {
+            "behavior": [
+                {
+                    "record_id": "record-1",
+                    "scenario_id": "scenario-1",
+                    "family": "family",
+                    "objective": "truthful_direct_report",
+                    "base_margin": 0.1,
+                    "student_margin": 0.3,
+                    "improvement": 0.2,
+                    "direction_movement": None,
+                }
+            ]
+        }
+    )
+    assert rows == [
+        {
+            "record_id": "record-1",
+            "base_margin": 0.1,
+            "student_margin": 0.3,
+            "improvement": 0.2,
+            "direction_movement": None,
+        }
+    ]
+
+
+@pytest.mark.parametrize("failure", ["stale", "wrong-arm", "failed", "smoke"])
+def test_prerequisite_receipt_rejects_stale_wrong_arm_failed_and_smoke(
+    failure: str,
+):
+    expected = _prerequisite_identity()
+    receipt = _passing_prerequisite_receipt(expected)
+    if failure == "stale":
+        receipt["identity"]["code_sha256"] = "9" * 64
+    elif failure == "wrong-arm":
+        receipt["identity"]["arm"] = {"name": "ordinary-rank3"}
+    elif failure == "failed":
+        receipt["passed"] = False
+    else:
+        receipt["generation_mode"] = "smoke"
+    with pytest.raises(ValueError):
+        validate_prerequisite_receipt(
+            receipt,
+            expected_identity=expected,
+        )
+
+
+@pytest.mark.parametrize(
+    ("check", "field", "value"),
+    [
+        ("reachability", "unexplained_skips", 1),
+        ("reachability", "gradient_norms", {}),
+        ("intentional_overfit", "unexplained_skips", 1),
+        ("intentional_overfit", "is_smoke", True),
+        ("intentional_overfit", "final_mean_loss", 2.0),
+        ("intentional_overfit", "optimizer_steps", 1),
+        ("intentional_overfit", "relative_loss_reduction", 0.20),
+        ("evaluator_sanity", "unexplained_skips", 1),
+        ("evaluator_sanity", "evaluated_records", 4),
+        ("evaluator_sanity", "evaluated_record_ids", ["wrong"] * 5),
+        ("evaluator_sanity", "all_metrics_finite", False),
+    ],
+)
+def test_prerequisite_receipt_requires_reachability_overfit_and_evaluator_sanity(
+    check: str,
+    field: str,
+    value: object,
+):
+    identity = _prerequisite_identity()
+    receipt = _passing_prerequisite_receipt(identity)
+    receipt["checks"][check][field] = value
+    with pytest.raises(ValueError):
+        validate_prerequisite_receipt(
+            receipt,
+            expected_identity=identity,
+        )
+
+
+def test_prerequisite_receipt_rejects_missing_duplicate_and_nonfinite_evidence():
+    identity = _prerequisite_identity()
+    mutations = []
+
+    missing = _passing_prerequisite_receipt(identity)
+    missing["checks"]["evaluator_sanity"]["metric_rows"].pop()
+    mutations.append(missing)
+
+    duplicate = _passing_prerequisite_receipt(identity)
+    duplicate["checks"]["evaluator_sanity"]["expected_record_ids"][1] = "record-0"
+    mutations.append(duplicate)
+
+    nonfinite = _passing_prerequisite_receipt(identity)
+    nonfinite["checks"]["evaluator_sanity"]["metric_rows"][0]["improvement"] = float(
+        "nan"
+    )
+    mutations.append(nonfinite)
+
+    missing_metric = _passing_prerequisite_receipt(identity)
+    missing_metric["checks"]["evaluator_sanity"]["metric_rows"][0]["base_margin"] = None
+    mutations.append(missing_metric)
+
+    for receipt in mutations:
+        with pytest.raises(ValueError):
+            validate_prerequisite_receipt(
+                receipt,
+                expected_identity=identity,
+            )
 
 
 def test_train_arm_rejects_nonfinite_loss_before_optimizer_step(

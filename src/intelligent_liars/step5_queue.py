@@ -13,6 +13,8 @@ from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
+from intelligent_liars.step5_prerequisites import validate_prerequisite_receipt
+
 
 QUEUE_PLAN_FORMAT = "tinylora_step5_queue_plan_v1"
 QUEUE_STATE_FORMAT = "tinylora_step5_queue_state_v1"
@@ -93,7 +95,9 @@ def _instance_inventory(state: Mapping[str, Any]) -> tuple[set[str], set[str]]:
         if not isinstance(instance_id, str) or not instance_id:
             raise ValueError("Every project inventory entry requires an instance id")
         if not isinstance(instance_status, str) or not instance_status:
-            raise ValueError("Every project inventory entry requires an instance status")
+            raise ValueError(
+                "Every project inventory entry requires an instance status"
+            )
         if instance_status not in _KNOWN_INSTANCE_STATUSES:
             raise ValueError(f"Unknown project instance status: {instance_status}")
         if instance_status in _INSTANCE_INVENTORY_STATUSES:
@@ -111,7 +115,9 @@ def _validate_state(
     if state.get("format") != QUEUE_STATE_FORMAT:
         raise ValueError(f"Queue state must use format {QUEUE_STATE_FORMAT}")
     if "project_instances" not in state:
-        raise ValueError("Queue state requires an authoritative project_instances inventory")
+        raise ValueError(
+            "Queue state requires an authoritative project_instances inventory"
+        )
     inventory_entries = state.get("project_instances")
     if not isinstance(inventory_entries, list):
         raise ValueError("Queue state project_instances must be an inventory list")
@@ -147,7 +153,9 @@ def _validate_state(
             if instance_status is None:
                 raise ValueError(f"Instance status is required for {task_id}")
             if instance_status not in _KNOWN_INSTANCE_STATUSES:
-                raise ValueError(f"Unknown instance status for {task_id}: {instance_status}")
+                raise ValueError(
+                    f"Unknown instance status for {task_id}: {instance_status}"
+                )
             if instance_status in _INSTANCE_INVENTORY_STATUSES and (
                 inventory_by_id.get(instance_id) != instance_status
             ):
@@ -156,13 +164,17 @@ def _validate_state(
                 )
             owner = instance_owners.setdefault(instance_id, str(task_id))
             if owner != task_id:
-                raise ValueError(f"Instance {instance_id} is assigned to multiple tasks")
+                raise ValueError(
+                    f"Instance {instance_id} is assigned to multiple tasks"
+                )
         if status == "running" and instance_status not in _ACTIVE_INSTANCE_STATUSES:
             raise ValueError(f"Running task {task_id} requires an active instance")
         if status == "failed":
             failure = record.get("failure")
             if not isinstance(failure, Mapping):
-                raise ValueError(f"Failed task {task_id} requires failure classification")
+                raise ValueError(
+                    f"Failed task {task_id} requires failure classification"
+                )
             failure_class = failure.get("class")
             if failure_class not in {"software", "host_loss"}:
                 raise ValueError(f"Failed task {task_id} has unsupported failure class")
@@ -197,6 +209,8 @@ def plan_step5_queue(
     seeds: Iterable[int],
     state: Mapping[str, Any],
     max_concurrency: int,
+    prerequisite_receipts: Mapping[str, Mapping[str, Any]],
+    expected_prerequisite_identities: Mapping[str, Mapping[str, Any]],
 ) -> dict[str, Any]:
     """Plan the next bounded queue transition without changing external state."""
     if not 1 <= max_concurrency <= HARD_PROJECT_WORKER_CAP:
@@ -204,12 +218,38 @@ def plan_step5_queue(
             f"Step 5 allows at most {HARD_PROJECT_WORKER_CAP} concurrent workers"
         )
     normalized_arms = _normalize_arms(arms)
+    arm_names = {str(arm["name"]) for arm in normalized_arms}
+    if set(prerequisite_receipts) != arm_names:
+        raise ValueError("Queue requires one frozen prerequisite receipt per arm")
+    if set(expected_prerequisite_identities) != arm_names:
+        raise ValueError("Queue lacks expected prerequisite identities for every arm")
+    receipt_inventory: dict[str, dict[str, str]] = {}
+    for arm_name in sorted(arm_names):
+        record = prerequisite_receipts[arm_name]
+        if set(record) != {"receipt", "file_sha256"}:
+            raise ValueError("Queue prerequisite record fields are invalid")
+        file_digest = record["file_sha256"]
+        if not isinstance(file_digest, str) or _SHA256.fullmatch(file_digest) is None:
+            raise ValueError(
+                "Queue prerequisite receipt requires its exact file SHA-256"
+            )
+        receipt = record["receipt"]
+        if not isinstance(receipt, Mapping):
+            raise ValueError("Queue prerequisite receipt must be a JSON object")
+        validate_prerequisite_receipt(
+            receipt,
+            expected_identity=expected_prerequisite_identities[arm_name],
+        )
+        receipt_inventory[arm_name] = {"file_sha256": file_digest}
     normalized_seeds = _normalize_seeds(seeds)
     jobs: list[dict[str, Any]] = [
         {
             "task_id": _task_id(str(arm["name"]), seed),
             "arm": str(arm["name"]),
             "seed": seed,
+            "prerequisite_receipt_sha256": receipt_inventory[str(arm["name"])][
+                "file_sha256"
+            ],
         }
         for seed in normalized_seeds
         for arm in normalized_arms
@@ -361,6 +401,7 @@ def plan_step5_queue(
         "arms": normalized_arms,
         "seeds": normalized_seeds,
         "jobs": jobs,
+        "prerequisite_receipts": receipt_inventory,
         "observed_state": dict(state),
         "actions": actions,
         "summary": {

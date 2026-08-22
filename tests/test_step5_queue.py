@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import subprocess
@@ -8,7 +9,14 @@ from pathlib import Path
 
 import pytest
 
-from intelligent_liars.step5_queue import plan_step5_queue
+from intelligent_liars.step5_prerequisites import (
+    EXPECTED_REACHABILITY_OBJECTIVES,
+    MIN_INTENTIONAL_OVERFIT_RELATIVE_LOSS_REDUCTION,
+    build_prerequisite_receipt,
+    prerequisite_identity,
+    step5_code_sha256,
+)
+from intelligent_liars.step5_queue import plan_step5_queue as _plan_step5_queue
 
 
 ARMS = [
@@ -16,6 +24,69 @@ ARMS = [
     {"name": "tiny64"},
     {"name": "lora1"},
 ]
+
+
+def _identity(arm: dict, **overrides: object) -> dict:
+    values = prerequisite_identity(
+        plan_sha256="1" * 64,
+        probe_sha256="2" * 64,
+        code_sha256="3" * 64,
+        arm=arm,
+        model={"model_id": "example/model", "revision": "4" * 40},
+        runtime_image_digest="sha256:" + "5" * 64,
+    )
+    values.update(overrides)
+    return values
+
+
+def _receipt(identity: dict, **overrides: object) -> dict:
+    receipt = build_prerequisite_receipt(
+        identity=identity,
+        reachability={
+            "selected_records": 8,
+            "unexplained_skips": 0,
+            "gradient_dimensions": {
+                name: 13 for name in EXPECTED_REACHABILITY_OBJECTIVES
+            },
+            "gradient_norms": {name: 0.5 for name in EXPECTED_REACHABILITY_OBJECTIVES},
+        },
+        initial_mean_loss=2.0,
+        final_mean_loss=1.0,
+        optimizer_steps=20,
+        selected_records=5,
+        required_relative_loss_reduction=(
+            MIN_INTENTIONAL_OVERFIT_RELATIVE_LOSS_REDUCTION
+        ),
+        evaluator_expected_record_ids=[f"record-{index}" for index in range(5)],
+        evaluator_metric_rows=[
+            {
+                "record_id": f"record-{index}",
+                "base_margin": 0.1,
+                "student_margin": 0.2,
+                "improvement": 0.1,
+                "direction_movement": None,
+            }
+            for index in range(5)
+        ],
+    )
+    receipt.update(overrides)
+    return receipt
+
+
+def _plan(*, arms: list[dict], seeds: list[int], state: dict, max_concurrency: int):
+    identities = {arm["name"]: _identity(arm) for arm in arms}
+    receipts = {
+        name: {"receipt": _receipt(identity), "file_sha256": "6" * 64}
+        for name, identity in identities.items()
+    }
+    return _plan_step5_queue(
+        arms=arms,
+        seeds=seeds,
+        state=state,
+        max_concurrency=max_concurrency,
+        prerequisite_receipts=receipts,
+        expected_prerequisite_identities=identities,
+    )
 
 
 def _state(tasks: dict[str, dict] | None = None) -> dict:
@@ -47,7 +118,7 @@ def _checkpoint() -> dict[str, object]:
 
 
 def test_empty_queue_launches_at_most_three_independent_workers():
-    planned = plan_step5_queue(
+    planned = _plan(
         arms=ARMS,
         seeds=[7, 8],
         state=_state(),
@@ -64,14 +135,50 @@ def test_empty_queue_launches_at_most_three_independent_workers():
     assert planned["summary"]["planned_active_workers"] == 3
 
 
+def test_queue_rejects_missing_prerequisite_receipt():
+    identities = {arm["name"]: _identity(arm) for arm in ARMS}
+    with pytest.raises(ValueError, match="one frozen prerequisite receipt per arm"):
+        _plan_step5_queue(
+            arms=ARMS,
+            seeds=[7],
+            state=_state(),
+            max_concurrency=3,
+            prerequisite_receipts={},
+            expected_prerequisite_identities=identities,
+        )
+
+
+@pytest.mark.parametrize("failure", ["stale", "wrong-arm", "failed"])
+def test_queue_rejects_invalid_prerequisite_receipt(failure: str):
+    arm = ARMS[0]
+    expected = _identity(arm)
+    actual = dict(expected)
+    if failure == "stale":
+        actual["code_sha256"] = "9" * 64
+    elif failure == "wrong-arm":
+        actual["arm"] = ARMS[1]
+    receipt = _receipt(actual, **({"passed": False} if failure == "failed" else {}))
+    with pytest.raises(ValueError, match="mismatch|not frozen and passing"):
+        _plan_step5_queue(
+            arms=[arm],
+            seeds=[7],
+            state=_state(),
+            max_concurrency=1,
+            prerequisite_receipts={
+                arm["name"]: {"receipt": receipt, "file_sha256": "6" * 64}
+            },
+            expected_prerequisite_identities={arm["name"]: expected},
+        )
+
+
 def test_planning_is_idempotent_and_has_no_wall_clock_fields():
-    first = plan_step5_queue(
+    first = _plan(
         arms=ARMS,
         seeds=[7],
         state=_state(),
         max_concurrency=2,
     )
-    second = plan_step5_queue(
+    second = _plan(
         arms=ARMS,
         seeds=[7],
         state=_state(),
@@ -83,7 +190,7 @@ def test_planning_is_idempotent_and_has_no_wall_clock_fields():
 
 def test_fourth_worker_is_rejected_even_when_requested():
     with pytest.raises(ValueError, match="at most 3"):
-        plan_step5_queue(
+        _plan(
             arms=ARMS,
             seeds=[7, 8],
             state=_state(),
@@ -93,7 +200,7 @@ def test_fourth_worker_is_rejected_even_when_requested():
 
 def test_authoritative_project_inventory_is_required():
     with pytest.raises(ValueError, match="authoritative project_instances"):
-        plan_step5_queue(
+        _plan(
             arms=ARMS,
             seeds=[7],
             state={"format": "tinylora_step5_queue_state_v1", "tasks": {}},
@@ -116,7 +223,7 @@ def test_running_workers_reduce_available_queue_slots():
             "instance_status": "running",
         },
     }
-    planned = plan_step5_queue(
+    planned = _plan(
         arms=ARMS,
         seeds=[7, 8],
         state=_state(tasks),
@@ -137,7 +244,7 @@ def test_software_failure_requires_diagnosis_on_same_instance():
             "checkpoint": _checkpoint(),
         }
     }
-    planned = plan_step5_queue(
+    planned = _plan(
         arms=ARMS[:1],
         seeds=[7],
         state=_state(tasks),
@@ -165,7 +272,7 @@ def test_resolved_software_failure_resumes_verified_checkpoint_same_instance():
             "checkpoint": _checkpoint(),
         }
     }
-    action = plan_step5_queue(
+    action = _plan(
         arms=ARMS[:1],
         seeds=[7],
         state=_state(tasks),
@@ -192,7 +299,7 @@ def test_unverified_checkpoint_is_never_used_for_retry():
             },
         }
     }
-    action = plan_step5_queue(
+    action = _plan(
         arms=ARMS[:1],
         seeds=[7],
         state=_state(tasks),
@@ -213,7 +320,7 @@ def test_resolved_software_failure_on_running_instance_does_not_consume_extra_sl
             "checkpoint": _checkpoint(),
         }
     }
-    planned = plan_step5_queue(
+    planned = _plan(
         arms=ARMS[:1],
         seeds=[7],
         state=_state(tasks),
@@ -234,7 +341,7 @@ def test_confirmed_host_loss_permits_replacement_and_checkpoint_resume():
             "checkpoint": _checkpoint(),
         }
     }
-    action = plan_step5_queue(
+    action = _plan(
         arms=ARMS[:1],
         seeds=[7],
         state=_state(tasks),
@@ -257,7 +364,7 @@ def test_host_loss_cannot_replace_a_stopped_recoverable_instance():
         }
     }
     with pytest.raises(ValueError, match="requires an unavailable instance"):
-        plan_step5_queue(
+        _plan(
             arms=ARMS[:1],
             seeds=[7],
             state=_state(tasks),
@@ -274,7 +381,7 @@ def test_pending_task_reuses_stopped_instance_before_renting():
             "instance_status": "stopped",
         }
     }
-    planned = plan_step5_queue(
+    planned = _plan(
         arms=ARMS[:1],
         seeds=[7],
         state=_state(tasks),
@@ -301,7 +408,7 @@ def test_pending_task_cannot_resume_unavailable_instance():
         }
     }
     with pytest.raises(ValueError, match="classify confirmed host loss"):
-        plan_step5_queue(
+        _plan(
             arms=ARMS[:1],
             seeds=[7],
             state=_state(tasks),
@@ -320,7 +427,7 @@ def test_software_failure_cannot_retry_unavailable_instance():
         }
     }
     with pytest.raises(ValueError, match="must retain its original instance"):
-        plan_step5_queue(
+        _plan(
             arms=ARMS[:1],
             seeds=[7],
             state=_state(tasks),
@@ -339,14 +446,18 @@ def test_paused_project_instances_count_against_three_worker_cap():
         }
         for seed in (1, 2, 3)
     }
-    planned = plan_step5_queue(
+    planned = _plan(
         arms=ARMS,
         seeds=[1, 2, 3, 4],
         state=_state(tasks),
         max_concurrency=3,
     )
-    assert all(action["action"] == "diagnose_same_instance" for action in planned["actions"])
-    assert not any(action["action"] == "launch_new_instance" for action in planned["actions"])
+    assert all(
+        action["action"] == "diagnose_same_instance" for action in planned["actions"]
+    )
+    assert not any(
+        action["action"] == "launch_new_instance" for action in planned["actions"]
+    )
     assert planned["summary"]["project_worker_inventory"] == 3
 
 
@@ -357,6 +468,10 @@ def test_cli_is_dry_run_and_writes_deterministic_plan(tmp_path: Path):
             {
                 "format": "tinylora_step5_plan_v1",
                 "arms": ARMS,
+                "model": {
+                    "model_id": "example/model",
+                    "revision": "4" * 40,
+                },
                 "schedule": {"max_concurrent_single_gpu_workers": 3},
                 "large_run_enabled": False,
                 "paid_execution_enabled": False,
@@ -365,6 +480,26 @@ def test_cli_is_dry_run_and_writes_deterministic_plan(tmp_path: Path):
     )
     state = tmp_path / "state.json"
     state.write_text(json.dumps(_state()))
+    probe = tmp_path / "probe.json"
+    probe.write_text("{}\n")
+    plan_sha256 = hashlib.sha256(manifest.read_bytes()).hexdigest()
+    probe_sha256 = hashlib.sha256(probe.read_bytes()).hexdigest()
+    code_sha256 = step5_code_sha256(Path(__file__).parents[1])
+    receipt_arguments: list[str] = []
+    for arm in ARMS:
+        identity = prerequisite_identity(
+            plan_sha256=plan_sha256,
+            probe_sha256=probe_sha256,
+            code_sha256=code_sha256,
+            arm=arm,
+            model={"model_id": "example/model", "revision": "4" * 40},
+            runtime_image_digest="sha256:" + "5" * 64,
+        )
+        receipt_path = tmp_path / f"{arm['name']}.receipt.json"
+        receipt_path.write_text(json.dumps(_receipt(identity)))
+        receipt_arguments.extend(
+            ["--prerequisite-receipt", f"{arm['name']}={receipt_path}"]
+        )
     output = tmp_path / "queue.json"
     script = Path(__file__).parents[1] / "scripts" / "plan_tinylora_step5_fleet.py"
     command = [
@@ -372,6 +507,10 @@ def test_cli_is_dry_run_and_writes_deterministic_plan(tmp_path: Path):
         str(script),
         "--step5-plan",
         str(manifest),
+        "--probe",
+        str(probe),
+        "--runtime-image-digest",
+        "sha256:" + "5" * 64,
         "--state",
         str(state),
         "--output",
@@ -380,6 +519,7 @@ def test_cli_is_dry_run_and_writes_deterministic_plan(tmp_path: Path):
         "7,8",
         "--max-concurrency",
         "2",
+        *receipt_arguments,
     ]
     environment = {**os.environ, "PYTHONPATH": str(Path(__file__).parents[1] / "src")}
     first = subprocess.run(
