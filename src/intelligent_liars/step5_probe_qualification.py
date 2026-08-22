@@ -11,6 +11,7 @@ import hashlib
 import json
 import math
 import os
+import re
 import tempfile
 from collections.abc import Mapping, Sequence
 from pathlib import Path
@@ -20,6 +21,7 @@ from typing import Any
 REGISTRY_FORMAT = "intelligent_liars_step5_probe_registry_v1"
 MANIFEST_FORMAT = "intelligent_liars_step5_probe_qualification_v1"
 ENSEMBLES = ("regularizer", "evaluator")
+_CANONICAL_IDENTIFIER = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:/@+\-]*\Z")
 
 
 def _canonical_json(value: Any) -> bytes:
@@ -36,12 +38,8 @@ def _sha256_json(value: Any) -> str:
     return hashlib.sha256(_canonical_json(value)).hexdigest()
 
 
-def _sha256_file(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
+def _sha256_bytes(value: bytes) -> str:
+    return hashlib.sha256(value).hexdigest()
 
 
 def _required_string(value: Any, *, field: str) -> str:
@@ -57,6 +55,15 @@ def _required_identifier_list(value: Any, *, field: str, probe_id: str) -> list[
         _required_string(item, field=f"Probe {probe_id!r} {field} item")
         for item in value
     ]
+    invalid = [
+        identifier
+        for identifier in identifiers
+        if _CANONICAL_IDENTIFIER.fullmatch(identifier) is None
+    ]
+    if invalid:
+        raise ValueError(
+            f"Probe {probe_id!r} {field} must use canonical identifier syntax: {invalid}"
+        )
     if len(set(identifiers)) != len(identifiers):
         raise ValueError(f"Probe {probe_id!r} contains duplicate {field}")
     return sorted(identifiers)
@@ -189,7 +196,8 @@ def _compile_probe(
         for item in direction_path
     ]
     try:
-        artifact_payload = json.loads(resolved_path.read_text())
+        artifact_bytes = resolved_path.read_bytes()
+        artifact_payload = json.loads(artifact_bytes)
     except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise ValueError(
             f"Probe {probe_id!r} artifact is not readable JSON: {exc}"
@@ -214,7 +222,7 @@ def _compile_probe(
         "probe_id": probe_id,
         "ensemble": ensemble,
         "artifact_path": artifact_value,
-        "artifact_sha256": _sha256_file(resolved_path),
+        "artifact_sha256": _sha256_bytes(artifact_bytes),
         "artifact_direction_path": direction_path,
         "direction_dimension": len(direction),
         "direction_sha256": _sha256_json(direction),
@@ -231,9 +239,16 @@ def _compile_probe(
     }
 
 
-def _split_receipt(name: str, probes: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
+def _split_receipt(
+    name: str,
+    probes: Sequence[Mapping[str, Any]],
+    qualification: Mapping[str, Any],
+) -> dict[str, Any]:
     body = {
         "ensemble": name,
+        "layer": qualification["layer"],
+        "token_pooling": qualification["token_pooling"],
+        "direction_sign_convention": qualification["direction_sign_convention"],
         "probe_ids": [probe["probe_id"] for probe in probes],
         "artifact_sha256s": [probe["artifact_sha256"] for probe in probes],
         "direction_sha256s": [probe["direction_sha256"] for probe in probes],
@@ -243,6 +258,20 @@ def _split_receipt(name: str, probes: Sequence[Mapping[str, Any]]) -> dict[str, 
         "example_ids": sorted(
             {identifier for probe in probes for identifier in probe["example_ids"]}
         ),
+        "controls": [
+            {
+                "probe_id": probe["probe_id"],
+                "controls": [
+                    {
+                        "control_id": control["control_id"],
+                        "kind": control["kind"],
+                        "vector_sha256": control["vector_sha256"],
+                    }
+                    for control in probe["controls"]
+                ],
+            }
+            for probe in probes
+        ],
     }
     return {**body, "receipt_sha256": _sha256_json(body)}
 
@@ -292,6 +321,9 @@ def compile_probe_qualification(
     artifact_hashes = [probe["artifact_sha256"] for probe in probes]
     if len(set(artifact_hashes)) != len(artifact_hashes):
         raise ValueError("Probe registry contains duplicate artifact content")
+    direction_hashes = [probe["direction_sha256"] for probe in probes]
+    if len(set(direction_hashes)) != len(direction_hashes):
+        raise ValueError("Probe registry contains duplicate direction vectors")
     dimensions = {probe["direction_dimension"] for probe in probes}
     if len(dimensions) != 1:
         raise ValueError("All qualified probe directions must have the same dimension")
@@ -321,7 +353,9 @@ def compile_probe_qualification(
         if overlap:
             raise ValueError(f"cross-ensemble {field} overlap: {overlap}")
 
-    split_receipts = {name: _split_receipt(name, ensembles[name]) for name in ENSEMBLES}
+    split_receipts = {
+        name: _split_receipt(name, ensembles[name], qualification) for name in ENSEMBLES
+    }
     body = {
         "format": MANIFEST_FORMAT,
         "status": "qualified",
@@ -337,6 +371,13 @@ def validate_probe_qualification(
 ) -> dict[str, Any]:
     """Revalidate manifest receipts and current artifact bytes without refitting."""
     issues: list[str] = []
+    if not isinstance(manifest, Mapping):
+        return {
+            "format": "intelligent_liars_step5_probe_qualification_validation_v1",
+            "valid": False,
+            "issues": ["manifest root must be an object"],
+            "qualification_receipt_sha256": None,
+        }
     receipt = manifest.get("qualification_receipt_sha256")
     try:
         qualification = manifest["qualification"]
@@ -392,8 +433,17 @@ def write_probe_qualification(
     output_path = Path(output_path)
     if output_path.exists():
         raise FileExistsError(f"Probe qualification already exists: {output_path}")
-    manifest = compile_probe_qualification(registry, artifact_root=artifact_root)
     output_path.parent.mkdir(parents=True, exist_ok=True)
+    registry_copy = json.loads(json.dumps(registry, allow_nan=False))
+    for probe in registry_copy.get("probes", []):
+        raw_path = Path(str(probe.get("artifact_path", "")))
+        resolved_path = (
+            raw_path if raw_path.is_absolute() else Path(artifact_root) / raw_path
+        ).resolve()
+        probe["artifact_path"] = os.path.relpath(resolved_path, output_path.parent)
+    manifest = compile_probe_qualification(
+        registry_copy, artifact_root=output_path.parent
+    )
     descriptor, temporary_name = tempfile.mkstemp(
         prefix=f".{output_path.name}.", suffix=".tmp", dir=output_path.parent
     )

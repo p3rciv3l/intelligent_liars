@@ -28,7 +28,10 @@ Each `probes` entry declares a unique `probe_id`, either `regularizer` or
 vector, nonempty `source_group_ids` and `example_ids`, and the same layer,
 pooling, and sign values as the qualification object. The source-group ID must
 identify the upstream split that was fixed before probe fitting; it must not be
-an invented label for the artifact itself.
+an invented label or alias for the artifact itself. All identifiers must use
+the canonical ASCII syntax `[A-Za-z0-9][A-Za-z0-9._:/@+-]*`; whitespace is not
+allowed. Identical direction vectors are also rejected even when their artifact
+metadata differs.
 
 Example:
 
@@ -94,8 +97,9 @@ basis plus Gram–Schmidt construction seeded only by the probe ID; they are not
 learned from behavior or evaluation labels. Their vectors and hashes are stored
 in the manifest.
 
-Each ensemble receives a split receipt over its sorted probe IDs, artifact and
-direction hashes, source groups, and example IDs. The whole manifest receives a
+Each ensemble receives a split receipt over its pinned layer, pooling and sign,
+sorted probe IDs, artifact and direction hashes, source groups, example IDs, and
+control hashes. The whole manifest receives a
 qualification receipt. Verification recompiles the complete manifest from the
 current artifact bytes, so an artifact edit, a moved split member, a changed
 control, or a rewritten receipt fails closed.
