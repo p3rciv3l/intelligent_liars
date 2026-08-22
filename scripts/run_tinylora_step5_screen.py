@@ -64,6 +64,10 @@ from intelligent_liars.step5_prerequisites import (
     read_and_validate_prerequisite_receipt,
     step5_code_sha256,
 )
+from intelligent_liars.step5_multimodal_assets import (
+    rebase_image_references,
+    validate_staged_bundle,
+)
 
 
 OBJECTIVE_CONFIGURATION = {
@@ -90,6 +94,12 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--cache-dir", type=Path, default=Path("/workspace/cache/huggingface")
+    )
+    parser.add_argument(
+        "--pixmo-bundle",
+        type=Path,
+        required=True,
+        help="Validated portable PixMo bundle used to rebase vision rows in memory.",
     )
     parser.add_argument("--max-steps", type=int, default=200)
     parser.add_argument("--max-length", type=int, default=2048)
@@ -598,6 +608,21 @@ def _verified_rows(
     if len(rows) != specification["records"]:
         raise ValueError(f"Step 5 data count mismatch: {name}")
     return rows
+
+
+def rebase_preservation_images(
+    rows: list[dict[str, Any]],
+    *,
+    pixmo_bundle: Path,
+) -> list[dict[str, Any]]:
+    """Rebase verified frozen rows onto validated local images without mutation."""
+
+    manifest = validate_staged_bundle(pixmo_bundle)
+    return rebase_image_references(
+        rows,
+        bundle_root=pixmo_bundle,
+        manifest=manifest,
+    )
 
 
 def _install_adapter(
@@ -1249,6 +1274,14 @@ def main() -> int:
         *_verified_rows(plan_path, plan, "preservation_development_text"),
         *_verified_rows(plan_path, plan, "preservation_development_vision"),
     ]
+    preservation_train = rebase_preservation_images(
+        preservation_train,
+        pixmo_bundle=args.pixmo_bundle,
+    )
+    preservation_development = rebase_preservation_images(
+        preservation_development,
+        pixmo_bundle=args.pixmo_bundle,
+    )
     if args.development_per_objective:
         selected: list[dict[str, Any]] = []
         grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)

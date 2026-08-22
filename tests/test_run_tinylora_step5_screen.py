@@ -11,6 +11,8 @@ import pytest
 import torch
 from safetensors.torch import load_file
 
+from intelligent_liars.step5_multimodal_assets import stage_multimodal_bundle
+
 from intelligent_liars.step5_prerequisites import validate_prerequisite_receipt
 
 
@@ -62,6 +64,41 @@ def test_seed_all_controls_python_numpy_and_torch():
     MODULE.seed_all(123)
     second = (random.random(), np.random.random(), torch.rand(1).item())
     assert first == second
+
+
+def test_preservation_image_rebase_is_copy_only_and_absolute(tmp_path: Path):
+    import hashlib
+    import io
+
+    from PIL import Image
+
+    source = tmp_path / "source"
+    buffer = io.BytesIO()
+    Image.new("RGB", (4, 3), (1, 2, 3)).save(buffer, format="JPEG")
+    payload = buffer.getvalue()
+    digest = hashlib.sha256(payload).hexdigest()
+    relative = Path("data/tinylora_preservation_snapshots/v1/pixmo_docs_images") / f"{digest}.jpg"
+    (source / relative).parent.mkdir(parents=True)
+    (source / relative).write_bytes(payload)
+    corpus = source / "preservation.jsonl"
+    original = {
+        "record_id": "vision.1",
+        "preservation_category": "vision_charts",
+        "image_sha256": digest,
+        "messages": [
+            {"role": "user", "content": [{"type": "image", "image": relative.as_posix()}]},
+            {"role": "assistant", "content": "answer"},
+        ],
+    }
+    corpus.write_text(json.dumps(original) + "\n")
+    bundle = tmp_path / "bundle"
+    stage_multimodal_bundle([corpus], project_root=source, destination=bundle)
+
+    rebased = MODULE.rebase_preservation_images([original], pixmo_bundle=bundle)
+
+    assert original["messages"][0]["content"][0]["image"] == relative.as_posix()
+    mapped = Path(rebased[0]["messages"][0]["content"][0]["image"])
+    assert mapped.is_absolute() and mapped.read_bytes() == payload
 
 
 def test_checkpoint_identity_records_budget_code_objective_and_basis():
