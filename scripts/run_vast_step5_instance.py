@@ -51,8 +51,8 @@ INPUT_URL_MANIFEST_REMOTE_PATH = "/run/secrets/step5-input-url-manifest-url"
 HOST_GATE_URL_REMOTE_PATH = "/run/secrets/step5-host-gate-url"
 HARD_MAX_WORKERS = 3
 ARTIFACT_APPROVAL_MAX_AGE_SECONDS = 3600
-ARTIFACT_MINIMUM_REMAINING_SECONDS = 900
-ARTIFACT_REFRESH_BEFORE_EXPIRY_SECONDS = 3600
+ARTIFACT_MINIMUM_REMAINING_SECONDS = 300
+ARTIFACT_REFRESH_BEFORE_EXPIRY_SECONDS = 480
 ARTIFACT_REFRESH_EXPIRY_SECONDS = 21600
 SEALED_AUDIT_SHA256 = "40e2756176387514fc265bdf6225e73b356d7fe57b641405e6c4d2ecbe498e91"
 HOST_LOSS_STATES = frozenset({"dead", "error", "failed", "offline", "unavailable"})
@@ -1718,7 +1718,7 @@ def revalidate_artifact_put_freshness(
         parse_utc(verified["expires_at"], label="expires_at") - current
     ).total_seconds()
     if remaining <= ARTIFACT_MINIMUM_REMAINING_SECONDS:
-        raise ValueError("artifact PUT URL has less than 15 minutes remaining")
+        raise ValueError("artifact PUT URL has less than 5 minutes remaining")
     return verified
 
 

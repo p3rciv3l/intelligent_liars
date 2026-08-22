@@ -490,7 +490,9 @@ def test_uncapped_money_mode_has_no_fabricated_runtime_deadline():
     assert MODULE.remaining_cost_seconds(deadline) is None
 
 
-def test_artifact_put_contract_is_receipt_bound_and_mode_protected(tmp_path: Path):
+def test_artifact_put_contract_is_receipt_bound_and_mode_protected(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
     bucket = "step5-artifacts-example"
     key = "immutable/run-7/artifacts.tar"
     region = "us-west-2"
@@ -550,6 +552,39 @@ def test_artifact_put_contract_is_receipt_bound_and_mode_protected(tmp_path: Pat
             current=datetime.fromisoformat(approved_at.replace("Z", "+00:00"))
             + timedelta(hours=2),
         )
+    expiry = datetime.fromisoformat(receipt["expires_at"].replace("Z", "+00:00"))
+    MODULE.revalidate_artifact_put_freshness(
+        args,
+        receipt,
+        stable_url,
+        current=expiry - timedelta(seconds=301),
+    )
+    with pytest.raises(ValueError, match="less than 5 minutes"):
+        MODULE.revalidate_artifact_put_freshness(
+            args,
+            receipt,
+            stable_url,
+            current=expiry - timedelta(seconds=300),
+        )
+    unchanged = MODULE.refresh_artifact_put_authorization_if_needed(
+        args,
+        receipt,
+        stable_url,
+        current=expiry - timedelta(seconds=481),
+    )
+    assert unchanged == (receipt, stable_url, False)
+    monkeypatch.setattr(
+        MODULE,
+        "create_presigned_put_authorization",
+        lambda **_kwargs: (stable_url, receipt),
+    )
+    refreshed = MODULE.refresh_artifact_put_authorization_if_needed(
+        args,
+        receipt,
+        stable_url,
+        current=expiry - timedelta(seconds=480),
+    )
+    assert refreshed == (receipt, stable_url, True)
 
     receipt_path.chmod(0o644)
     with pytest.raises(ValueError, match="receipt file must have mode 0600"):

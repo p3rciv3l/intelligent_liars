@@ -94,6 +94,12 @@ def test_temporary_credential_expiry_shortens_or_rejects_url_lifetime():
         current=current,
         credential_expiry=current + timedelta(hours=2),
     ) == 6900
+    assert effective_expiry_seconds(
+        21600,
+        current=current,
+        credential_expiry=current + timedelta(minutes=15),
+        credential_is_temporary=True,
+    ) == 600
     with pytest.raises(ValueError, match="expire too soon"):
         effective_expiry_seconds(
             21600,
