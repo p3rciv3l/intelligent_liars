@@ -17,6 +17,7 @@ from typing import Any
 
 
 ARTIFACT_MANIFEST_FORMAT = "tinylora_step5_artifact_manifest_v1"
+LIFECYCLE_ARTIFACT_MANIFEST_FORMAT = "tinylora_step5_lifecycle_artifact_manifest_v2"
 HEAD_RECEIPT_FORMAT = "tinylora_step5_head_receipt_v1"
 ROUNDTRIP_RECEIPT_FORMAT = "tinylora_step5_roundtrip_receipt_v1"
 FINAL_RECEIPT_FORMAT = "tinylora_step5_final_receipt_v1"
@@ -137,6 +138,120 @@ def sha256_file(path: Path) -> str:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def _flat_logical_path(value: Any) -> str:
+    if not isinstance(value, str) or not value or "\\" in value:
+        raise ArtifactContractError("artifact path must be a nonempty POSIX path")
+    path = PurePosixPath(value)
+    if path.is_absolute() or value != path.as_posix() or ".." in path.parts:
+        raise ArtifactContractError(f"Unsafe artifact path: {value!r}")
+    return value
+
+
+def _lifecycle_file_record(value: Mapping[str, Any]) -> dict[str, Any]:
+    _require_exact_keys(
+        value,
+        {"path", "bytes", "sha256"},
+        label="lifecycle artifact record",
+    )
+    return {
+        "path": _flat_logical_path(value["path"]),
+        "bytes": _require_nonnegative_integer(
+            value["bytes"], label="artifact bytes"
+        ),
+        "sha256": _require_sha256(value["sha256"], label="artifact sha256"),
+    }
+
+
+def build_lifecycle_artifact_manifest(
+    *,
+    run_id: str,
+    files: Iterable[Mapping[str, Any]],
+    durable_uri: str,
+    durable_bytes: int,
+    durable_sha256: str,
+) -> dict[str, Any]:
+    """Build the controller/worker lifecycle manifest with explicit v2 semantics."""
+    normalized_files = sorted(
+        (_lifecycle_file_record(item) for item in files),
+        key=lambda item: item["path"],
+    )
+    identity = {
+        "format": LIFECYCLE_ARTIFACT_MANIFEST_FORMAT,
+        "run_id": run_id,
+        "files": normalized_files,
+        "durable_object": {
+            "uri": durable_uri,
+            "bytes": durable_bytes,
+            "sha256": durable_sha256,
+        },
+    }
+    return validate_lifecycle_artifact_manifest(
+        {**identity, "artifact_set_id": _stable_sha256(identity)}
+    )
+
+
+def validate_lifecycle_artifact_manifest(
+    value: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Validate the sole schema accepted by the Vast lifecycle wrapper.
+
+    The older provider-neutral manifest remains deliberately named v1.  This v2
+    format is not backwards-compatible and must never be silently interpreted as
+    v1.
+    """
+    _require_exact_keys(
+        value,
+        {"format", "run_id", "artifact_set_id", "files", "durable_object"},
+        label="lifecycle artifact manifest",
+    )
+    if value["format"] != LIFECYCLE_ARTIFACT_MANIFEST_FORMAT:
+        raise ArtifactContractError("Unsupported lifecycle artifact manifest format")
+    run_id = value["run_id"]
+    if not isinstance(run_id, str) or not run_id.strip():
+        raise ArtifactContractError("run_id must be nonempty")
+    raw_files = value["files"]
+    if not isinstance(raw_files, list) or not raw_files:
+        raise ArtifactContractError("lifecycle files must be a nonempty list")
+    files = [_lifecycle_file_record(item) for item in raw_files]
+    paths = [item["path"] for item in files]
+    if paths != sorted(paths) or len(paths) != len(set(paths)):
+        raise ArtifactContractError("lifecycle file inventory must be sorted and unique")
+    durable = value["durable_object"]
+    if not isinstance(durable, Mapping):
+        raise ArtifactContractError("durable_object must be an object")
+    _require_exact_keys(
+        durable,
+        {"uri", "bytes", "sha256"},
+        label="durable_object",
+    )
+    uri = durable["uri"]
+    if not isinstance(uri, str) or not uri.startswith("s3://"):
+        raise ArtifactContractError("durable_object uri must be an S3 URI")
+    normalized_durable = {
+        "uri": uri,
+        "bytes": _require_nonnegative_integer(
+            durable["bytes"], label="durable_object bytes"
+        ),
+        "sha256": _require_sha256(
+            durable["sha256"], label="durable_object sha256"
+        ),
+    }
+    if normalized_durable["bytes"] == 0:
+        raise ArtifactContractError("durable_object bytes must be positive")
+    identity = {
+        "format": LIFECYCLE_ARTIFACT_MANIFEST_FORMAT,
+        "run_id": run_id,
+        "files": files,
+        "durable_object": normalized_durable,
+    }
+    artifact_set_id = _require_sha256(
+        value["artifact_set_id"], label="artifact_set_id"
+    )
+    if artifact_set_id != _stable_sha256(identity):
+        raise ArtifactContractError("artifact_set_id does not match lifecycle contents")
+    return {**identity, "artifact_set_id": artifact_set_id}
 
 
 def _require_exact_keys(

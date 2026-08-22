@@ -30,6 +30,12 @@ from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 from typing import Any
 
+from intelligent_liars.step5_artifact_store import (
+    ArtifactContractError,
+    LIFECYCLE_ARTIFACT_MANIFEST_FORMAT,
+    validate_lifecycle_artifact_manifest,
+)
+
 
 PROJECT_LABEL_PREFIX = "codex-vast-tinylora-step5"
 HARD_MAX_WORKERS = 3
@@ -63,6 +69,7 @@ SECRET_COMMAND_PATTERNS = (
     re.compile(r"(?:HF_TOKEN|HUGGING_FACE_HUB_TOKEN|OPENAI_API_KEY)\s*="),
     re.compile(r"--(?:api-key|token|password)(?:=|\s+)"),
     re.compile(r"Authorization\s*:\s*Bearer\s+", re.IGNORECASE),
+    re.compile(r"[?&]X-Amz-(?:Signature|Credential)=", re.IGNORECASE),
 )
 
 
@@ -94,6 +101,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--diagnostic-command", required=True)
     parser.add_argument("--software-recovery-command")
     parser.add_argument("--aws-cli", default="aws")
+    parser.add_argument("--artifact-put-url-file", type=Path)
+    parser.add_argument(
+        "--remote-artifact-put-url-file",
+        default="/run/secrets/step5-artifact-put-url",
+    )
+    parser.add_argument("--expected-durable-uri")
     parser.add_argument("--max-software-resumes", type=int, default=1)
     parser.add_argument("--max-workers", type=int, default=HARD_MAX_WORKERS)
     parser.add_argument("--wait-seconds", type=int, default=900)
@@ -610,33 +623,43 @@ def verify_artifact_manifest(
     artifact_root: Path,
     manifest_name: str,
     expected_files: frozenset[str],
+    *,
+    expected_run_id: str | None = None,
+    expected_durable_uri: str | None = None,
 ) -> dict[str, Any]:
     manifest_path = safe_manifest_path(artifact_root, manifest_name)
     payload = parse_json_payload(manifest_path.read_text())
     if not isinstance(payload, dict) or payload.get("format") != (
-        "tinylora_step5_artifact_manifest_v1"
+        LIFECYCLE_ARTIFACT_MANIFEST_FORMAT
     ):
-        raise ValueError("Unsupported Step 5 artifact manifest")
-    files = payload.get("files")
-    if not isinstance(files, list) or not files:
-        raise ValueError("Artifact manifest must contain a nonempty files list")
+        raise ValueError(
+            "Unsupported Step 5 lifecycle artifact manifest; legacy ambiguous v1 "
+            "manifests are rejected"
+        )
+    try:
+        payload = validate_lifecycle_artifact_manifest(payload)
+    except ArtifactContractError as error:
+        raise ValueError(str(error)) from error
+    if expected_run_id is not None and payload["run_id"] != expected_run_id:
+        raise ValueError("Artifact manifest run_id differs from controller run_id")
+    files = payload["files"]
     verified: dict[str, dict[str, Any]] = {}
     seen: set[str] = set()
     for item in files:
         if not isinstance(item, dict):
             raise ValueError("Artifact manifest file entry is not an object")
-        relative = str(item.get("path", ""))
+        relative = str(item["path"])
         if relative in seen:
             raise ValueError(f"Duplicate artifact path: {relative}")
         seen.add(relative)
-        expected_hash = str(item.get("sha256", ""))
-        expected_bytes = item.get("bytes")
+        expected_hash = str(item["sha256"])
+        expected_bytes = item["bytes"]
         if not re.fullmatch(r"[0-9a-f]{64}", expected_hash):
             raise ValueError(f"Invalid SHA-256 for artifact: {relative}")
         path = safe_manifest_path(artifact_root, relative)
-        if not path.is_file() or path.stat().st_size == 0:
-            raise FileNotFoundError(f"Missing or empty artifact: {relative}")
-        if expected_bytes is not None and path.stat().st_size != int(expected_bytes):
+        if path.is_symlink() or not path.is_file():
+            raise FileNotFoundError(f"Missing or non-regular artifact: {relative}")
+        if path.stat().st_size != int(expected_bytes):
             raise ValueError(f"Artifact size mismatch: {relative}")
         actual_hash = hash_file(path)
         if actual_hash != expected_hash:
@@ -655,19 +678,16 @@ def verify_artifact_manifest(
         missing = sorted(expected_inventory - actual_inventory)
         extra = sorted(actual_inventory - expected_inventory)
         raise ValueError(f"Fetched artifact inventory mismatch; missing={missing}, extra={extra}")
-    durable_object = payload.get("durable_object")
-    if not isinstance(durable_object, dict):
-        raise ValueError("Artifact manifest lacks a durable object descriptor")
-    durable_uri = str(durable_object.get("uri", ""))
-    durable_hash = str(durable_object.get("sha256", ""))
-    durable_bytes = durable_object.get("bytes")
-    if not durable_uri.startswith("s3://"):
-        raise ValueError("Durable object must use an S3 URI")
-    if not re.fullmatch(r"[0-9a-f]{64}", durable_hash):
-        raise ValueError("Durable object has an invalid SHA-256")
-    if not isinstance(durable_bytes, int) or durable_bytes <= 0:
-        raise ValueError("Durable object has an invalid byte size")
+    durable_object = payload["durable_object"]
+    durable_uri = durable_object["uri"]
+    durable_hash = durable_object["sha256"]
+    durable_bytes = durable_object["bytes"]
+    if expected_durable_uri is not None and durable_uri != expected_durable_uri:
+        raise ValueError("Durable object URI differs from controller-frozen destination")
     return {
+        "format": payload["format"],
+        "run_id": payload["run_id"],
+        "artifact_set_id": payload["artifact_set_id"],
         "manifest_sha256": hash_file(manifest_path),
         "files": verified,
         "durable_object": {
@@ -716,6 +736,18 @@ def validate_remote_artifact_dir(value: str) -> str:
     return pure.as_posix()
 
 
+def validate_remote_secret_path(value: str) -> str:
+    pure = PurePosixPath(value)
+    if (
+        not pure.is_absolute()
+        or ".." in pure.parts
+        or not pure.as_posix().startswith("/run/secrets/")
+        or re.fullmatch(r"/run/secrets/[A-Za-z0-9._-]+", pure.as_posix()) is None
+    ):
+        raise ValueError("remote secret path must be a direct child of /run/secrets")
+    return pure.as_posix()
+
+
 def parse_host_qualification(text: str, minimum_download_mbps: float) -> dict[str, Any]:
     payload = parse_json_payload(text)
     if not isinstance(payload, dict):
@@ -751,6 +783,7 @@ def parse_s3_uri(uri: str) -> tuple[str, str]:
 def controller_verify_s3_object(
     aws_cli: str,
     descriptor: dict[str, Any],
+    expected_files: dict[str, dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """HEAD and round-trip an exact S3 version from the trusted controller."""
     bucket, key = parse_s3_uri(str(descriptor["uri"]))
@@ -778,14 +811,14 @@ def controller_verify_s3_object(
     if int(head.get("ContentLength", -1)) != int(descriptor["bytes"]):
         raise ValueError("S3 object size does not match the artifact manifest")
     checksum_b64 = str(head.get("ChecksumSHA256", ""))
-    if not checksum_b64:
-        raise ValueError("S3 HEAD response lacks ChecksumSHA256")
-    try:
-        head_checksum = base64.b64decode(checksum_b64, validate=True).hex()
-    except (ValueError, TypeError) as error:
-        raise ValueError("S3 ChecksumSHA256 is invalid base64") from error
-    if head_checksum != descriptor["sha256"]:
-        raise ValueError("S3 HEAD checksum does not match the artifact manifest")
+    head_checksum: str | None = None
+    if checksum_b64:
+        try:
+            head_checksum = base64.b64decode(checksum_b64, validate=True).hex()
+        except (ValueError, TypeError) as error:
+            raise ValueError("S3 ChecksumSHA256 is invalid base64") from error
+        if head_checksum != descriptor["sha256"]:
+            raise ValueError("S3 HEAD checksum does not match the artifact manifest")
     file_descriptor, download_name = tempfile.mkstemp(prefix="tinylora-step5-roundtrip-")
     os.close(file_descriptor)
     download_path = Path(download_name)
@@ -810,6 +843,8 @@ def controller_verify_s3_object(
         )
         roundtrip_hash = hash_file(download_path)
         roundtrip_bytes = download_path.stat().st_size
+        if expected_files is not None:
+            verify_durable_archive(download_path, expected_files)
     finally:
         download_path.unlink(missing_ok=True)
     if roundtrip_bytes != int(descriptor["bytes"]):
@@ -823,7 +858,36 @@ def controller_verify_s3_object(
         "bytes": roundtrip_bytes,
         "sha256": roundtrip_hash,
         "head_checksum_sha256": head_checksum,
+        "controller_roundtrip_checksum_sha256": roundtrip_hash,
     }
+
+
+def verify_durable_archive(
+    archive_path: Path,
+    expected_files: dict[str, dict[str, Any]],
+) -> None:
+    """Prove the round-tripped tar contains exactly the manifest-declared bytes."""
+    with tarfile.open(archive_path, "r") as archive:
+        members = archive.getmembers()
+        names = [member.name for member in members]
+        if len(names) != len(set(names)) or set(names) != set(expected_files):
+            raise ValueError("Durable archive inventory differs from artifact manifest")
+        for member in members:
+            if not member.isfile():
+                raise ValueError(f"Durable archive contains non-file member: {member.name}")
+            extracted = archive.extractfile(member)
+            if extracted is None:
+                raise ValueError(f"Could not read durable archive member: {member.name}")
+            digest = hashlib.sha256()
+            size = 0
+            for chunk in iter(lambda: extracted.read(1024 * 1024), b""):
+                digest.update(chunk)
+                size += len(chunk)
+            expected = expected_files[member.name]
+            if size != int(expected["bytes"]):
+                raise ValueError(f"Durable archive member size mismatch: {member.name}")
+            if digest.hexdigest() != expected["sha256"]:
+                raise ValueError(f"Durable archive member hash mismatch: {member.name}")
 
 
 def classify_diagnostic(text: str) -> dict[str, Any]:
@@ -892,6 +956,14 @@ def require_execute_contract(args: argparse.Namespace) -> None:
         raise ValueError("minimum-download-mbps must be finite and positive")
     if args.wait_seconds <= 0 or args.state_wait_seconds <= 0 or args.disk <= 0:
         raise ValueError("disk and wait durations must be positive")
+    if (
+        getattr(args, "artifact_put_url_file", None) is None
+        or getattr(args, "expected_durable_uri", None) is None
+    ):
+        raise ValueError(
+            "Execution requires a protected artifact PUT URL file and frozen durable URI"
+        )
+    parse_s3_uri(args.expected_durable_uri)
 
 
 def create_command(args: argparse.Namespace, label: str) -> list[str]:
@@ -1019,6 +1091,42 @@ def sync_source_bundle(
     )
 
 
+def sync_private_url_file(
+    source: Path,
+    remote_path: str,
+    host: str,
+    port: str,
+    known_hosts: Path,
+    timeout: float,
+) -> None:
+    if source.is_symlink() or not source.is_file() or source.stat().st_mode & 0o077:
+        raise ValueError("artifact PUT URL file must be regular and mode 0600 or stricter")
+    if not source.read_text().strip().startswith("https://"):
+        raise ValueError("artifact PUT URL file must contain an HTTPS URL")
+    run(
+        [*ssh_prefix(host, port, known_hosts), "mkdir -p -m 700 /run/secrets"],
+        capture=False,
+        timeout=timeout,
+    )
+    run(
+        [
+            "scp",
+            "-P",
+            port,
+            *ssh_options(known_hosts),
+            str(source),
+            f"root@{host}:{remote_path}",
+        ],
+        capture=False,
+        timeout=timeout,
+    )
+    run(
+        [*ssh_prefix(host, port, known_hosts), f"chmod 600 {shlex.quote(remote_path)}"],
+        capture=False,
+        timeout=timeout,
+    )
+
+
 def verify_remote_source_receipt(
     host: str,
     port: str,
@@ -1116,6 +1224,9 @@ def main() -> int:
         args.expected_artifact_inventory.resolve()
     )
     args.remote_artifact_dir = validate_remote_artifact_dir(args.remote_artifact_dir)
+    args.remote_artifact_put_url_file = validate_remote_secret_path(
+        args.remote_artifact_put_url_file
+    )
     label = unique_label(args.run_id, args.candidate, args.attempt)
     metadata: dict[str, Any] = {
         "format": "tinylora_step5_vast_lifecycle_v1",
@@ -1250,6 +1361,15 @@ def main() -> int:
                 known_hosts,
                 remaining_cost_seconds(cost_deadline),
             )
+        assert args.artifact_put_url_file is not None
+        sync_private_url_file(
+            args.artifact_put_url_file.resolve(),
+            args.remote_artifact_put_url_file,
+            host,
+            port,
+            known_hosts,
+            remaining_cost_seconds(cost_deadline),
+        )
         verify_remote_source_receipt(
             host,
             port,
@@ -1458,6 +1578,8 @@ def main() -> int:
                     args.fetch_dir.resolve(),
                     args.artifact_manifest_name,
                     expected_inventory["files"],
+                    expected_run_id=args.run_id,
+                    expected_durable_uri=args.expected_durable_uri,
                 )
                 metadata["fetched_artifacts"] = verified
                 fetched_verified = True
@@ -1477,6 +1599,7 @@ def main() -> int:
                 durable_result = controller_verify_s3_object(
                     args.aws_cli,
                     metadata["fetched_artifacts"]["durable_object"],
+                    metadata["fetched_artifacts"]["files"],
                 )
                 metadata["durable_verification"] = durable_result
                 durable_verified = durable_result["verified"]

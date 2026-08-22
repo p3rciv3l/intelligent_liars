@@ -13,6 +13,11 @@ from pathlib import Path
 
 import pytest
 
+from intelligent_liars.step5_artifact_store import (
+    LIFECYCLE_ARTIFACT_MANIFEST_FORMAT,
+    build_lifecycle_artifact_manifest,
+)
+
 
 SCRIPT = Path(__file__).parents[1] / "scripts" / "run_vast_step5_instance.py"
 SPEC = importlib.util.spec_from_file_location("run_vast_step5_instance", SCRIPT)
@@ -194,34 +199,40 @@ def test_artifact_manifest_verifies_hashes_and_sizes(tmp_path: Path):
     artifact.parent.mkdir()
     artifact.write_bytes(b"durable checkpoint")
     digest = hashlib.sha256(artifact.read_bytes()).hexdigest()
-    manifest = {
-        "format": "tinylora_step5_artifact_manifest_v1",
-        "durable_object": {
-            "uri": "s3://bucket/run.tar.gz",
-            "bytes": len(b"durable checkpoint"),
-            "sha256": digest,
-        },
-        "files": [
+    manifest = build_lifecycle_artifact_manifest(
+        run_id="run-123",
+        durable_uri="s3://bucket/run.tar",
+        durable_bytes=len(b"durable checkpoint"),
+        durable_sha256=digest,
+        files=[
             {
                 "path": "checkpoints/step_25.pt",
                 "bytes": artifact.stat().st_size,
                 "sha256": digest,
             }
         ],
-    }
+    )
     (tmp_path / "artifact_manifest.json").write_text(json.dumps(manifest))
     verified = MODULE.verify_artifact_manifest(
         tmp_path,
         "artifact_manifest.json",
         frozenset({"checkpoints/step_25.pt"}),
+        expected_run_id="run-123",
     )
     assert verified["files"]["checkpoints/step_25.pt"]["sha256"] == digest
 
 
 def test_artifact_manifest_rejects_path_traversal(tmp_path: Path):
     manifest = {
-        "format": "tinylora_step5_artifact_manifest_v1",
-        "files": [{"path": "../escape", "sha256": "0" * 64}],
+        "format": LIFECYCLE_ARTIFACT_MANIFEST_FORMAT,
+        "run_id": "run-123",
+        "artifact_set_id": "0" * 64,
+        "files": [{"path": "../escape", "sha256": "0" * 64, "bytes": 1}],
+        "durable_object": {
+            "uri": "s3://bucket/run.tar",
+            "bytes": 1,
+            "sha256": "0" * 64,
+        },
     }
     (tmp_path / "artifact_manifest.json").write_text(json.dumps(manifest))
     with pytest.raises(ValueError, match="Unsafe artifact path"):
@@ -232,12 +243,33 @@ def test_artifact_manifest_rejects_path_traversal(tmp_path: Path):
         )
 
 
+def test_artifact_manifest_explicitly_rejects_ambiguous_legacy_v1(tmp_path: Path):
+    (tmp_path / "artifact_manifest.json").write_text(
+        json.dumps(
+            {
+                "format": "tinylora_step5_artifact_manifest_v1",
+                "files": [],
+                "durable_object": {},
+            }
+        )
+    )
+    with pytest.raises(ValueError, match="legacy ambiguous v1"):
+        MODULE.verify_artifact_manifest(
+            tmp_path,
+            "artifact_manifest.json",
+            frozenset({"result.json"}),
+        )
+
+
 def test_artifact_manifest_rejects_hash_mismatch(tmp_path: Path):
     (tmp_path / "result.json").write_text("{}")
-    manifest = {
-        "format": "tinylora_step5_artifact_manifest_v1",
-        "files": [{"path": "result.json", "sha256": "0" * 64, "bytes": 2}],
-    }
+    manifest = build_lifecycle_artifact_manifest(
+        run_id="run-123",
+        durable_uri="s3://bucket/run.tar",
+        durable_bytes=2,
+        durable_sha256="0" * 64,
+        files=[{"path": "result.json", "sha256": "0" * 64, "bytes": 2}],
+    )
     (tmp_path / "artifact_manifest.json").write_text(json.dumps(manifest))
     with pytest.raises(ValueError, match="hash mismatch"):
         MODULE.verify_artifact_manifest(
@@ -250,15 +282,13 @@ def test_artifact_manifest_rejects_hash_mismatch(tmp_path: Path):
 def test_artifact_manifest_rejects_unexpected_fetched_file(tmp_path: Path):
     (tmp_path / "result.json").write_text("{}")
     digest = hashlib.sha256(b"{}").hexdigest()
-    manifest = {
-        "format": "tinylora_step5_artifact_manifest_v1",
-        "durable_object": {
-            "uri": "s3://bucket/run.tar.gz",
-            "bytes": 2,
-            "sha256": digest,
-        },
-        "files": [{"path": "result.json", "sha256": digest, "bytes": 2}],
-    }
+    manifest = build_lifecycle_artifact_manifest(
+        run_id="run-123",
+        durable_uri="s3://bucket/run.tar",
+        durable_bytes=2,
+        durable_sha256=digest,
+        files=[{"path": "result.json", "sha256": digest, "bytes": 2}],
+    )
     (tmp_path / "artifact_manifest.json").write_text(json.dumps(manifest))
     (tmp_path / "unlisted.log").write_text("surprise")
     with pytest.raises(ValueError, match="inventory mismatch"):
@@ -266,6 +296,45 @@ def test_artifact_manifest_rejects_unexpected_fetched_file(tmp_path: Path):
             tmp_path,
             "artifact_manifest.json",
             frozenset({"result.json"}),
+        )
+
+
+def test_artifact_manifest_requires_controller_frozen_durable_uri(tmp_path: Path):
+    (tmp_path / "result.json").write_text("{}")
+    digest = hashlib.sha256(b"{}").hexdigest()
+    manifest = build_lifecycle_artifact_manifest(
+        run_id="run-123",
+        durable_uri="s3://bucket/wrong.tar",
+        durable_bytes=2,
+        durable_sha256=digest,
+        files=[{"path": "result.json", "sha256": digest, "bytes": 2}],
+    )
+    (tmp_path / "artifact_manifest.json").write_text(json.dumps(manifest))
+    with pytest.raises(ValueError, match="controller-frozen"):
+        MODULE.verify_artifact_manifest(
+            tmp_path,
+            "artifact_manifest.json",
+            frozenset({"result.json"}),
+            expected_run_id="run-123",
+            expected_durable_uri="s3://bucket/intended.tar",
+        )
+
+
+def test_durable_archive_must_contain_exact_manifest_bytes(tmp_path: Path):
+    archive_path = tmp_path / "durable.tar"
+    member = tmp_path / "result.json"
+    member.write_text("{}")
+    with tarfile.open(archive_path, "w") as archive:
+        archive.add(member, arcname="result.json")
+    digest = hashlib.sha256(b"{}").hexdigest()
+    MODULE.verify_durable_archive(
+        archive_path,
+        {"result.json": {"bytes": 2, "sha256": digest}},
+    )
+    with pytest.raises(ValueError, match="inventory"):
+        MODULE.verify_durable_archive(
+            archive_path,
+            {"other.json": {"bytes": 2, "sha256": digest}},
         )
 
 
@@ -414,14 +483,15 @@ def test_source_allowlist_rejects_sealed_audit_content_under_renamed_path(
         MODULE.verify_source_manifest(tmp_path, manifest_path)
 
 
-def test_commands_reject_long_lived_credentials_but_allow_presigned_url():
+def test_commands_reject_long_lived_credentials_and_presigned_url():
     with pytest.raises(ValueError, match="long-lived credentials"):
         MODULE.reject_credential_bearing_commands(
             ["AWS_SECRET_ACCESS_KEY=not-allowed python upload.py"]
         )
-    MODULE.reject_credential_bearing_commands(
-        ["curl 'https://example.test/object?X-Amz-Expires=900&X-Amz-Signature=abc'"]
-    )
+    with pytest.raises(ValueError, match="long-lived credentials"):
+        MODULE.reject_credential_bearing_commands(
+            ["curl 'https://example.test/object?X-Amz-Expires=900&X-Amz-Signature=abc'"]
+        )
 
 
 def test_commands_reject_bearer_headers_and_source_rejects_auth_files(tmp_path: Path):
