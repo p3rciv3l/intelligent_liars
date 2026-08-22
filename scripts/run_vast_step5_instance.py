@@ -36,6 +36,7 @@ from intelligent_liars.step5_artifact_store import (
     LIFECYCLE_ARTIFACT_MANIFEST_FORMAT,
     validate_lifecycle_artifact_manifest,
 )
+from intelligent_liars.step5_artifact_presigner import parse_utc, validate_receipt
 
 
 PROJECT_LABEL_PREFIX = "codex-vast-tinylora-step5"
@@ -43,6 +44,8 @@ CONTROLLER_PUBLIC_KEY_REMOTE_PATH = "/workspace/inputs/controller-public.pem"
 INPUT_URL_MANIFEST_REMOTE_PATH = "/run/secrets/step5-input-url-manifest-url"
 HOST_GATE_URL_REMOTE_PATH = "/run/secrets/step5-host-gate-url"
 HARD_MAX_WORKERS = 3
+ARTIFACT_APPROVAL_MAX_AGE_SECONDS = 3600
+ARTIFACT_MINIMUM_REMAINING_SECONDS = 900
 SEALED_AUDIT_SHA256 = "40e2756176387514fc265bdf6225e73b356d7fe57b641405e6c4d2ecbe498e91"
 HOST_LOSS_STATES = frozenset({"dead", "error", "failed", "offline", "unavailable"})
 STOPPED_STATES = frozenset({"exited", "stopped"})
@@ -106,6 +109,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--software-recovery-command")
     parser.add_argument("--aws-cli", default="aws")
     parser.add_argument("--artifact-put-url-file", type=Path)
+    parser.add_argument("--artifact-put-receipt", type=Path)
+    parser.add_argument("--artifact-put-receipt-sha256")
+    parser.add_argument("--approved-at")
     parser.add_argument(
         "--remote-artifact-put-url-file",
         default="/run/secrets/step5-artifact-put-url",
@@ -977,11 +983,14 @@ def require_execute_contract(args: argparse.Namespace) -> None:
         raise ValueError("disk and wait durations must be positive")
     if (
         getattr(args, "artifact_put_url_file", None) is None
+        or getattr(args, "artifact_put_receipt", None) is None
+        or getattr(args, "artifact_put_receipt_sha256", None) is None
+        or getattr(args, "approved_at", None) is None
         or getattr(args, "expected_durable_uri", None) is None
     ):
         raise ValueError(
-            "Execution requires a protected artifact PUT URL file and frozen durable URI"
-    )
+            "Execution requires a protected, receipt-bound artifact PUT and frozen durable URI"
+        )
     parse_s3_uri(args.expected_durable_uri)
     if (
         getattr(args, "input_url_manifest_url_file", None) is None
@@ -1503,6 +1512,70 @@ def private_url_file_bytes(source: Path) -> bytes:
     return content
 
 
+def validate_artifact_put_contract(
+    args: argparse.Namespace,
+) -> tuple[dict[str, Any], bytes]:
+    url_content, url_mode = read_file_without_symlinks(
+        args.artifact_put_url_file.absolute()
+    )
+    if url_mode != 0o600:
+        raise ValueError("artifact PUT URL file must have mode 0600")
+    try:
+        url_lines = url_content.decode("utf-8").splitlines()
+    except UnicodeDecodeError as error:
+        raise ValueError("artifact PUT URL file must contain UTF-8") from error
+    if (
+        len(url_lines) != 1
+        or not url_lines[0].startswith("https://")
+        or url_content != (url_lines[0] + "\n").encode()
+    ):
+        raise ValueError("artifact PUT URL file must contain exactly one HTTPS URL line")
+    receipt_content, receipt_mode = read_file_without_symlinks(
+        args.artifact_put_receipt.absolute()
+    )
+    if receipt_mode != 0o600:
+        raise ValueError("artifact PUT receipt file must have mode 0600")
+    try:
+        receipt = json.loads(receipt_content)
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise ValueError("artifact PUT receipt must contain JSON") from error
+    if not isinstance(receipt, dict):
+        raise ValueError("artifact PUT receipt must contain an object")
+    if hashlib.sha256(receipt_content).hexdigest() != args.artifact_put_receipt_sha256:
+        raise ValueError("artifact PUT receipt file differs from frozen SHA-256")
+    verified = revalidate_artifact_put_freshness(
+        args,
+        receipt,
+        url_content,
+        current=datetime.now(timezone.utc),
+    )
+    return verified, url_content
+
+
+def revalidate_artifact_put_freshness(
+    args: argparse.Namespace,
+    receipt: dict[str, Any],
+    url_content: bytes,
+    *,
+    current: datetime,
+) -> dict[str, Any]:
+    verified = validate_receipt(
+        receipt,
+        url_bytes=url_content,
+        expected_receipt_sha256=args.artifact_put_receipt_sha256,
+        expected_durable_uri=args.expected_durable_uri,
+        expected_approved_at=args.approved_at,
+        now=current,
+        max_approval_age_seconds=ARTIFACT_APPROVAL_MAX_AGE_SECONDS,
+    )
+    remaining = (
+        parse_utc(verified["expires_at"], label="expires_at") - current
+    ).total_seconds()
+    if remaining <= ARTIFACT_MINIMUM_REMAINING_SECONDS:
+        raise ValueError("artifact PUT URL has less than 15 minutes remaining")
+    return verified
+
+
 def validate_distinct_url_sources(args: argparse.Namespace) -> None:
     hydration = private_url_file_bytes(
         args.input_url_manifest_url_file.absolute()
@@ -1523,6 +1596,25 @@ def sync_private_url_file(
     timeout: float,
 ) -> None:
     content = private_url_file_bytes(source)
+    sync_private_url_bytes(
+        content,
+        remote_path=remote_path,
+        host=host,
+        port=port,
+        known_hosts=known_hosts,
+        timeout=timeout,
+    )
+
+
+def sync_private_url_bytes(
+    content: bytes,
+    *,
+    remote_path: str,
+    host: str,
+    port: str,
+    known_hosts: Path,
+    timeout: float,
+) -> None:
     remote_install_bytes(
         content,
         remote_path=remote_path,
@@ -1643,9 +1735,12 @@ def command_sha256(command: str) -> str:
 def main() -> int:
     args = parse_args()
     require_execute_contract(args)
+    artifact_put_receipt: dict[str, Any] | None = None
+    artifact_put_url_bytes: bytes | None = None
     if args.execute:
         validate_checkpoint_controller_contract(args)
         validate_distinct_url_sources(args)
+        artifact_put_receipt, artifact_put_url_bytes = validate_artifact_put_contract(args)
     reject_credential_bearing_commands(
         [
             args.remote_command,
@@ -1693,6 +1788,15 @@ def main() -> int:
         "replacement_performed": False,
         "replacement_allowed": False,
     }
+    if artifact_put_receipt is not None:
+        metadata["artifact_put_authorization"] = {
+            "receipt_sha256": args.artifact_put_receipt_sha256,
+            "receipt_id": artifact_put_receipt["receipt_id"],
+            "durable_uri": artifact_put_receipt["durable_uri"],
+            "expires_at": artifact_put_receipt["expires_at"],
+            "approved_at": artifact_put_receipt["approved_at"],
+            "method": artifact_put_receipt["method"],
+        }
     print_dry_run(args, label)
     if not args.execute:
         return 0
@@ -1755,6 +1859,14 @@ def main() -> int:
                 actual_hourly_price = hourly_price(offer)
                 assert args.approved_hourly_price is not None
                 enforce_price(actual_hourly_price, args.approved_hourly_price)
+                assert artifact_put_receipt is not None
+                assert artifact_put_url_bytes is not None
+                revalidate_artifact_put_freshness(
+                    args,
+                    artifact_put_receipt,
+                    artifact_put_url_bytes,
+                    current=datetime.now(timezone.utc),
+                )
                 cost_started_monotonic = time.monotonic()
                 command = create_command(args, label)
                 create_attempted = True
@@ -1773,12 +1885,32 @@ def main() -> int:
         assert args.approved_max_cost is not None
         maximum_runtime_seconds = args.approved_max_cost / actual_hourly_price * 3600.0
         cost_deadline = cost_started_monotonic + maximum_runtime_seconds
+        assert artifact_put_receipt is not None
+        artifact_remaining_seconds = (
+            parse_utc(artifact_put_receipt["expires_at"], label="expires_at").timestamp()
+            - time.time()
+            - 300
+        )
+        if artifact_remaining_seconds <= 0:
+            raise ValueError("artifact PUT URL expired before worker provisioning")
+        cost_deadline = min(
+            cost_deadline,
+            time.monotonic() + artifact_remaining_seconds,
+        )
         metadata["actual_hourly_price"] = actual_hourly_price
         metadata["approved_max_cost"] = args.approved_max_cost
         metadata["maximum_runtime_seconds"] = maximum_runtime_seconds
         if args.resume_instance_id:
             current = find_instance(show_instances(args.vastai), target_id)
             if state_matches(instance_state(current), "stopped"):
+                assert artifact_put_receipt is not None
+                assert artifact_put_url_bytes is not None
+                revalidate_artifact_put_freshness(
+                    args,
+                    artifact_put_receipt,
+                    artifact_put_url_bytes,
+                    current=datetime.now(timezone.utc),
+                )
                 started = run(
                     [args.vastai, "start", "instance", target_id, "--retry", "3", "--raw"],
                     check=False,
@@ -1807,14 +1939,14 @@ def main() -> int:
                 known_hosts,
                 remaining_cost_seconds(cost_deadline),
             )
-        assert args.artifact_put_url_file is not None
-        sync_private_url_file(
-            args.artifact_put_url_file.absolute(),
-            args.remote_artifact_put_url_file,
-            host,
-            port,
-            known_hosts,
-            remaining_cost_seconds(cost_deadline),
+        assert artifact_put_url_bytes is not None
+        sync_private_url_bytes(
+            artifact_put_url_bytes,
+            remote_path=args.remote_artifact_put_url_file,
+            host=host,
+            port=port,
+            known_hosts=known_hosts,
+            timeout=remaining_cost_seconds(cost_deadline),
         )
         assert args.input_url_manifest_url_file is not None
         sync_private_url_file(

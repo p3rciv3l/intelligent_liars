@@ -9,14 +9,22 @@ import math
 import subprocess
 import sys
 import tarfile
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from pathlib import Path
 
+import boto3
 import pytest
+from botocore.config import Config
 
 from intelligent_liars.step5_artifact_store import (
     LIFECYCLE_ARTIFACT_MANIFEST_FORMAT,
     build_lifecycle_artifact_manifest,
+)
+from intelligent_liars.step5_artifact_presigner import (
+    build_receipt,
+    canonical_bytes,
+    sha256_bytes,
 )
 
 
@@ -431,6 +439,10 @@ def test_execute_contract_requires_both_new_provisioned_files(tmp_path: Path):
         state_wait_seconds=10,
         disk=100,
         artifact_put_url_file=tmp_path / "artifact-url",
+        artifact_put_receipt=tmp_path / "artifact-receipt",
+        artifact_put_receipt_sha256="a" * 64,
+        approved_at="2026-08-22T00:00:00Z",
+        artifact_put_max_approval_age_seconds=3600,
         expected_durable_uri="s3://bucket/key",
         input_url_manifest_url_file=None,
         controller_public_key=None,
@@ -438,6 +450,91 @@ def test_execute_contract_requires_both_new_provisioned_files(tmp_path: Path):
     )
     with pytest.raises(ValueError, match="hydration/host-gate URLs"):
         MODULE.require_execute_contract(args)
+
+
+def test_artifact_put_contract_is_receipt_bound_and_mode_protected(tmp_path: Path):
+    bucket = "step5-artifacts-example"
+    key = "immutable/run-7/artifacts.tar"
+    region = "us-west-2"
+    session = boto3.session.Session(
+        aws_access_key_id="AKIA" + "A" * 16,
+        aws_secret_access_key="b" * 40,
+        region_name=region,
+    )
+    client = session.client(
+        "s3",
+        endpoint_url=f"https://s3.{region}.amazonaws.com",
+        config=Config(signature_version="s3v4", s3={"addressing_style": "virtual"}),
+    )
+    url = client.generate_presigned_url(
+        "put_object",
+        Params={"Bucket": bucket, "Key": key, "IfNoneMatch": "*"},
+        ExpiresIn=3600,
+        HttpMethod="PUT",
+    )
+    signed_at = datetime.strptime(
+        url.split("X-Amz-Date=", 1)[1].split("&", 1)[0], "%Y%m%dT%H%M%SZ"
+    ).replace(tzinfo=timezone.utc)
+    approved_at = (signed_at - timedelta(minutes=1)).isoformat().replace("+00:00", "Z")
+    receipt = build_receipt(
+        url=url,
+        bucket=bucket,
+        key=key,
+        region=region,
+        account_id="123456789012",
+        approved_at=approved_at,
+        generated_at=signed_at,
+        expiry_seconds=3600,
+    )
+    url_path = tmp_path / "artifact-url"
+    receipt_path = tmp_path / "artifact-receipt.json"
+    url_path.write_bytes((url + "\n").encode())
+    receipt_bytes = canonical_bytes(receipt)
+    receipt_path.write_bytes(receipt_bytes)
+    url_path.chmod(0o600)
+    receipt_path.chmod(0o600)
+    args = argparse.Namespace(
+        artifact_put_url_file=url_path,
+        artifact_put_receipt=receipt_path,
+        artifact_put_receipt_sha256=sha256_bytes(receipt_bytes),
+        approved_at=approved_at,
+        expected_durable_uri=f"s3://{bucket}/{key}",
+        artifact_put_max_approval_age_seconds=3600,
+    )
+    verified, stable_url = MODULE.validate_artifact_put_contract(args)
+    assert verified["method"] == "PUT"
+    assert stable_url == (url + "\n").encode()
+    with pytest.raises(ValueError, match="stale"):
+        MODULE.revalidate_artifact_put_freshness(
+            args,
+            receipt,
+            stable_url,
+            current=datetime.fromisoformat(approved_at.replace("Z", "+00:00"))
+            + timedelta(hours=2),
+        )
+
+    receipt_path.chmod(0o644)
+    with pytest.raises(ValueError, match="receipt file must have mode 0600"):
+        MODULE.validate_artifact_put_contract(args)
+
+
+def test_artifact_put_contract_rejects_frozen_receipt_hash_drift(tmp_path: Path):
+    url_path = tmp_path / "artifact-url"
+    receipt_path = tmp_path / "artifact-receipt.json"
+    url_path.write_text("https://example.test/private\n")
+    receipt_path.write_text("{}\n")
+    url_path.chmod(0o600)
+    receipt_path.chmod(0o600)
+    args = argparse.Namespace(
+        artifact_put_url_file=url_path,
+        artifact_put_receipt=receipt_path,
+        artifact_put_receipt_sha256="a" * 64,
+        approved_at="2026-08-22T00:00:00Z",
+        expected_durable_uri="s3://bucket/key",
+        artifact_put_max_approval_age_seconds=3600,
+    )
+    with pytest.raises(ValueError, match="frozen SHA-256"):
+        MODULE.validate_artifact_put_contract(args)
 
 
 def test_checkpoint_controller_command_keeps_private_key_local(tmp_path: Path):

@@ -20,6 +20,8 @@ SPEC.loader.exec_module(MODULE)
 def test_destination_validation_rejects_traversal_and_bad_expiry():
     with pytest.raises(ValueError, match="safe relative"):
         MODULE.validate_destination("valid-bucket", "../key", 3600)
+    with pytest.raises(ValueError, match="safe relative"):
+        MODULE.validate_destination("valid-bucket", "key?other", 3600)
     with pytest.raises(ValueError, match="between 60"):
         MODULE.validate_destination("valid-bucket", "runs/a.tar", 10)
 
@@ -29,5 +31,5 @@ def test_private_url_file_is_0600_and_no_clobber(tmp_path: Path):
     MODULE.write_private(target, "https://example.invalid/private")
     assert target.stat().st_mode & 0o777 == 0o600
     assert target.read_text() == "https://example.invalid/private\n"
-    with pytest.raises(FileExistsError, match="refusing to replace"):
+    with pytest.raises(FileExistsError, match="already exists"):
         MODULE.write_private(target, "https://example.invalid/other")
