@@ -11,11 +11,12 @@ from __future__ import annotations
 import statistics
 import time
 import urllib.request
-from math import isfinite
 from collections.abc import Callable, Iterable
 from dataclasses import asdict, dataclass
 from enum import Enum
+from math import isfinite
 from typing import Any, BinaryIO
+from urllib.parse import urlsplit, urlunsplit
 
 
 MEBIBYTE = 1024**2
@@ -107,8 +108,8 @@ def measure_download_stream(
         raise ValueError("sample_bytes must be positive")
     if chunk_bytes <= 0:
         raise ValueError("chunk_bytes must be positive")
-    if max_stall_seconds <= 0:
-        raise ValueError("max_stall_seconds must be positive")
+    if not isfinite(max_stall_seconds) or max_stall_seconds <= 0:
+        raise ValueError("max_stall_seconds must be finite and positive")
 
     started_at = clock() if request_started_at is None else request_started_at
     previous_at = started_at
@@ -146,7 +147,10 @@ def measure_download_stream(
         if first_byte_at is not None:
             longest_stall = max(longest_stall, max(0.0, observed_at - previous_at))
         previous_at = observed_at
-        error = type(exc).__name__
+        if first_byte_at is not None and longest_stall >= max_stall_seconds:
+            error = "StallThresholdExceeded"
+        else:
+            error = type(exc).__name__
 
     ended_at = max(previous_at, clock())
     elapsed = max(0.0, ended_at - started_at)
@@ -219,6 +223,32 @@ def measure_download_url(
             completed=False,
             error=type(exc).__name__,
         )
+
+
+def validate_public_download_url(url: str) -> str:
+    """Reject credential-bearing URLs before they can be supplied through argv."""
+
+    parts = urlsplit(url)
+    if parts.scheme not in {"http", "https"} or not parts.hostname:
+        raise ValueError("public download URL must be an absolute HTTP(S) URL")
+    if parts.username or parts.password or parts.query or parts.fragment:
+        raise ValueError(
+            "credential-bearing download URLs must use --download-url-env or "
+            "--download-url-file"
+        )
+    return url
+
+
+def download_url_origin(url: str) -> str:
+    """Return nonsecret origin provenance without path, query, or user info."""
+
+    parts = urlsplit(url)
+    if not parts.scheme or not parts.hostname:
+        raise ValueError("download URL must be absolute")
+    hostname = parts.hostname
+    if parts.port is not None:
+        hostname = f"{hostname}:{parts.port}"
+    return urlunsplit((parts.scheme, hostname, "", "", ""))
 
 
 def evaluate_host_gate(
@@ -327,9 +357,12 @@ def qualification_failure_domain(decision: HostGateDecision) -> FailureDomain:
     if decision.accepted:
         return FailureDomain.NONE
     endpoint_or_software_failure = any(
-        (trial.error is not None and trial.error != "StallThresholdExceeded")
-        or trial.time_to_first_byte_seconds is None
-        or (not trial.completed and not trial.stalled)
+        not trial.stalled
+        and (
+            (trial.error is not None and trial.error != "StallThresholdExceeded")
+            or trial.time_to_first_byte_seconds is None
+            or not trial.completed
+        )
         for trial in decision.trials
     )
     return (

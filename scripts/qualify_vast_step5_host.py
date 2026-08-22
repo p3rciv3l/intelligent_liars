@@ -9,15 +9,16 @@ import os
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlsplit, urlunsplit
 
 from intelligent_liars.vast_host_gate import (
     FailureDomain,
     HostGateThresholds,
     decide_machine_action,
+    download_url_origin,
     evaluate_host_gate,
     measure_download_url,
     qualification_failure_domain,
+    validate_public_download_url,
 )
 
 
@@ -58,19 +59,9 @@ def _write_json(path: Path, payload: dict[str, Any]) -> None:
     os.replace(temporary, path)
 
 
-def _redacted_url(url: str) -> str:
-    """Keep useful endpoint provenance without persisting credentials or tokens."""
-
-    parts = urlsplit(url)
-    hostname = parts.hostname or ""
-    if parts.port is not None:
-        hostname = f"{hostname}:{parts.port}"
-    return urlunsplit((parts.scheme, hostname, parts.path, "", ""))
-
-
 def _load_download_url(args: argparse.Namespace) -> str:
     if args.download_url is not None:
-        return args.download_url
+        return validate_public_download_url(args.download_url)
     if args.download_url_env is not None:
         try:
             return os.environ[args.download_url_env]
@@ -81,6 +72,10 @@ def _load_download_url(args: argparse.Namespace) -> str:
     path = args.download_url_file
     if path is None:
         raise ValueError("no download URL source supplied")
+    if path.stat().st_mode & 0o077:
+        raise ValueError(
+            f"download URL file must not be group/world accessible: {path}"
+        )
     return path.read_text().strip()
 
 
@@ -129,7 +124,7 @@ def main() -> int:
         "measured_at": datetime.now(timezone.utc).isoformat(),
         "instance_id": args.instance_id,
         "offer_id": args.offer_id,
-        "download_url": _redacted_url(download_url),
+        "download_origin": download_url_origin(download_url),
         "thresholds": {
             "min_download_mbps": thresholds.min_download_mbps,
             "min_sample_bytes": thresholds.min_sample_bytes,

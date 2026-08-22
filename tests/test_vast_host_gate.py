@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import argparse
+import importlib.util
 import io
+from pathlib import Path
 
 import pytest
 
@@ -10,10 +13,19 @@ from intelligent_liars.vast_host_gate import (
     HostGateThresholds,
     MachineAction,
     decide_machine_action,
+    download_url_origin,
     evaluate_host_gate,
     measure_download_stream,
     qualification_failure_domain,
+    validate_public_download_url,
 )
+
+
+SCRIPT = Path(__file__).parents[1] / "scripts" / "qualify_vast_step5_host.py"
+SPEC = importlib.util.spec_from_file_location("qualify_vast_step5_host", SCRIPT)
+assert SPEC is not None and SPEC.loader is not None
+QUALIFIER = importlib.util.module_from_spec(SPEC)
+SPEC.loader.exec_module(QUALIFIER)
 
 
 def _trial(
@@ -90,6 +102,75 @@ def test_measure_download_stream_stops_after_stall_threshold():
     assert trial.completed is False
     assert trial.stalled is True
     assert trial.error == "StallThresholdExceeded"
+
+
+def test_partial_read_timeout_is_normalized_to_host_stall():
+    class PartialTimeoutStream:
+        reads = 0
+
+        def read(self, _: int) -> bytes:
+            self.reads += 1
+            if self.reads == 1:
+                return b"x"
+            raise TimeoutError("signed-url-secret-must-not-appear")
+
+    trial = measure_download_stream(
+        PartialTimeoutStream(),
+        sample_bytes=2,
+        max_stall_seconds=10.0,
+        request_started_at=0.0,
+        clock=_Clock([1.0, 12.0, 12.0]),
+    )
+    gate = evaluate_host_gate(
+        [trial],
+        HostGateThresholds(
+            min_download_mbps=1.0,
+            min_sample_bytes=2,
+            max_time_to_first_byte_seconds=5.0,
+            max_stall_seconds=10.0,
+        ),
+    )
+
+    assert trial.error == "StallThresholdExceeded"
+    assert trial.stalled is True
+    assert "secret" not in str(trial.to_dict())
+    assert qualification_failure_domain(gate) is FailureDomain.HOST
+
+
+def test_direct_stream_rejects_nan_stall_threshold():
+    with pytest.raises(ValueError, match="finite and positive"):
+        measure_download_stream(
+            io.BytesIO(b"x"),
+            sample_bytes=1,
+            max_stall_seconds=float("nan"),
+        )
+
+
+def test_public_argv_url_rejects_credentials_and_persisted_origin_has_no_path():
+    with pytest.raises(ValueError, match="credential-bearing"):
+        validate_public_download_url("https://example.test/model?token=secret")
+    with pytest.raises(ValueError, match="credential-bearing"):
+        validate_public_download_url("https://user:secret@example.test/model")
+
+    url = validate_public_download_url("https://example.test/public/model.bin")
+    assert download_url_origin(url) == "https://example.test"
+
+
+def test_signed_url_file_must_have_private_permissions(tmp_path: Path):
+    path = tmp_path / "download-url"
+    path.write_text("https://example.test/model?token=secret\n")
+    args = argparse.Namespace(
+        download_url=None,
+        download_url_env=None,
+        download_url_file=path,
+    )
+
+    path.chmod(0o644)
+    with pytest.raises(ValueError, match="group/world accessible"):
+        QUALIFIER._load_download_url(args)
+
+    path.chmod(0o600)
+    assert QUALIFIER._load_download_url(args).endswith("token=secret")
 
 
 def test_thresholds_reject_nan_and_infinity():
