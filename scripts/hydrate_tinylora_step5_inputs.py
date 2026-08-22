@@ -10,7 +10,12 @@ import stat
 import tempfile
 from pathlib import Path
 
-from intelligent_liars.step5_input_hydration import fetch_https, hydrate_all, https_origin
+from intelligent_liars.step5_input_hydration import (
+    EXPECTED_IDENTITY_FIELDS,
+    fetch_https,
+    hydrate_all,
+    https_origin,
+)
 
 
 def read_private_url(path: Path) -> str:
@@ -62,6 +67,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--inputs-dir", type=Path, default=Path("/workspace/inputs"))
     parser.add_argument("--cache-dir", type=Path, default=Path("/workspace/cache/huggingface"))
     parser.add_argument("--receipt", type=Path, required=True)
+    for field in EXPECTED_IDENTITY_FIELDS:
+        parser.add_argument(f"--expected-{field.replace('_', '-')}", required=True)
     return parser.parse_args()
 
 
@@ -80,9 +87,13 @@ def main() -> int:
         payload = json.loads(path.read_text())
     receipt = hydrate_all(
         payload,
-        inputs_dir=args.inputs_dir.resolve(),
-        cache_dir=args.cache_dir.resolve(),
-        receipt_path=args.receipt.resolve(),
+        inputs_dir=args.inputs_dir.absolute(),
+        cache_dir=args.cache_dir.absolute(),
+        receipt_path=args.receipt.absolute(),
+        expected_identities={
+            field: getattr(args, f"expected_{field}")
+            for field in EXPECTED_IDENTITY_FIELDS
+        },
     )
     print(json.dumps(receipt, sort_keys=True))
     return 0

@@ -17,6 +17,7 @@ from typing import Any
 from intelligent_liars.model_cache import (
     MODEL_REVISION,
     REQUIRED_SNAPSHOT_FILES,
+    canonical_json_bytes,
     completion_marker,
 )
 from intelligent_liars.step5_multimodal_assets import validate_staged_bundle
@@ -27,6 +28,34 @@ RECEIPT_FORMAT = "tinylora_step5_input_hydration_receipt_v1"
 MODEL_FILES = 14
 MODEL_REPO = "Qwen/Qwen3-VL-8B-Thinking"
 Fetch = Callable[[str, Path], None]
+EXPECTED_IDENTITY_FIELDS = (
+    "frozen_inputs_archive_sha256",
+    "frozen_inputs_completion_sha256",
+    "model_completion_sha256",
+    "model_content_sha256",
+    "model_manifest_sha256",
+    "model_revision",
+    "pixmo_archive_sha256",
+    "pixmo_completion_sha256",
+    "pixmo_content_sha256",
+    "pixmo_manifest_sha256",
+    "plan_sha256",
+    "probe_qualification_file_sha256",
+    "probe_qualification_receipt_sha256",
+)
+EXPECTED_PROBE_FILES = {
+    "fit_report.json",
+    "legacy_identity_registry.json",
+    "probe_qualification.json",
+    "probe_registry.json",
+    "qualification_summary.json",
+    "probes/legacy-grouped-evaluator-00.json",
+    "probes/legacy-grouped-evaluator-01.json",
+    "probes/legacy-grouped-evaluator-02.json",
+    "probes/legacy-grouped-evaluator-03.json",
+    "probes/legacy-grouped-evaluator-04.json",
+    "probes/legacy-grouped-regularizer.json",
+}
 
 
 class _RejectRedirects(urllib.request.HTTPRedirectHandler):
@@ -47,6 +76,21 @@ def canonical_sha256(value: Any) -> str:
     return hashlib.sha256(
         (json.dumps(value, sort_keys=True, separators=(",", ":")) + "\n").encode()
     ).hexdigest()
+
+
+def validate_expected_identities(value: Mapping[str, Any]) -> dict[str, str]:
+    """Validate the immutable launch-packet identities trusted by this worker."""
+
+    if set(value) != set(EXPECTED_IDENTITY_FIELDS):
+        raise ValueError("Expected hydration identity fields do not match the contract")
+    identities = {field: str(value[field]) for field in EXPECTED_IDENTITY_FIELDS}
+    for field, item in identities.items():
+        length = 40 if field == "model_revision" else 64
+        if len(item) != length or any(character not in "0123456789abcdef" for character in item):
+            raise ValueError(f"Invalid expected hydration identity: {field}")
+    if identities["model_revision"] != MODEL_REVISION:
+        raise ValueError("Expected model revision is not the approved revision")
+    return identities
 
 
 def https_origin(url: str) -> str:
@@ -70,7 +114,8 @@ def fetch_https(url: str, destination: Path) -> None:
             if response.status != 200:
                 raise ValueError(f"Hydration GET returned HTTP {response.status}")
             shutil.copyfileobj(response, output, length=1024 * 1024)
-        os.replace(temporary, destination)
+        os.link(temporary, destination, follow_symlinks=False)
+        temporary.unlink()
     except BaseException:
         temporary.unlink(missing_ok=True)
         raise
@@ -98,6 +143,7 @@ def _relative_file(value: str, *, label: str) -> PurePosixPath:
 
 
 def _regular_path(root: Path, relative: PurePosixPath, *, label: str) -> Path:
+    _reject_symlink_ancestors(root, label=label)
     root.mkdir(parents=True, exist_ok=True)
     if root.is_symlink():
         raise ValueError(f"{label} root may not be a symlink")
@@ -114,6 +160,17 @@ def _regular_path(root: Path, relative: PurePosixPath, *, label: str) -> Path:
     return target
 
 
+def _reject_symlink_ancestors(path: Path, *, label: str) -> None:
+    """Reject a path if any already-existing component is a symlink."""
+
+    absolute = path.absolute()
+    current = Path(absolute.anchor)
+    for part in absolute.parts[1:]:
+        current /= part
+        if current.is_symlink():
+            raise ValueError(f"{label} may not traverse a symlink: {current}")
+
+
 def _verify_file(path: Path, specification: Mapping[str, Any], *, label: str) -> None:
     expected_hash = str(specification.get("sha256", ""))
     expected_bytes = specification.get("bytes")
@@ -128,8 +185,11 @@ def hydrate_model(
     *,
     cache_dir: Path,
     temporary_dir: Path,
+    expected_identities: Mapping[str, Any],
     fetch: Fetch,
 ) -> dict[str, Any]:
+    _reject_symlink_ancestors(cache_dir, label="Model cache")
+    expected = validate_expected_identities(expected_identities)
     complete, complete_hash = _json_download(str(specification["completion_url"]), temporary_dir, "model.complete.json", fetch)
     manifest, manifest_hash = _json_download(str(specification["manifest_url"]), temporary_dir, "model.manifest.json", fetch)
     expected_complete = completion_marker(manifest)
@@ -143,6 +203,13 @@ def hydrate_model(
         raise ValueError("Model content identity mismatch")
     if complete.get("model") != manifest.get("model") or manifest.get("model") != {"repo_id": MODEL_REPO, "revision": MODEL_REVISION}:
         raise ValueError("Model identity mismatch")
+    if (
+        complete_hash != expected["model_completion_sha256"]
+        or manifest_hash != expected["model_manifest_sha256"]
+        or manifest.get("content_sha256") != expected["model_content_sha256"]
+        or manifest.get("model", {}).get("revision") != expected["model_revision"]
+    ):
+        raise ValueError("Downloaded model does not match frozen launch identities")
     files = manifest.get("files")
     urls = specification.get("file_urls")
     if not isinstance(files, list) or len(files) != MODEL_FILES or not isinstance(urls, Mapping):
@@ -157,6 +224,15 @@ def hydrate_model(
     if len(revision) != 40 or any(character not in "0123456789abcdef" for character in revision):
         raise ValueError("Model revision must be an exact commit hash")
     snapshot = cache_dir / "models--Qwen--Qwen3-VL-8B-Thinking" / "snapshots" / revision
+    if snapshot.exists() or snapshot.is_symlink():
+        if snapshot.is_symlink() or not snapshot.is_dir():
+            raise ValueError("Existing model snapshot root must be a regular directory")
+        snapshot_children = list(snapshot.iterdir())
+        if (
+            {path.name for path in snapshot_children} != set(REQUIRED_SNAPSHOT_FILES)
+            or any(path.is_symlink() or not path.is_file() for path in snapshot_children)
+        ):
+            raise ValueError("Existing model snapshot is partial or has unexpected files")
     inventory: list[dict[str, Any]] = []
     for item in files:
         relative = _relative_file(str(item["path"]), label="model file")
@@ -165,23 +241,18 @@ def hydrate_model(
         target = _regular_path(snapshot, relative, label="model cache")
         reused = False
         if target.exists():
-            try:
-                _verify_file(target, item, label="Model file")
-                reused = True
-            except ValueError:
-                target.unlink()
+            _verify_file(target, item, label="Model file")
+            reused = True
         if not reused:
             fetch(str(urls[relative.as_posix()]), target)
             _verify_file(target, item, label="Model file")
         inventory.append({"bytes": item["bytes"], "path": str(target.resolve()), "sha256": item["sha256"], "reused": reused})
-    refs = snapshot.parents[1] / "refs"
-    refs.mkdir(parents=True, exist_ok=True)
-    (refs / "main").write_text(revision)
     return {
         "content_sha256": manifest["content_sha256"],
         "completion_sha256": complete_hash,
         "files": inventory,
         "manifest_sha256": manifest_hash,
+        "manifest": manifest,
         "model": manifest["model"],
         "snapshot_path": str(snapshot.resolve()),
         "total_bytes": total_bytes,
@@ -329,6 +400,7 @@ def hydrate_frozen_inputs(
             expected_plan_sha256=complete["plan_sha256"],
         ) != complete.get("probe_qualification_receipt_sha256"):
             raise ValueError("Probe qualification receipt hash mismatch")
+        qualification_file_sha256 = file_sha256(qualification)
         for path in sorted(probe_root.rglob("*")):
             if path.is_file():
                 inventory.append({"path": str(path.resolve()), "sha256": file_sha256(path), "bytes": path.stat().st_size})
@@ -353,6 +425,7 @@ def hydrate_frozen_inputs(
             "plan_path": str((final_plan / "manifest.json").resolve()),
             "plan_sha256": complete["plan_sha256"],
             "probe_path": str((final_probe / "probes" / "legacy-grouped-regularizer.json").resolve()),
+            "probe_qualification_file_sha256": qualification_file_sha256,
             "probe_qualification_receipt_sha256": complete["probe_qualification_receipt_sha256"],
         }
     finally:
@@ -435,19 +508,214 @@ def validate_url_manifest(payload: Mapping[str, Any]) -> dict[str, Any]:
     return result
 
 
+def _origins(manifest: Mapping[str, Any]) -> dict[str, list[str]]:
+    return {
+        group: sorted(
+            {
+                https_origin(str(url))
+                for key, value in manifest[group].items()
+                for url in (value.values() if key == "file_urls" else [value])
+            }
+        )
+        for group in ("model", "frozen_inputs", "pixmo")
+    }
+
+
+def _receipt_identities(receipt: Mapping[str, Any]) -> dict[str, str]:
+    return {
+        "frozen_inputs_archive_sha256": str(receipt["frozen_inputs"]["archive_sha256"]),
+        "frozen_inputs_completion_sha256": str(receipt["frozen_inputs"]["completion_sha256"]),
+        "model_completion_sha256": str(receipt["model"]["completion_sha256"]),
+        "model_content_sha256": str(receipt["model"]["content_sha256"]),
+        "model_manifest_sha256": str(receipt["model"]["manifest_sha256"]),
+        "model_revision": str(receipt["model"]["model"]["revision"]),
+        "pixmo_archive_sha256": str(receipt["pixmo"]["archive_sha256"]),
+        "pixmo_completion_sha256": str(receipt["pixmo"]["completion_sha256"]),
+        "pixmo_content_sha256": str(receipt["pixmo"]["manifest_commitment"]),
+        "pixmo_manifest_sha256": str(receipt["pixmo"]["manifest_sha256"]),
+        "plan_sha256": str(receipt["frozen_inputs"]["plan_sha256"]),
+        "probe_qualification_file_sha256": str(
+            receipt["frozen_inputs"]["probe_qualification_file_sha256"]
+        ),
+        "probe_qualification_receipt_sha256": str(
+            receipt["frozen_inputs"]["probe_qualification_receipt_sha256"]
+        ),
+    }
+
+
+def _verify_inventory(items: Any) -> set[Path]:
+    if not isinstance(items, list) or not items:
+        raise ValueError("Hydration receipt has an invalid file inventory")
+    paths: set[Path] = set()
+    for item in items:
+        if not isinstance(item, Mapping) or set(item) not in (
+            {"bytes", "path", "sha256"},
+            {"bytes", "path", "reused", "sha256"},
+        ):
+            raise ValueError("Hydration receipt has an invalid file entry")
+        path = Path(str(item["path"]))
+        if not path.is_absolute() or path in paths or path.is_symlink() or not path.is_file():
+            raise ValueError("Hydration receipt file path is missing, linked, or duplicated")
+        _verify_file(path, item, label="Hydrated receipt file")
+        paths.add(path)
+    return paths
+
+
+def validate_existing_hydration(
+    receipt_path: Path,
+    *,
+    inputs_dir: Path,
+    cache_dir: Path,
+    expected_identities: Mapping[str, Any],
+    origins: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Revalidate and reuse one exact completed hydration without network downloads."""
+
+    if receipt_path.is_symlink() or not receipt_path.is_file():
+        raise ValueError("Existing hydration receipt must be a regular file")
+    receipt = json.loads(receipt_path.read_text())
+    if not isinstance(receipt, dict) or receipt.get("format") != RECEIPT_FORMAT:
+        raise ValueError("Existing hydration receipt has an unsupported format")
+    claimed = receipt.get("content_sha256")
+    unsigned = dict(receipt)
+    unsigned.pop("content_sha256", None)
+    if claimed != canonical_sha256(unsigned):
+        raise ValueError("Existing hydration receipt content hash mismatch")
+    expected = validate_expected_identities(expected_identities)
+    if _receipt_identities(receipt) != expected:
+        raise ValueError("Existing hydration receipt does not match frozen identities")
+    if receipt.get("origins") != origins or receipt.get("origin_contract_sha256") != canonical_sha256(origins):
+        raise ValueError("Existing hydration receipt does not match URL origins")
+
+    plan_root = (inputs_dir / "step5_v1").resolve()
+    probe_root = (inputs_dir / "probes" / "step5_grouped_ensemble_v1").resolve()
+    pixmo_root = (inputs_dir / "pixmo").resolve()
+    model_root = (
+        cache_dir / "models--Qwen--Qwen3-VL-8B-Thinking" / "snapshots" / MODEL_REVISION
+    ).resolve()
+    if receipt["frozen_inputs"].get("plan_path") != str(plan_root / "manifest.json"):
+        raise ValueError("Existing hydration receipt has the wrong plan path")
+    if receipt["frozen_inputs"].get("probe_path") != str(
+        probe_root / "probes" / "legacy-grouped-regularizer.json"
+    ):
+        raise ValueError("Existing hydration receipt has the wrong probe path")
+    if receipt["pixmo"].get("bundle_path") != str(pixmo_root):
+        raise ValueError("Existing hydration receipt has the wrong PixMo path")
+    if receipt["model"].get("snapshot_path") != str(model_root):
+        raise ValueError("Existing hydration receipt has the wrong model path")
+
+    frozen_paths = _verify_inventory(receipt["frozen_inputs"].get("files"))
+    actual_frozen = {
+        path.resolve()
+        for root in (plan_root, probe_root)
+        for path in root.rglob("*")
+        if path.is_file() or path.is_symlink()
+    }
+    if frozen_paths != actual_frozen:
+        raise ValueError("Existing frozen input inventory has changed")
+    plan, _ = _validate_plan(plan_root / "manifest.json")
+    expected_plan_paths = {
+        plan_root / "manifest.json",
+        *(plan_root / str(item["path"]) for item in plan["outputs"].values()),
+    }
+    if {
+        path.resolve() for path in plan_root.iterdir() if path.is_file() or path.is_symlink()
+    } != {path.resolve() for path in expected_plan_paths}:
+        raise ValueError("Existing frozen plan file inventory has changed")
+    qualification = probe_root / "probe_qualification.json"
+    if file_sha256(plan_root / "manifest.json") != expected["plan_sha256"]:
+        raise ValueError("Existing frozen plan hash mismatch")
+    if file_sha256(qualification) != expected["probe_qualification_file_sha256"]:
+        raise ValueError("Existing probe qualification file hash mismatch")
+    if _qualification_receipt(
+        qualification, expected_plan_sha256=expected["plan_sha256"]
+    ) != expected["probe_qualification_receipt_sha256"]:
+        raise ValueError("Existing probe qualification receipt mismatch")
+    actual_probe_paths = {
+        path.relative_to(probe_root).as_posix()
+        for path in probe_root.rglob("*")
+        if path.is_file() or path.is_symlink()
+    }
+    if actual_probe_paths != EXPECTED_PROBE_FILES:
+        raise ValueError("Existing probe bundle inventory has changed")
+    qualification_manifest = json.loads(qualification.read_text())
+    ensembles = qualification_manifest.get("ensembles", {})
+    if set(ensembles) != {"regularizer", "evaluator"} or len(
+        ensembles["regularizer"]
+    ) != 1 or len(ensembles["evaluator"]) != 5:
+        raise ValueError("Existing probe qualification has the wrong ensemble inventory")
+    committed_probe_paths: set[str] = set()
+    for probe in [*ensembles["regularizer"], *ensembles["evaluator"]]:
+        relative = _relative_file(str(probe.get("artifact_path", "")), label="probe artifact")
+        path = probe_root / relative
+        _verify_file(
+            path,
+            {"bytes": path.stat().st_size, "sha256": probe.get("artifact_sha256")},
+            label="Qualified probe artifact",
+        )
+        committed_probe_paths.add(relative.as_posix())
+    if committed_probe_paths != {
+        path for path in EXPECTED_PROBE_FILES if path.startswith("probes/")
+    }:
+        raise ValueError("Existing qualification commits the wrong probe artifacts")
+
+    model_manifest = receipt["model"].get("manifest")
+    if not isinstance(model_manifest, Mapping) or hashlib.sha256(
+        canonical_json_bytes(model_manifest)
+    ).hexdigest() != expected["model_manifest_sha256"]:
+        raise ValueError("Existing model manifest is not authenticated")
+    if completion_marker(model_manifest)["content_sha256"] != expected[
+        "model_content_sha256"
+    ]:
+        raise ValueError("Existing model manifest content identity mismatch")
+    model_specifications = {
+        str(item["path"]): item for item in model_manifest["files"]
+    }
+    model_paths = _verify_inventory(receipt["model"].get("files"))
+    model_children = list(model_root.iterdir())
+    if any(path.is_symlink() or not path.is_file() for path in model_children):
+        raise ValueError("Existing model snapshot contains a linked or non-file child")
+    actual_model = {path.resolve() for path in model_children}
+    if model_paths != actual_model or {path.name for path in model_paths} != set(
+        REQUIRED_SNAPSHOT_FILES
+    ):
+        raise ValueError("Existing model snapshot inventory has changed")
+    for path in model_paths:
+        _verify_file(
+            path,
+            model_specifications[path.name],
+            label="Authenticated model file",
+        )
+    pixmo_manifest = validate_staged_bundle(pixmo_root)
+    if pixmo_manifest.get("content_sha256") != expected["pixmo_content_sha256"]:
+        raise ValueError("Existing PixMo content identity mismatch")
+    if file_sha256(pixmo_root / "manifest.json") != expected[
+        "pixmo_manifest_sha256"
+    ]:
+        raise ValueError("Existing PixMo manifest file hash mismatch")
+    if _verify_inventory(receipt["pixmo"].get("files")) != {
+        path.resolve() for path in pixmo_root.rglob("*") if path.is_file()
+    }:
+        raise ValueError("Existing PixMo receipt inventory has changed")
+    return receipt
+
+
 def hydrate_all(
     url_manifest: Mapping[str, Any],
     *,
     inputs_dir: Path,
     cache_dir: Path,
     receipt_path: Path,
+    expected_identities: Mapping[str, Any],
     fetch: Fetch = fetch_https,
 ) -> dict[str, Any]:
     """Hydrate all immutable worker inputs and emit a secret-free receipt."""
 
     manifest = validate_url_manifest(url_manifest)
-    if receipt_path.exists() or receipt_path.is_symlink():
-        raise FileExistsError(receipt_path)
+    expected = validate_expected_identities(expected_identities)
+    _reject_symlink_ancestors(inputs_dir, label="Input destination")
+    _reject_symlink_ancestors(receipt_path, label="Hydration receipt")
+    _reject_symlink_ancestors(cache_dir, label="Model cache")
     inputs_dir.mkdir(parents=True, exist_ok=True)
     cache_dir.mkdir(parents=True, exist_ok=True)
     final_input_paths = (
@@ -455,23 +723,30 @@ def hydrate_all(
         inputs_dir / "probes" / "step5_grouped_ensemble_v1",
         inputs_dir / "pixmo",
     )
+    origins = _origins(manifest)
+    if receipt_path.exists() or receipt_path.is_symlink():
+        if not all(path.exists() and not path.is_symlink() for path in final_input_paths):
+            raise ValueError("Existing hydration is partial")
+        return validate_existing_hydration(
+            receipt_path,
+            inputs_dir=inputs_dir,
+            cache_dir=cache_dir,
+            expected_identities=expected,
+            origins=origins,
+        )
     if any(path.exists() or path.is_symlink() for path in final_input_paths):
         raise FileExistsError("Step 5 hydration destination already exists")
     temporary = Path(tempfile.mkdtemp(prefix="step5-hydration-", dir=inputs_dir.parent))
     try:
-        model = hydrate_model(manifest["model"], cache_dir=cache_dir, temporary_dir=temporary, fetch=fetch)
+        model = hydrate_model(
+            manifest["model"],
+            cache_dir=cache_dir,
+            temporary_dir=temporary,
+            expected_identities=expected,
+            fetch=fetch,
+        )
         frozen = hydrate_frozen_inputs(manifest["frozen_inputs"], inputs_dir=inputs_dir, temporary_dir=temporary, fetch=fetch)
         pixmo = hydrate_pixmo(manifest["pixmo"], inputs_dir=inputs_dir, temporary_dir=temporary, fetch=fetch)
-        origins = {
-            group: sorted(
-                {
-                    https_origin(str(url))
-                    for key, value in manifest[group].items()
-                    for url in (value.values() if key == "file_urls" else [value])
-                }
-            )
-            for group in ("model", "frozen_inputs", "pixmo")
-        }
         receipt: dict[str, Any] = {
             "format": RECEIPT_FORMAT,
             "frozen_inputs": frozen,
@@ -480,11 +755,19 @@ def hydrate_all(
             "pixmo": pixmo,
             "origin_contract_sha256": canonical_sha256(origins),
         }
+        if _receipt_identities(receipt) != expected:
+            raise ValueError("Hydrated inputs do not match frozen launch identities")
         receipt["content_sha256"] = canonical_sha256(receipt)
         receipt_path.parent.mkdir(parents=True, exist_ok=True)
-        temporary_receipt = receipt_path.with_suffix(receipt_path.suffix + ".tmp")
-        temporary_receipt.write_text(json.dumps(receipt, indent=2, sort_keys=True) + "\n")
-        os.replace(temporary_receipt, receipt_path)
+        temporary_receipt = receipt_path.with_name(
+            f".{receipt_path.name}.{os.getpid()}.tmp"
+        )
+        try:
+            with temporary_receipt.open("x") as output:
+                output.write(json.dumps(receipt, indent=2, sort_keys=True) + "\n")
+            os.link(temporary_receipt, receipt_path, follow_symlinks=False)
+        finally:
+            temporary_receipt.unlink(missing_ok=True)
         return receipt
     except BaseException:
         if not receipt_path.exists():
