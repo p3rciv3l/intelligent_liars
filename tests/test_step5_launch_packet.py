@@ -137,8 +137,9 @@ def _packet(tmp_path: Path) -> dict[str, object]:
         },
         "approval": {
             "approved_hourly_price_usd": "${APPROVED_HOURLY_PRICE_USD}",
-            "approved_max_cost_usd": "${APPROVED_MAX_COST_USD}",
             "approved_at": "${APPROVED_AT}",
+            "cost_mode": "uncapped",
+            "uncapped_cost_approved": True,
         },
         "commands": {
             "artifact_upload_preparation": (
@@ -173,8 +174,9 @@ def _packet(tmp_path: Path) -> dict[str, object]:
                 "160",
                 "--approved-hourly-price",
                 "${APPROVED_HOURLY_PRICE_USD}",
-                "--approved-max-cost",
-                "${APPROVED_MAX_COST_USD}",
+                "--uncapped-cost-approved",
+                "--stall-timeout-seconds",
+                "1800",
                 "--controller-public-key-sha256",
                 hashlib.sha256(public_key.read_bytes()).hexdigest(),
                 "--input-url-manifest-url-file",
@@ -235,7 +237,6 @@ def _packet(tmp_path: Path) -> dict[str, object]:
         "remaining_substitutions": [
             "APPROVED_AT",
             "APPROVED_HOURLY_PRICE_USD",
-            "APPROVED_MAX_COST_USD",
             "ARTIFACT_PUT_RECEIPT_SHA256",
             "AWS_ACCOUNT_ID",
             "AWS_REGION",
@@ -417,6 +418,22 @@ def test_packet_rejects_unbound_runtime_publication_evidence(tmp_path: Path):
     with pytest.raises(LaunchPacketError, match="index digest differs"):
         validate_launch_packet(packet, packet_dir=tmp_path)
 
+
+def test_packet_rejects_a_hidden_monetary_cap(tmp_path: Path):
+    packet = _packet(tmp_path)
+    packet["approval"]["approved_max_cost_usd"] = 10.0  # type: ignore[index]
+    packet["packet_sha256"] = canonical_sha256(packet)
+    with pytest.raises(LaunchPacketError, match="approval fields differ"):
+        validate_launch_packet(packet, packet_dir=tmp_path)
+
+    packet = _packet(tmp_path)
+    packet["commands"]["lifecycle_argv"].extend(  # type: ignore[index]
+        ["--approved-max-cost", "10.0"]
+    )
+    packet["packet_sha256"] = canonical_sha256(packet)
+    with pytest.raises(LaunchPacketError, match="may not contain a maximum cost"):
+        validate_launch_packet(packet, packet_dir=tmp_path)
+
     packet = _packet(tmp_path)
     packet["runtime"]["publication"]["sha256sums_verified"] = False  # type: ignore[index]
     packet["packet_sha256"] = canonical_sha256(packet)
@@ -447,7 +464,6 @@ def test_complete_packet_requires_digest_and_exact_cost_approval(tmp_path: Path)
         "${GPU_NAME}": "RTX 3090",
         "${GPU_VRAM_GIB}": 24,
         "${APPROVED_HOURLY_PRICE_USD}": 0.25,
-        "${APPROVED_MAX_COST_USD}": 1.50,
         "${ARTIFACT_PUT_RECEIPT_SHA256}": artifact_receipt_sha,
         "${APPROVED_AT}": "2026-08-22T20:00:00Z",
         "${AWS_ACCOUNT_ID}": "123456789012",
@@ -583,8 +599,9 @@ def test_complete_packet_rejects_command_field_drift(tmp_path: Path):
     ] = "sha256:" + "a" * 64
     packet["approval"] = {
         "approved_hourly_price_usd": 0.25,
-        "approved_max_cost_usd": 1.5,
         "approved_at": "2026-08-22T20:00:00Z",
+        "cost_mode": "uncapped",
+        "uncapped_cost_approved": True,
     }
     packet["durability"].update(  # type: ignore[union-attr]
         {
@@ -632,8 +649,9 @@ def test_complete_packet_rejects_command_field_drift(tmp_path: Path):
         "160",
         "--approved-hourly-price",
         "0.25",
-        "--approved-max-cost",
-        "1.5",
+        "--uncapped-cost-approved",
+        "--stall-timeout-seconds",
+        "1800",
         "--controller-public-key-sha256",
         packet["controller_prerequisites"]["controller_public_key_sha256"],  # type: ignore[index]
         "--input-url-manifest-url-file",
@@ -706,8 +724,9 @@ def test_complete_packet_rejects_fabricated_versioning_receipt(tmp_path: Path):
     ] = "sha256:" + "a" * 64
     packet["approval"] = {
         "approved_hourly_price_usd": 0.25,
-        "approved_max_cost_usd": 1.5,
         "approved_at": "2026-08-22T20:00:00Z",
+        "cost_mode": "uncapped",
+        "uncapped_cost_approved": True,
     }
     packet["remote_inputs"]["plan_s3_uri"] = "s3://bucket/plan"  # type: ignore[index]
     packet["remote_inputs"]["probe_s3_uri"] = "s3://bucket/probe"  # type: ignore[index]
@@ -748,7 +767,6 @@ def test_complete_packet_rejects_fabricated_versioning_receipt(tmp_path: Path):
         ("${RUNTIME_IMAGE}", "ghcr.io/example/step5@sha256:" + "a" * 64),
         ("${RUNTIME_IMAGE_DIGEST}", "sha256:" + "a" * 64),
         ("${APPROVED_HOURLY_PRICE_USD}", "0.25"),
-        ("${APPROVED_MAX_COST_USD}", "1.5"),
         ("${APPROVED_AT}", "2026-08-22T20:00:00Z"),
         ("${ARTIFACT_PUT_RECEIPT_SHA256}", artifact_receipt_sha),
     ):

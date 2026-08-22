@@ -112,8 +112,9 @@ resuming.
 
 1. `OFFER_ID`, `GPU_NAME`, and measured `GPU_VRAM_GIB`, selected from a fresh
    Vast search.
-2. Exact `APPROVED_HOURLY_PRICE_USD`, `APPROVED_MAX_COST_USD`, and
-   `APPROVED_AT` after the user sees and approves those concrete values.
+2. Exact `APPROVED_HOURLY_PRICE_USD` and `APPROVED_AT` after the user sees and
+   approves the concrete offer. The money mode is already frozen as explicitly
+   uncapped; there is no maximum-cost substitution or hidden monetary ceiling.
 3. `BUCKET_VERSIONING_STATUS=Enabled`, the AWS account and region, and the
    SHA-256 of a fresh controller receipt proving that exact bucket state. It is
    currently disabled or unconfigured, so this remains a hard blocker. The
@@ -124,7 +125,7 @@ resuming.
 The hydration, checkpoint durability, controller provisioning, and artifact
 finalization commands are exact and hash-bound. The runtime image is now frozen
 by its independently verified registry-index digest. The packet remains blocked
-on a fresh offer/cost approval and bucket-versioning proof.
+on a fresh exact offer/hourly-price approval and bucket-versioning proof.
 The hash-bound `commands.input_url_preparation` controller command verifies the
 frozen S3 objects, publishes the create-only URL manifest, and atomically creates
 the hydration bootstrap and host-gate URL files as mode-0600 regular files. The
@@ -144,6 +145,15 @@ the first create attempt; the lifecycle wrapper repeats the same freshness and
 destination checks before creation and every same-instance restart. A completed
 same-host hydration is receipt-verified before the protected URL is opened, so
 recovery remains possible after that URL expires.
+
+Uncapped refers only to money and total wall-clock runtime. It does not weaken
+operational safety: individual controller operations remain bounded, host
+download qualification remains mandatory, and the workload has a 1,800-second
+no-progress watchdog. The trusted controller refreshes and re-stages the same
+immutable-destination artifact PUT authorization before expiry, so its initial
+six-hour URL is not a runtime cap. Durable checkpoint, artifact verification,
+same-instance diagnosis/recovery, and cleanup rules are unchanged. The larger
+run remains disabled and requires separate authorization after the canary.
 
 The validator reports `launch_ready: false` and exits 2 while any substitution
 remains. `--allow-incomplete` changes only that reporting exit code for CI; it

@@ -18,7 +18,7 @@
     {"path": "src/intelligent_liars/rollouts.py", "sha256": "59183bead0ee4072ee3f956c743f549294ef89f9a130cbd9d51b8f6b79ed1763"},
     {"path": "src/intelligent_liars/standalone_models.py", "sha256": "f1fa46bb1ec74f8781625a8f8d319ccffb08277edb683cae4c0ee0d9ae7589f9"},
     {"path": "src/intelligent_liars/step5_artifact_finalize.py", "sha256": "4642ccfdc2dcd9de6580f1fdcbc1039271ce0eeac82323db7e78a3c67195281b"},
-    {"path": "src/intelligent_liars/step5_artifact_presigner.py", "sha256": "80cad69d9b135775f5b4557740521ecba40a51f781566430a0fe7f9d7be296bc"},
+    {"path": "src/intelligent_liars/step5_artifact_presigner.py", "sha256": "4e463b115608adc80f53ae89304f17d1641681e7ddd39dcd422b55d735ec90d0"},
     {"path": "src/intelligent_liars/step5_artifact_store.py", "sha256": "226db1359660f9decb6989906536885089799c8b3cf53a54db9b0936f1ee3931"},
     {"path": "src/intelligent_liars/step5_checkpoint_bridge.py", "sha256": "9d6c87b0d6679af1c4738c7a26aa58c4d5a4dda6ff6284e6f1399e7ccf1f547e"},
     {"path": "src/intelligent_liars/step5_input_hydration.py", "sha256": "907657dbe928d472c604d7ee9b5975d94b5773a9a169b6ceebc57b4dbf30d30b"},

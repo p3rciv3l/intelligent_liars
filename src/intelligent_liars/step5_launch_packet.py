@@ -457,6 +457,28 @@ def _validate_local_contracts(value: Any, packet_dir: Path) -> None:
             raise LaunchPacketError(f"{name} has an unsupported format")
 
 
+def _validate_uncapped_approval(
+    value: Any, *, allow_placeholders: bool
+) -> Mapping[str, Any]:
+    approval = _mapping(value, label="approval")
+    if set(approval) != {
+        "approved_at",
+        "approved_hourly_price_usd",
+        "cost_mode",
+        "uncapped_cost_approved",
+    }:
+        raise LaunchPacketError("approval fields differ from uncapped contract")
+    if (
+        approval.get("cost_mode") != "uncapped"
+        or approval.get("uncapped_cost_approved") is not True
+    ):
+        raise LaunchPacketError("launch requires explicit uncapped-cost approval")
+    price = approval.get("approved_hourly_price_usd")
+    if not (allow_placeholders and _is_placeholder(price)):
+        _positive_finite(price, label="approved_hourly_price_usd")
+    return approval
+
+
 def _validate_complete_runtime(packet: Mapping[str, Any], packet_dir: Path) -> None:
     runtime = _mapping(packet["runtime"], label="runtime")
     image = runtime.get("image")
@@ -481,14 +503,7 @@ def _validate_complete_runtime(packet: Mapping[str, Any], packet_dir: Path) -> N
     _positive_finite(runtime.get("gpu_vram_gib"), label="gpu_vram_gib")
     _positive_finite(runtime.get("disk_gib"), label="disk_gib")
 
-    approval = _mapping(packet["approval"], label="approval")
-    _positive_finite(
-        approval.get("approved_hourly_price_usd"),
-        label="approved_hourly_price_usd",
-    )
-    _positive_finite(
-        approval.get("approved_max_cost_usd"), label="approved_max_cost_usd"
-    )
+    approval = _validate_uncapped_approval(packet["approval"], allow_placeholders=False)
     timestamp = approval.get("approved_at")
     if not isinstance(timestamp, str):
         raise LaunchPacketError("approved_at must be an ISO-8601 timestamp")
@@ -514,7 +529,7 @@ def _validate_complete_runtime(packet: Mapping[str, Any], packet_dir: Path) -> N
         "--image": str(runtime["image"]),
         "--disk": str(runtime["disk_gib"]),
         "--approved-hourly-price": str(approval["approved_hourly_price_usd"]),
-        "--approved-max-cost": str(approval["approved_max_cost_usd"]),
+        "--stall-timeout-seconds": "1800",
         "--controller-public-key-sha256": str(
             packet["controller_prerequisites"]["controller_public_key_sha256"]
         ),
@@ -552,6 +567,10 @@ def _validate_complete_runtime(packet: Mapping[str, Any], packet_dir: Path) -> N
     for flag, expected in expected_flags.items():
         if flag_value(flag) != expected:
             raise LaunchPacketError(f"{flag} differs from its frozen packet field")
+    if argv.count("--uncapped-cost-approved") != 1:
+        raise LaunchPacketError("lifecycle requires explicit uncapped-cost approval")
+    if "--approved-max-cost" in argv:
+        raise LaunchPacketError("uncapped lifecycle may not contain a maximum cost")
     remote = commands["remote"]
     if not isinstance(remote, str) or str(runtime["image_digest"]) not in remote:
         raise LaunchPacketError(
@@ -864,6 +883,7 @@ def validate_launch_packet(
     if not isinstance(revision, str) or re.fullmatch(r"[0-9a-f]{40}", revision) is None:
         raise LaunchPacketError("model_revision must be an exact 40-hex revision")
     _validate_runtime_publication(value.get("runtime"))
+    _validate_uncapped_approval(value.get("approval"), allow_placeholders=True)
 
     controller_contracts = _mapping(
         value.get("controller_contracts"), label="controller_contracts"
@@ -932,6 +952,10 @@ def validate_launch_packet(
         raise LaunchPacketError("lifecycle_argv must be a nonempty string list")
     if len(lifecycle) < 2:
         raise LaunchPacketError("lifecycle_argv must name its controller and wrapper")
+    if lifecycle.count("--uncapped-cost-approved") != 1:
+        raise LaunchPacketError("lifecycle requires explicit uncapped-cost approval")
+    if "--approved-max-cost" in lifecycle:
+        raise LaunchPacketError("uncapped lifecycle may not contain a maximum cost")
     wrapper_descriptor = _mapping(
         controller_contracts["lifecycle_wrapper"], label="lifecycle_wrapper"
     )

@@ -2,7 +2,8 @@
   "approval": {
     "approved_at": "${APPROVED_AT}",
     "approved_hourly_price_usd": "${APPROVED_HOURLY_PRICE_USD}",
-    "approved_max_cost_usd": "${APPROVED_MAX_COST_USD}"
+    "cost_mode": "uncapped",
+    "uncapped_cost_approved": true
   },
   "commands": {
     "artifact_upload_preparation": "uv run --with boto3 python scripts/prepare_tinylora_step5_artifact_upload.py --bucket intelligent-liars-osworld-29a36b2b927f4078b2ac95ca83ec9c21 --key step5-artifacts/v2/step5-canary-v1/attempt-1/artifacts.tar --region ${AWS_REGION} --account-id ${AWS_ACCOUNT_ID} --approved-at ${APPROVED_AT} --url-file artifacts/step5-canary-v1/artifact-put.url --receipt artifacts/step5-canary-v1/artifact-put-receipt.json --expires-in 21600",
@@ -45,7 +46,7 @@
       "--checkpoint-controller-script",
       "/Users/student/Desktop/ai/intelligent_liars/scripts/run_step5_checkpoint_controller.py",
       "--checkpoint-controller-script-sha256",
-      "c75047a10d43d210c69c84d7a8aad9c07de9ff47fa7965f8691e2a1c2395a708",
+      "340ea4c4f489bfdce0f78b205d4776a9bba18b928b1e66de4abaa45eb4558955",
       "--checkpoint-controller-uv",
       "/Users/student/.local/bin/uv",
       "--checkpoint-bucket",
@@ -88,8 +89,9 @@
       "3",
       "--approved-hourly-price",
       "${APPROVED_HOURLY_PRICE_USD}",
-      "--approved-max-cost",
-      "${APPROVED_MAX_COST_USD}"
+      "--uncapped-cost-approved",
+      "--stall-timeout-seconds",
+      "1800"
     ],
     "remote": "bash scripts/run_tinylora_step5_canary_worker.sh sha256:ba0cf29cb29b47e47f6dd2448124ab4ddf061a95811d6f5bf036b73b00678e5f",
     "software_recovery": "python -c 'import json; from pathlib import Path; p=Path(\"/workspace/runs/step5-canary-v1/tinylora_dim13/checkpoint_store/latest.json\"); assert p.is_file(); d=json.loads(p.read_text()); assert isinstance(d, dict) and d'",
@@ -98,19 +100,19 @@
   "controller_contracts": {
     "artifact_upload_preparation": {
       "path": "../scripts/prepare_tinylora_step5_artifact_upload.py",
-      "sha256": "928ce1d56815a61805074bd12771cbd65f0ff12fb6c78ece7ef9b5df9fecea41"
+      "sha256": "236655638c49a0e448b1305427655d20dc65a24691fb10ac9461242b48f637c4"
     },
     "artifact_presigner": {
       "path": "../src/intelligent_liars/step5_artifact_presigner.py",
-      "sha256": "80cad69d9b135775f5b4557740521ecba40a51f781566430a0fe7f9d7be296bc"
+      "sha256": "4e463b115608adc80f53ae89304f17d1641681e7ddd39dcd422b55d735ec90d0"
     },
     "checkpoint_controller": {
       "path": "../scripts/run_step5_checkpoint_controller.py",
-      "sha256": "c75047a10d43d210c69c84d7a8aad9c07de9ff47fa7965f8691e2a1c2395a708"
+      "sha256": "340ea4c4f489bfdce0f78b205d4776a9bba18b928b1e66de4abaa45eb4558955"
     },
     "lifecycle_wrapper": {
       "path": "../scripts/run_vast_step5_instance.py",
-      "sha256": "38a56e851ec40666131e5757925ad280bea9170f5bd3a54c9209b2b7e5f985bb"
+      "sha256": "58a54f9a30b28982a2ffd74e48bd81415376a6fbf73d1fc276ba5c88be04968f"
     },
     "input_url_controller": {
       "path": "../src/intelligent_liars/step5_input_url_controller.py",
@@ -145,14 +147,13 @@
     },
     "source_manifest": {
       "path": "tinylora_step5_canary_source_manifest_v1.json",
-      "sha256": "9b0c2a7c3b989968eaf344067b949a2941ad197c0179378b7ec6c540e4dccb7c"
+      "sha256": "dedace9bcc8d27e24a3ca41019088708ba91967d654c621ca6b76703ef33cf3d"
     }
   },
-  "packet_sha256": "ae30179fa5ed3bb7752c44e1c87f017e953cc602ec5050ca7021c3a8be6122b6",
+  "packet_sha256": "a4f85d2e71b66e9b6f060b74ce8c8082a2007af36572c319c0a77e4f07315489",
   "remaining_substitutions": [
     "APPROVED_AT",
     "APPROVED_HOURLY_PRICE_USD",
-    "APPROVED_MAX_COST_USD",
     "ARTIFACT_PUT_RECEIPT_SHA256",
     "AWS_ACCOUNT_ID",
     "AWS_REGION",
