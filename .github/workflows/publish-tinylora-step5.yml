@@ -1,0 +1,194 @@
+name: Publish TinyLoRA Step 5 runtime
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: publish-tinylora-step5-${{ github.sha }}
+  cancel-in-progress: false
+
+jobs:
+  build-and-publish:
+    name: Build, attest, and publish
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      IMAGE_REPOSITORY: ghcr.io/p3rciv3l/intelligent_liars/tinylora-step5
+      IMAGE_TAG: sha-${{ github.sha }}
+    steps:
+      - name: Check out the selected commit
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Validate publication contract
+        run: ruby .github/workflows/test_publish_tinylora_step5.rb
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Resolve commit-addressed tag
+        id: tag
+        run: |
+          set -euo pipefail
+          tag_ref="${IMAGE_REPOSITORY}:${IMAGE_TAG}"
+          error_file="$(mktemp)"
+          trap 'rm -f "$error_file"' EXIT
+
+          set +e
+          inspect_output="$(docker buildx imagetools inspect "$tag_ref" 2>"$error_file")"
+          inspect_status=$?
+          set -e
+
+          if [[ $inspect_status -eq 0 ]]; then
+            existing_digest="$(awk '$1 == "Digest:" { print $2; exit }' <<<"$inspect_output")"
+            if ! grep -Eq '^sha256:[0-9a-f]{64}$' <<<"$existing_digest"; then
+              echo "Could not resolve a valid digest for existing tag $tag_ref" >&2
+              exit 1
+            fi
+            existing_revision="$(
+              docker buildx imagetools inspect "$tag_ref" \
+                --format '{{ json .Image }}' \
+                | jq -er '
+                    [
+                      .. | objects
+                      | (.config?.Labels? // .Config?.Labels? // empty)
+                      | ."org.opencontainers.image.revision"? // empty
+                    ]
+                    | unique
+                    | select(length == 1)
+                    | .[0]
+                  '
+            )"
+            if [[ "$existing_revision" != "${{ github.sha }}" ]]; then
+              echo "Refusing mismatched existing tag $tag_ref" >&2
+              exit 1
+            fi
+            printf '%s\n' 'should_build=false' >> "$GITHUB_OUTPUT"
+            printf '%s\n' "existing_digest=$existing_digest" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if ! grep -Eqi 'manifest unknown|name unknown|not found' "$error_file"; then
+            echo "Registry lookup failed ambiguously; refusing to publish" >&2
+            sed -n '1,20p' "$error_file" >&2
+            exit 1
+          fi
+          printf '%s\n' 'should_build=true' >> "$GITHUB_OUTPUT"
+
+      - name: Build, attest, and push commit-addressed image
+        id: build
+        if: steps.tag.outputs.should_build == 'true'
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: docker/tinylora-step5
+          file: docker/tinylora-step5/Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: ${{ env.IMAGE_REPOSITORY }}:${{ env.IMAGE_TAG }}
+          build-args: |
+            IMAGE_REVISION=${{ github.sha }}
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+          provenance: mode=max
+          sbom: true
+          cache-from: type=gha,scope=tinylora-step5-amd64
+          cache-to: type=gha,mode=max,scope=tinylora-step5-amd64
+
+      - name: Capture registry evidence
+        id: evidence
+        env:
+          BUILD_DIGEST: ${{ steps.build.outputs.digest }}
+          EXISTING_DIGEST: ${{ steps.tag.outputs.existing_digest }}
+          BUILD_METADATA: ${{ steps.build.outputs.metadata }}
+          SOURCE_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          BUILD_DIGEST="${BUILD_DIGEST:-$EXISTING_DIGEST}"
+          if ! grep -Eq '^sha256:[0-9a-f]{64}$' <<<"$BUILD_DIGEST"; then
+            echo "Invalid image digest: $BUILD_DIGEST" >&2
+            exit 1
+          fi
+
+          mkdir -p publish-evidence
+          image_ref="${IMAGE_REPOSITORY}@${BUILD_DIGEST}"
+          printf '%s\n' "$image_ref" > publish-evidence/image-reference.txt
+          printf '%s\n' "$BUILD_DIGEST" > publish-evidence/image-digest.txt
+          printf '%s\n' "$SOURCE_SHA" > publish-evidence/source-commit.txt
+          if [[ -n "$BUILD_METADATA" ]]; then
+            printf '%s\n' "$BUILD_METADATA" > publish-evidence/build-metadata.json
+          else
+            jq -n \
+              --arg source_commit "$SOURCE_SHA" \
+              --arg image_digest "$BUILD_DIGEST" \
+              '{recovered_existing_image: true, source_commit: $source_commit, image_digest: $image_digest}' \
+              > publish-evidence/build-metadata.json
+          fi
+
+          tag_ref="${IMAGE_REPOSITORY}:${IMAGE_TAG}"
+          tag_inspect="$(docker buildx imagetools inspect "$tag_ref")"
+          tag_digest="$(awk '$1 == "Digest:" { print $2; exit }' <<<"$tag_inspect")"
+          if [[ "$tag_digest" != "$BUILD_DIGEST" ]]; then
+            echo "Commit tag no longer resolves to the expected digest" >&2
+            exit 1
+          fi
+
+          docker buildx imagetools inspect "$image_ref" --raw \
+            > publish-evidence/image-index.json
+          docker buildx imagetools inspect "$image_ref" \
+            --format '{{ json .SBOM }}' > publish-evidence/sbom.json
+          docker buildx imagetools inspect "$image_ref" \
+            --format '{{ json .Provenance }}' > publish-evidence/provenance.json
+
+          test -s publish-evidence/image-index.json
+          test -s publish-evidence/sbom.json
+          test -s publish-evidence/provenance.json
+          for evidence_file in \
+            publish-evidence/build-metadata.json \
+            publish-evidence/image-index.json \
+            publish-evidence/sbom.json \
+            publish-evidence/provenance.json; do
+            jq -e 'type == "object" or type == "array"' "$evidence_file" >/dev/null
+          done
+
+          printf '%s\n' "image_ref=$image_ref" >> "$GITHUB_OUTPUT"
+          (
+            cd publish-evidence
+            sha256sum * > SHA256SUMS
+          )
+
+      - name: Summarize publication
+        env:
+          IMAGE_REF: ${{ steps.evidence.outputs.image_ref }}
+        run: |
+          {
+            echo '### TinyLoRA Step 5 runtime published'
+            echo
+            echo "- Immutable image: \`$IMAGE_REF\`"
+            echo "- Source commit: \`${{ github.sha }}\`"
+            echo '- Preflight found no existing tag, or recovered the same source revision; the final tag resolved to this digest.'
+            echo '- BuildKit provenance and SBOM attestations are attached to the registry image.'
+            echo '- A checksummed copy of the digest, image index, SBOM, provenance, and build metadata is attached to this workflow run.'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload publication evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: tinylora-step5-publish-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: publish-evidence/
+          if-no-files-found: error
+          retention-days: 90
+          compression-level: 9
