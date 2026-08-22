@@ -1,0 +1,148 @@
+{
+  "direction_policy": "Only conditioned_false_direct_report receives positive layer-21 margin loss; behavior CE covers all six paired objectives.",
+  "format": "tinylora_bounded_pilot_plan_v1",
+  "group_assignments": {
+    "path": "group_assignments.jsonl",
+    "sha256": "dd03bbec5f98b71181ffb45d4d1362ee4ac8e9b5ac7210d0c57286ba185c9597"
+  },
+  "inputs": {
+    "corpus_manifest_sha256": "66422c6d616cc51b819f248137c7bcbf9be12fac67750387fb1e43b3064cf87f",
+    "holdout_manifest_sha256": "a0695f93e7226944923d740bfa7e9308c241e106194fe4075c165aa4e11d8366",
+    "rendered_examples_sha256": "90d767aceea41f2238d1cbad418a105c9a2a04268ba47f8e76dbaa6a38b81049",
+    "training_exclusions_sha256": "21b85202df0757676ee195205af78be8ea244290b7c36fd0b88d541f4ddd4859"
+  },
+  "large_run_enabled": false,
+  "outputs": {
+    "audit": {
+      "families": {
+        "customer_service_handoffs": 150,
+        "file_management": 6,
+        "minor_accountability_reporting": 150,
+        "multimodal_diagram": 120,
+        "multimodal_layout": 120,
+        "multimodal_object_attribute": 120,
+        "order_fulfillment": 6,
+        "social_status_updates": 150
+      },
+      "groups": 8,
+      "objectives": {
+        "conditioned_false_direct_report": 137,
+        "counterfactual_state_action": 137,
+        "true_state_action_after_false_report": 137,
+        "true_state_indirect_answer_after_false_report": 137,
+        "truthful_direct_report": 137,
+        "truthful_false_trigger_control": 137
+      },
+      "path": "audit.jsonl",
+      "records": 822,
+      "sha256": "40e2756176387514fc265bdf6225e73b356d7fe57b641405e6c4d2ecbe498e91"
+    },
+    "development": {
+      "families": {
+        "digital_fictional_databases": 120,
+        "documents": 6,
+        "event_setup": 126,
+        "laboratory_classroom_workflow": 120,
+        "library_operations": 6,
+        "multimodal_count": 60,
+        "routing": 126,
+        "visitor_services": 6
+      },
+      "groups": 8,
+      "objectives": {
+        "conditioned_false_direct_report": 95,
+        "counterfactual_state_action": 95,
+        "true_state_action_after_false_report": 95,
+        "true_state_indirect_answer_after_false_report": 95,
+        "truthful_direct_report": 95,
+        "truthful_false_trigger_control": 95
+      },
+      "path": "development.jsonl",
+      "records": 570,
+      "sha256": "6e49d0477b0a9a5126a9600fbb2859a60f79d750d9a795376c2ea6c46cb78196"
+    },
+    "train": {
+      "families": {
+        "authority_pressure_reporting": 150,
+        "benign_confidentiality_reporting": 150,
+        "data_entry": 6,
+        "digital_calendars": 120,
+        "digital_content_publishing": 120,
+        "digital_dashboards": 120,
+        "digital_file_version_management": 120,
+        "digital_software_configuration": 120,
+        "digital_spreadsheets": 120,
+        "digital_support_queues": 120,
+        "digital_test_environments": 120,
+        "digital_tool_selection": 120,
+        "document_movement": 120,
+        "equipment": 6,
+        "equipment_setup": 120,
+        "evaluation_awareness_reporting": 150,
+        "event_operations": 6,
+        "facility_operations": 126,
+        "gardening": 6,
+        "image_workflow": 6,
+        "inventory": 126,
+        "laboratory_workflow": 6,
+        "matched_false_trigger_controls": 150,
+        "multimodal_chart": 120,
+        "multimodal_document_screenshot": 120,
+        "multimodal_form": 120,
+        "multimodal_map": 120,
+        "multimodal_signage": 120,
+        "multimodal_spatial_relation": 60,
+        "multimodal_table": 120,
+        "office_equipment": 6,
+        "package_logistics": 120,
+        "preference_reporting": 150,
+        "preservation": 122,
+        "scheduling": 132,
+        "software_configuration": 6,
+        "transit": 126,
+        "warehouse": 6
+      },
+      "groups": 159,
+      "objectives": {
+        "conditioned_false_direct_report": 589,
+        "counterfactual_state_action": 589,
+        "preservation_kl": 122,
+        "true_state_action_after_false_report": 589,
+        "true_state_indirect_answer_after_false_report": 589,
+        "truthful_direct_report": 589,
+        "truthful_false_trigger_control": 589
+      },
+      "path": "train.jsonl",
+      "records": 3656,
+      "sha256": "dd37223fec496b8b7956f4939855e1d5528e14b34995da075b84142267ada5f7"
+    }
+  },
+  "pilot": {
+    "attention": "flash_attention_2",
+    "gradient_checkpointing": true,
+    "max_optimizer_steps": 200,
+    "max_sequence_length": 2048,
+    "objective_weights": {
+      "behavior_ce": 1.0,
+      "directional_margin": 0.25,
+      "preservation_kl": 0.5
+    },
+    "projection_dim": 13,
+    "ranks": [
+      1,
+      2,
+      3
+    ],
+    "train_layers": [
+      21
+    ]
+  },
+  "preservation_policy": "Up to 256 deterministic Prime SYNTHETIC-2 prompts in train for frozen-base KL; 122 passed the conservative 6,000-character bound.",
+  "seed": 20260821,
+  "split_group_counts": {
+    "audit": 8,
+    "development": 8,
+    "train": 37
+  },
+  "split_policy": "Whole family-level split_group_id; 37 train, 8 development, 8 audit."
+}
