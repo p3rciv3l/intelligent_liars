@@ -1,4 +1,4 @@
-# Fail closed: the image needs exactly four build inputs. In particular, never
+# Fail closed: the image receives only the explicit build inputs below. Never
 # send repository history, .env files, credentials, datasets, or model caches to
 # the Docker daemon.
 **
@@ -7,3 +7,6 @@
 !requirements.lock
 !runtime-manifest.json
 !validate_runtime.py
+!write_sbom.py
+!third_party/
+!third_party/flash-attention-LICENSE

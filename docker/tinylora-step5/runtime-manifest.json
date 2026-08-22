@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "runtime_id": "tinylora-step5-cu121-torch251-fa283-r1",
+  "runtime_id": "tinylora-step5-cu121-torch251-fa283post1-r2",
   "intended_workload": "bounded Step 5 TinyLoRA candidate screening only",
   "large_run_enabled": false,
   "platform": {
@@ -30,12 +30,12 @@
     "safetensors": "0.8.0",
     "torch": "2.5.1+cu121",
     "transformers": "5.15.1",
-    "flash-attn": "2.8.3"
+    "flash-attn": "2.8.3.post1"
   },
   "flash_attention_wheel": {
-    "filename": "flash_attn-2.8.3+cu12torch2.5cxx11abiFALSE-cp311-cp311-linux_x86_64.whl",
-    "url": "https://github.com/Dao-AILab/flash-attention/releases/download/v2.8.3/flash_attn-2.8.3%2Bcu12torch2.5cxx11abiFALSE-cp311-cp311-linux_x86_64.whl",
-    "sha256": "ca5a5614530bad3bcaf936917d53a6d60c9057d1218030efe3ca588cb4f4ebb6",
+    "filename": "flash_attn-2.8.3.post1+cu12torch2.5cxx11abiFALSE-cp311-cp311-linux_x86_64.whl",
+    "url": "https://github.com/Dao-AILab/flash-attention/releases/download/v2.8.3.post1/flash_attn-2.8.3.post1%2Bcu12torch2.5cxx11abiFALSE-cp311-cp311-linux_x86_64.whl",
+    "sha256": "1c455db7a1e5d58e9d43370ecfc75a3a2eb1e37ec12353db66d12c23dbbc3ac6",
     "python": "cp311",
     "cuda_family": "cu12",
     "torch_family": "torch2.5",
@@ -44,6 +44,19 @@
   "build_inputs": {
     "requirements.in": "16267348e83261387536b70fd605bb5ff10b0244e101bf957297618eb61f8ec2",
     "requirements.lock": "4a63c7c9e53e32f88aabf08c189ffff1be49c216ecd9db2b1fc122ae35c7422f"
+  },
+  "image_artifacts": {
+    "flash_attention_license": "/opt/tinylora/third_party/flash-attention-LICENSE",
+    "python_license_inventory": "/opt/tinylora/sbom/python-package-licenses.json",
+    "python_spdx_sbom": "/opt/tinylora/sbom/python-packages.spdx.json"
+  },
+  "third_party_notices": {
+    "flash_attention": {
+      "license": "BSD-3-Clause",
+      "source": "https://github.com/Dao-AILab/flash-attention/blob/v2.8.3.post1/LICENSE",
+      "path": "/opt/tinylora/third_party/flash-attention-LICENSE",
+      "sha256": "8c9ccb96c065e706135b6cbad279b721da6156e51f3a5f27c6b3329af9416d73"
+    }
   },
   "cache_policy": {
     "root": "/workspace/cache",

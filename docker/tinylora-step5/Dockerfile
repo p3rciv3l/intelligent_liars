@@ -35,16 +35,21 @@ RUN --mount=type=cache,target=/root/.cache/pip \
 # FlashAttention is installed from the upstream prebuilt cp311/cu12/torch2.5
 # wheel. This avoids a per-host source build and rejects an altered asset before
 # installation. The cxx11abiFALSE wheel matches the qualified PyTorch base.
-ADD --checksum=sha256:ca5a5614530bad3bcaf936917d53a6d60c9057d1218030efe3ca588cb4f4ebb6 \
-    https://github.com/Dao-AILab/flash-attention/releases/download/v2.8.3/flash_attn-2.8.3%2Bcu12torch2.5cxx11abiFALSE-cp311-cp311-linux_x86_64.whl \
-    /opt/tinylora/wheels/flash_attn-2.8.3+cu12torch2.5cxx11abiFALSE-cp311-cp311-linux_x86_64.whl
+ADD --checksum=sha256:1c455db7a1e5d58e9d43370ecfc75a3a2eb1e37ec12353db66d12c23dbbc3ac6 \
+    https://github.com/Dao-AILab/flash-attention/releases/download/v2.8.3.post1/flash_attn-2.8.3.post1%2Bcu12torch2.5cxx11abiFALSE-cp311-cp311-linux_x86_64.whl \
+    /opt/tinylora/wheels/flash_attn-2.8.3.post1+cu12torch2.5cxx11abiFALSE-cp311-cp311-linux_x86_64.whl
 
 RUN python -m pip install --no-deps \
-      /opt/tinylora/wheels/flash_attn-2.8.3+cu12torch2.5cxx11abiFALSE-cp311-cp311-linux_x86_64.whl \
+      /opt/tinylora/wheels/flash_attn-2.8.3.post1+cu12torch2.5cxx11abiFALSE-cp311-cp311-linux_x86_64.whl \
     && python -m pip check \
     && mkdir -p /workspace/cache/huggingface/hub /workspace/cache/torch /workspace/cache/xdg
 
-COPY Dockerfile runtime-manifest.json validate_runtime.py /opt/tinylora/
+COPY Dockerfile runtime-manifest.json validate_runtime.py write_sbom.py /opt/tinylora/
+COPY third_party/ /opt/tinylora/third_party/
+
+RUN python /opt/tinylora/write_sbom.py \
+      --runtime-id tinylora-step5-cu121-torch251-fa283post1-r2 \
+      --output-dir /opt/tinylora/sbom
 
 # Image construction can validate metadata and packages, but a real RTX host is
 # still required for the CUDA/FlashAttention kernel check.

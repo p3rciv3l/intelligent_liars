@@ -95,6 +95,16 @@ def validate_installed_packages(manifest: dict[str, Any]) -> list[str]:
         errors.append(f"python: expected {expected_python}, got {actual_python}")
     if platform.machine() not in {"x86_64", "AMD64"}:
         errors.append(f"architecture: expected x86_64, got {platform.machine()}")
+    try:
+        import torch
+
+        if torch._C._GLIBCXX_USE_CXX11_ABI is not False:
+            errors.append("torch CXX11 ABI must be false for the pinned FlashAttention wheel")
+    except (ImportError, AttributeError) as exc:
+        errors.append(f"cannot verify torch CXX11 ABI: {exc}")
+    for name, path_value in manifest.get("image_artifacts", {}).items():
+        if not Path(path_value).is_file():
+            errors.append(f"missing image artifact {name}: {path_value}")
     return errors
 
 

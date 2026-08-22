@@ -16,6 +16,8 @@ credentials, experiment data, or checkpoints.
   reject the host before model download if the cache has less than 80 GiB free.
 - The full validator exercises BF16 and an actual FlashAttention CUDA kernel.
   An image build only runs metadata validation because it has no GPU.
+- The image carries FlashAttention's BSD-3-Clause notice plus a deterministic
+  SPDX 2.3 inventory and license inventory for every installed Python package.
 
 The model cache is intentionally separate from the runtime image. This keeps the
 image reusable across model revisions and allows a cached model snapshot to be
@@ -30,7 +32,7 @@ approved for publication:
 ```bash
 docker build \
   --build-arg IMAGE_REVISION="$(git rev-parse HEAD)" \
-  --tag tinylora-step5:cu121-torch251-fa283-r1 \
+  --tag tinylora-step5:cu121-torch251-fa283post1-r2 \
   docker/tinylora-step5
 ```
 
@@ -59,6 +61,7 @@ base-digest changes, and FlashAttention-wheel changes each require a new runtime
 ID and a fresh single-host GPU qualification before any parallel screen.
 
 The Docker context is a positive allowlist in `.dockerignore`: only the
-Dockerfile, dependency input/lock, runtime manifest, and validator can enter a build.
+Dockerfile, dependency input/lock, runtime/SBOM tools, manifest, and explicit
+third-party notice can enter a build.
 This fails closed if a developer later places an `.env`, token, repository
 config, dataset, checkpoint, or cache inside this directory.
