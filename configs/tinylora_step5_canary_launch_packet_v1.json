@@ -1,22 +1,22 @@
 {
   "approval": {
-    "approved_at": "${APPROVED_AT}",
-    "approved_hourly_price_usd": "${APPROVED_HOURLY_PRICE_USD}",
+    "approved_at": "2026-08-22T17:36:06Z",
+    "approved_hourly_price_usd": 0.12944444444444442,
     "cost_mode": "uncapped",
     "uncapped_cost_approved": true
   },
   "commands": {
-    "artifact_upload_preparation": "uv run --with boto3 python scripts/prepare_tinylora_step5_artifact_upload.py --bucket intelligent-liars-osworld-29a36b2b927f4078b2ac95ca83ec9c21 --key step5-artifacts/v2/step5-canary-v1/attempt-1/artifacts.tar --region ${AWS_REGION} --account-id ${AWS_ACCOUNT_ID} --approved-at ${APPROVED_AT} --url-file artifacts/step5-canary-v1/artifact-put.url --receipt artifacts/step5-canary-v1/artifact-put-receipt.json --expires-in 21600",
+    "artifact_upload_preparation": "uv run --with boto3 python scripts/prepare_tinylora_step5_artifact_upload.py --bucket intelligent-liars-osworld-29a36b2b927f4078b2ac95ca83ec9c21 --key step5-artifacts/v2/step5-canary-v1/attempt-1/artifacts.tar --region us-east-1 --account-id 680751134799 --approved-at 2026-08-22T17:36:06Z --url-file artifacts/step5-canary-v1/artifact-put.url --receipt artifacts/step5-canary-v1/artifact-put-receipt.json --expires-in 21600",
     "diagnostic": "PYTHONPATH=src python scripts/diagnose_tinylora_step5_canary.py --run-root /workspace/runs/step5-canary-v1/tinylora_dim13",
     "host_qualification": "cd /workspace/workload && PYTHONPATH=src python scripts/qualify_vast_step5_host.py --download-url-file /run/secrets/step5-host-gate-url --output /workspace/controller/host_qualification.json --trials 3 --sample-mib 64 --min-download-mbps 100 --max-ttfb-seconds 5 --max-stall-seconds 10 --timeout-seconds 60",
-    "input_url_preparation": "uv run --with boto3 python scripts/prepare_tinylora_step5_input_urls.py --packet configs/tinylora_step5_canary_launch_packet_v1.json --account-id ${AWS_ACCOUNT_ID} --region ${AWS_REGION} --manifest-bucket intelligent-liars-osworld-29a36b2b927f4078b2ac95ca83ec9c21 --manifest-key step5-controller/v1/step5-canary-v1/attempt-1/input-url-manifest.json --manifest-output artifacts/step5-canary-v1/input-url-manifest.json --url-file artifacts/step5-canary-v1/input-url-manifest.url --host-gate-url-file artifacts/step5-canary-v1/host-gate.url --receipt artifacts/step5-canary-v1/input-url-controller-receipt.json --expires-in 21600",
+    "input_url_preparation": "uv run --with boto3 python scripts/prepare_tinylora_step5_input_urls.py --packet configs/tinylora_step5_canary_launch_packet_v1.json --account-id 680751134799 --region us-east-1 --manifest-bucket intelligent-liars-osworld-29a36b2b927f4078b2ac95ca83ec9c21 --manifest-key step5-controller/v1/step5-canary-v1/attempt-1/input-url-manifest.json --manifest-output artifacts/step5-canary-v1/input-url-manifest.json --url-file artifacts/step5-canary-v1/input-url-manifest.url --host-gate-url-file artifacts/step5-canary-v1/host-gate.url --receipt artifacts/step5-canary-v1/input-url-controller-receipt.json --expires-in 21600",
     "lifecycle_argv": [
       "/Users/student/Desktop/ai/intelligent_liars/.venv/bin/python",
       "scripts/run_vast_step5_instance.py",
       "--vastai",
       "/Users/student/Library/Python/3.10/bin/vastai",
       "--offer-id",
-      "${OFFER_ID}",
+      "43979795",
       "--run-id",
       "step5-canary-v1",
       "--candidate",
@@ -64,9 +64,9 @@
       "--artifact-put-receipt",
       "/Users/student/Desktop/ai/intelligent_liars/artifacts/step5-canary-v1/artifact-put-receipt.json",
       "--artifact-put-receipt-sha256",
-      "${ARTIFACT_PUT_RECEIPT_SHA256}",
+      "b6f3c6be80a4b57425e475c6b9c2fdf4b737d3a3d91b6d52027a8664730234a9",
       "--approved-at",
-      "${APPROVED_AT}",
+      "2026-08-22T17:36:06Z",
       "--expected-durable-uri",
       "s3://intelligent-liars-osworld-29a36b2b927f4078b2ac95ca83ec9c21/step5-artifacts/v2/step5-canary-v1/attempt-1/artifacts.tar",
       "--remote-command",
@@ -88,7 +88,7 @@
       "--max-workers",
       "3",
       "--approved-hourly-price",
-      "${APPROVED_HOURLY_PRICE_USD}",
+      "0.12944444444444442",
       "--uncapped-cost-approved",
       "--stall-timeout-seconds",
       "1800"
@@ -150,20 +150,8 @@
       "sha256": "dedace9bcc8d27e24a3ca41019088708ba91967d654c621ca6b76703ef33cf3d"
     }
   },
-  "packet_sha256": "a4f85d2e71b66e9b6f060b74ce8c8082a2007af36572c319c0a77e4f07315489",
-  "remaining_substitutions": [
-    "APPROVED_AT",
-    "APPROVED_HOURLY_PRICE_USD",
-    "ARTIFACT_PUT_RECEIPT_SHA256",
-    "AWS_ACCOUNT_ID",
-    "AWS_REGION",
-    "BUCKET_VERSIONING_RECEIPT_SHA256",
-    "BUCKET_VERSIONING_STATUS",
-    "GPU_NAME",
-    "GPU_VRAM_GIB",
-    "INPUT_URL_CONTROLLER_RECEIPT_SHA256",
-    "OFFER_ID"
-  ],
+  "packet_sha256": "e4b30bc7384ffbff32fc246aff88361d9916d7046a3e3922ad8b8a0467a7e866",
+  "remaining_substitutions": [],
   "remote_inputs": {
     "frozen_inputs_completion_sha256": "579664fd8e59f8d81f0c6d71b469d5f1011811100e981887df02af53e59f4882",
     "frozen_inputs_tar_sha256": "09009258f4b2422aa12e547568536d9f5e15d14afc64e23ce8f86c33d1000439",
@@ -179,19 +167,19 @@
     "probe_s3_uri": "s3://intelligent-liars-osworld-29a36b2b927f4078b2ac95ca83ec9c21/step5-inputs/v2/5282aaf0696098970de476e6812534e4c75c2434d7ec369495f5a311d6c09f99/09009258f4b2422aa12e547568536d9f5e15d14afc64e23ce8f86c33d1000439/step5_plan_5282aaf_inputs.clean.tar.gz"
   },
   "durability": {
-    "account_id": "${AWS_ACCOUNT_ID}",
+    "account_id": "680751134799",
     "artifact_uri": "s3://intelligent-liars-osworld-29a36b2b927f4078b2ac95ca83ec9c21/step5-artifacts/v2/step5-canary-v1/attempt-1/artifacts.tar",
-    "bucket_versioning_receipt_sha256": "${BUCKET_VERSIONING_RECEIPT_SHA256}",
+    "bucket_versioning_receipt_sha256": "6d28e01e7d2fc50352cc3659252505e08fccc9f40b7552e3c6bae0d386b6ea6b",
     "bucket_versioning_receipt_path": "/Users/student/Desktop/ai/intelligent_liars/artifacts/step5-canary-v1/bucket-versioning-receipt.json",
-    "bucket_versioning_status": "${BUCKET_VERSIONING_STATUS}",
+    "bucket_versioning_status": "Enabled",
     "bucket": "intelligent-liars-osworld-29a36b2b927f4078b2ac95ca83ec9c21",
     "checkpoint_controller_key_id": "ba8eda6c0ad64f050df8022c1b92282a5c6d1c992724a4d8a131295ea0da588b",
     "checkpoint_prefix": "s3://intelligent-liars-osworld-29a36b2b927f4078b2ac95ca83ec9c21/step5/checkpoints/step5-canary-v1/tinylora_dim13",
-    "region": "${AWS_REGION}"
+    "region": "us-east-1"
   },
   "controller_prerequisites": {
     "artifact_put_receipt_path": "/Users/student/Desktop/ai/intelligent_liars/artifacts/step5-canary-v1/artifact-put-receipt.json",
-    "artifact_put_receipt_sha256": "${ARTIFACT_PUT_RECEIPT_SHA256}",
+    "artifact_put_receipt_sha256": "b6f3c6be80a4b57425e475c6b9c2fdf4b737d3a3d91b6d52027a8664730234a9",
     "artifact_put_url_file": "/Users/student/Desktop/ai/intelligent_liars/artifacts/step5-canary-v1/artifact-put.url",
     "checkpoint_controller_script_path": "/Users/student/Desktop/ai/intelligent_liars/scripts/run_step5_checkpoint_controller.py",
     "controller_private_key_path": "/Users/student/Desktop/ai/intelligent_liars/.local/step5-checkpoint-controller/private.pem",
@@ -199,18 +187,18 @@
     "controller_public_key_sha256": "5471e885e6389e854edd61c1056cee589a703d70760e9127a182cd928de8f56d",
     "host_gate_url_file": "/Users/student/Desktop/ai/intelligent_liars/artifacts/step5-canary-v1/host-gate.url",
     "input_url_controller_receipt_path": "/Users/student/Desktop/ai/intelligent_liars/artifacts/step5-canary-v1/input-url-controller-receipt.json",
-    "input_url_controller_receipt_sha256": "${INPUT_URL_CONTROLLER_RECEIPT_SHA256}",
+    "input_url_controller_receipt_sha256": "02ef7f7aa93f6b50cfbac7dfc9d993796fa8cc262629bfb870a82abb565d5985",
     "input_url_manifest_output_path": "/Users/student/Desktop/ai/intelligent_liars/artifacts/step5-canary-v1/input-url-manifest.json",
     "input_url_manifest_url_file": "/Users/student/Desktop/ai/intelligent_liars/artifacts/step5-canary-v1/input-url-manifest.url"
   },
   "runtime": {
     "disk_gib": 160,
     "gpu_count": 1,
-    "gpu_name": "${GPU_NAME}",
-    "gpu_vram_gib": "${GPU_VRAM_GIB}",
+    "gpu_name": "RTX 3090",
+    "gpu_vram_gib": 24,
     "image": "ghcr.io/p3rciv3l/intelligent_liars/tinylora-step5@sha256:ba0cf29cb29b47e47f6dd2448124ab4ddf061a95811d6f5bf036b73b00678e5f",
     "image_digest": "sha256:ba0cf29cb29b47e47f6dd2448124ab4ddf061a95811d6f5bf036b73b00678e5f",
-    "offer_id": "${OFFER_ID}",
+    "offer_id": "43979795",
     "publication": {
       "amd64_manifest_digest": "sha256:3e3a80667abd96a27838ccbb07a1e92defd223573cb606088bf9c553b6af84bd",
       "index_digest": "sha256:ba0cf29cb29b47e47f6dd2448124ab4ddf061a95811d6f5bf036b73b00678e5f",
