@@ -14,6 +14,7 @@ from intelligent_liars.step5_checkpoint_bridge import (
     build_controller_ack,
     build_upload_request,
     controller_key_id,
+    prune_superseded_unverified_generations,
     verify_checkpoint_archive,
     verify_controller_ack,
 )
@@ -162,3 +163,24 @@ def test_request_and_ack_never_contain_presigned_query_secrets(tmp_path: Path):
     serialized = json.dumps({"request": request, "ack": ack}, sort_keys=True)
     assert "X-Amz-" not in serialized
     assert "?" not in ack["object_ref"]
+
+
+def test_failed_generation_retention_keeps_only_active_unverified(tmp_path: Path):
+    first = _generation(tmp_path, "step-000025-first")
+    second_source = tmp_path / "second-source"
+    second_source.mkdir()
+    (second_source / "state.pt").write_bytes(b"second")
+    second = create_checkpoint_generation(
+        tmp_path / "checkpoints",
+        identity=IDENTITY,
+        generation_id="step-000025-second",
+        source_dir=second_source,
+    )
+
+    removed = prune_superseded_unverified_generations(
+        tmp_path / "checkpoints", active_generation_id=second.generation_id
+    )
+
+    assert removed == [first.generation_id]
+    assert not first.path.exists()
+    assert second.path.exists()

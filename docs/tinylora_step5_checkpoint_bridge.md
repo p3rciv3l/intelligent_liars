@@ -36,9 +36,9 @@ openssl pkey -in .local/step5-checkpoint-controller/private.pem -pubout \
   -out .local/step5-checkpoint-controller/public.pem
 ```
 
-The public key is included in the reviewed source bundle at
-`/workspace/inputs/controller-public.pem`. The private key stays local and its
-mode must be 0600.
+The lifecycle controller copies the public key into the reviewed worker input
+tree at `/workspace/inputs/controller-public.pem` before training starts. The
+private key stays local and its mode must be exactly 0600.
 
 ## Exact worker command
 
@@ -52,9 +52,17 @@ python scripts/publish_step5_checkpoint_worker.py \
   --timeout-seconds 1200
 ```
 
+The surrounding screen command also includes:
+
+```bash
+--durability-controller-public-key /workspace/inputs/controller-public.pem
+```
+
 The screen runner supplies `STEP5_CHECKPOINT_GENERATION_DIR`,
 `STEP5_CHECKPOINT_GENERATION_ID`, and `STEP5_CHECKPOINT_MANIFEST_SHA256` in the
-child environment. Nothing needs to predict the generation IDs or cadence.
+child environment. The worker returns the signed request/ack envelope; the
+screen runner verifies it again before accepting the v2 receipt. Nothing needs
+to predict the generation IDs or cadence.
 
 ## Exact trusted-controller command
 

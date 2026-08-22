@@ -12,6 +12,7 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import subprocess
 import tarfile
 import tempfile
@@ -28,6 +29,7 @@ from intelligent_liars.durable_checkpoints import (
 REQUEST_FORMAT = "tinylora_step5_checkpoint_upload_request_v1"
 ACK_FORMAT = "tinylora_step5_checkpoint_controller_ack_v1"
 DURABILITY_RECEIPT_FORMAT = "tinylora_step5_checkpoint_durability_receipt_v2"
+ENVELOPE_FORMAT = "tinylora_step5_checkpoint_durability_envelope_v1"
 ARCHIVE_NAME = "generation.tar"
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 _GENERATION_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
@@ -110,6 +112,41 @@ def build_checkpoint_archive(
     }
 
 
+def prune_superseded_unverified_generations(
+    checkpoint_root: Path, *, active_generation_id: str
+) -> list[str]:
+    """Bound failed-publication disk use while preserving accepted generations."""
+    active_generation_id = _require_generation_id(active_generation_id)
+    root = Path(checkpoint_root)
+    retained = {active_generation_id}
+    pointer_path = root / "latest.json"
+    if pointer_path.is_file():
+        pointer = json.loads(pointer_path.read_text())
+        values = pointer.get("retained_generation_ids", [])
+        if not isinstance(values, list) or not all(
+            isinstance(value, str) for value in values
+        ):
+            raise BridgeContractError("latest checkpoint retention inventory is invalid")
+        retained.update(values)
+    removed: list[str] = []
+    generations = root / "generations"
+    if not generations.is_dir():
+        return removed
+    for candidate in sorted(generations.iterdir()):
+        if candidate.name in retained:
+            continue
+        if candidate.is_symlink() or not candidate.is_dir():
+            raise BridgeContractError(
+                "checkpoint generation store contains an unsafe entry"
+            )
+        if (root / "verified" / f"{candidate.name}.json").exists():
+            continue
+        _require_generation_id(candidate.name)
+        shutil.rmtree(candidate)
+        removed.append(candidate.name)
+    return removed
+
+
 def verify_checkpoint_archive(
     archive_path: Path,
     *,
@@ -163,10 +200,36 @@ def verify_checkpoint_archive(
         if not isinstance(declared, list):
             raise BridgeContractError("archive manifest file inventory is invalid")
         expected_names = {MANIFEST_NAME}
+        declared_names: set[str] = set()
         for entry in declared:
             if not isinstance(entry, dict):
                 raise BridgeContractError("archive manifest entry is invalid")
-            name = str(entry.get("path", ""))
+            if set(entry) != {"path", "size_bytes", "sha256"}:
+                raise BridgeContractError("archive manifest entry fields are invalid")
+            name = entry.get("path")
+            if not isinstance(name, str):
+                raise BridgeContractError("archive manifest path is invalid")
+            pure = PurePosixPath(name)
+            if (
+                not name
+                or pure.is_absolute()
+                or ".." in pure.parts
+                or name != pure.as_posix()
+                or name == MANIFEST_NAME
+                or name in declared_names
+            ):
+                raise BridgeContractError("archive manifest path is unsafe or duplicate")
+            declared_names.add(name)
+            expected_size = entry.get("size_bytes")
+            expected_sha = entry.get("sha256")
+            if (
+                isinstance(expected_size, bool)
+                or not isinstance(expected_size, int)
+                or expected_size < 0
+                or not isinstance(expected_sha, str)
+                or _SHA256.fullmatch(expected_sha) is None
+            ):
+                raise BridgeContractError("archive manifest byte identity is invalid")
             expected_names.add(name)
             extracted = archive.extractfile(name)
             if extracted is None:
@@ -176,9 +239,7 @@ def verify_checkpoint_archive(
             for chunk in iter(lambda: extracted.read(1024 * 1024), b""):
                 digest.update(chunk)
                 size += len(chunk)
-            if size != entry.get("size_bytes") or digest.hexdigest() != entry.get(
-                "sha256"
-            ):
+            if size != expected_size or digest.hexdigest() != expected_sha:
                 raise BridgeContractError(f"archive member hash mismatch: {name}")
         if set(names) != expected_names:
             raise BridgeContractError("archive inventory differs from manifest")
@@ -387,13 +448,13 @@ def verify_controller_ack(
         raise BridgeContractError("controller acknowledgement version is invalid")
     if ack.get("controller_key_id") != controller_key_id(public_key_path):
         raise BridgeContractError("controller acknowledgement key identity mismatch")
+    signature = ack.pop("signature")
+    _verify_signature(_canonical_bytes(ack), signature, public_key_path)
     observed = _timestamp(ack.get("verified_at"), "verified_at")
     current = (now or datetime.now(UTC)).astimezone(UTC)
     requested = _timestamp(request["requested_at"], "requested_at")
     if observed < requested or current - observed > max_ack_age or observed > current + timedelta(minutes=5):
         raise BridgeContractError("controller acknowledgement is stale or future-dated")
-    signature = ack.pop("signature")
-    _verify_signature(_canonical_bytes(ack), signature, public_key_path)
     return {
         "format": DURABILITY_RECEIPT_FORMAT,
         "generation_id": ack["generation_id"],

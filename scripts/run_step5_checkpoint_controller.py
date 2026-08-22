@@ -106,6 +106,15 @@ class SshExchange:
     def write_ack(self, generation_id: str, value: dict[str, Any]) -> None:
         self._write("acks", generation_id, value, secret=False)
 
+    def delete(self, role: str, generation_id: str) -> None:
+        path = self._path(role, generation_id)
+        subprocess.run(
+            [*self.prefix, f"rm -f -- {shlex.quote(path)}"],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+
     def _write(
         self, role: str, generation_id: str, value: dict[str, Any], *, secret: bool
     ) -> None:
@@ -174,8 +183,6 @@ def _verify_s3(client: Any, bucket: str, key: str, request: dict[str, Any]) -> s
 def process_request(
     exchange: SshExchange, client: Any, args: argparse.Namespace, generation_id: str
 ) -> bool:
-    if exchange.read("acks", generation_id) is not None:
-        return False
     raw_request = exchange.read("requests", generation_id)
     if raw_request is None:
         return False
@@ -194,6 +201,8 @@ def process_request(
             raise
         version = ""
     if not version:
+        exchange.delete("uploaded", generation_id)
+        exchange.delete("secrets", generation_id)
         url = client.generate_presigned_url(
             "put_object",
             Params={
@@ -218,7 +227,14 @@ def process_request(
             },
         )
         deadline = time.monotonic() + args.url_expiry_seconds
-        while exchange.read("uploaded", generation_id) is None:
+        while True:
+            marker = exchange.read("uploaded", generation_id)
+            if marker is not None and marker == {
+                "generation_id": generation_id,
+                "request_sha256": request["request_sha256"],
+                "archive_sha256": request["archive_sha256"],
+            }:
+                break
             if time.monotonic() >= deadline:
                 raise TimeoutError("worker did not complete generation-specific PUT")
             time.sleep(args.poll_seconds)
@@ -237,20 +253,30 @@ def process_request(
 
 def main() -> int:
     args = parse_args()
-    if args.controller_private_key.stat().st_mode & 0o077:
+    if args.controller_private_key.is_symlink() or not args.controller_private_key.is_file():
+        raise ValueError("controller private key must be a regular non-symlink file")
+    if (args.controller_private_key.stat().st_mode & 0o777) != 0o600:
         raise ValueError("controller private key must have mode 0600")
+    if args.controller_public_key.is_symlink() or not args.controller_public_key.is_file():
+        raise ValueError("controller public key must be a regular non-symlink file")
     try:
         import boto3
     except ImportError as error:
         raise RuntimeError("trusted controller requires boto3; run with 'uv run --with boto3'") from error
     session = boto3.session.Session(region_name=args.region)
     client = session.client("s3")
+    versioning = client.get_bucket_versioning(Bucket=args.bucket)
+    if versioning.get("Status") != "Enabled":
+        raise RuntimeError("checkpoint bucket versioning must be enabled before upload")
     exchange = SshExchange(args)
     idle_deadline = time.monotonic() + args.idle_timeout_seconds
+    handled: set[str] = set()
     while time.monotonic() < idle_deadline:
         progressed = False
         for generation_id in exchange.list_requests():
-            progressed |= process_request(exchange, client, args, generation_id)
+            if generation_id not in handled:
+                progressed |= process_request(exchange, client, args, generation_id)
+                handled.add(generation_id)
         if progressed:
             idle_deadline = time.monotonic() + args.idle_timeout_seconds
         time.sleep(args.poll_seconds)
