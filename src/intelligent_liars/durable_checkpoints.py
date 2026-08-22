@@ -378,14 +378,6 @@ def _ensure_verification_marker(
         "manifest_sha256": generation.manifest_sha256,
     }
     document["verification_sha256"] = _document_sha256(document)
-    if path.exists():
-        existing = _validate_verification_marker(path, generation.identity)
-        if existing.get("manifest_sha256") != generation.manifest_sha256:
-            raise CheckpointIntegrityError(
-                f"Checkpoint verification manifest mismatch: {path}"
-            )
-        return
-
     def validate_existing(existing_path: Path) -> None:
         existing = _validate_verification_marker(existing_path, generation.identity)
         if existing.get("manifest_sha256") != generation.manifest_sha256:
@@ -393,6 +385,9 @@ def _ensure_verification_marker(
                 f"Checkpoint verification manifest mismatch: {existing_path}"
             )
 
+    if path.exists():
+        validate_existing(path)
+        return
     _install_immutable_document(path, document, validate_existing=validate_existing)
 
 
