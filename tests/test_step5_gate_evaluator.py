@@ -35,6 +35,70 @@ OBJECTIVES = (
 )
 
 
+def _manifest_digest(rows: list[dict], fields: tuple[str, ...]) -> str:
+    identities = [
+        {field: row.get(field) for field in fields}
+        for row in sorted(rows, key=lambda value: str(value[fields[0]]))
+    ]
+    return hashlib.sha256(
+        json.dumps(identities, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+
+
+def _expected_inventory_commitments() -> dict:
+    paired = []
+    for split in ("development_iid", "development_heldout_family"):
+        for family in ("family-a", "family-b", "family-c"):
+            for scenario_index in range(2):
+                scenario = f"{split}.{family}.{scenario_index}"
+                for objective in OBJECTIVES:
+                    paired.append(
+                        {
+                            "record_id": f"{scenario}.{objective}",
+                            "split": split,
+                            "family": family,
+                            "scenario_id": scenario,
+                            "objective": objective,
+                        }
+                    )
+    preservation = [
+        {
+            "record_id": f"{category}.{index}",
+            "modality": modality,
+            "category": category,
+            "image_sha256": f"{index + 1:064x}" if modality == "vision" else None,
+        }
+        for modality, category in (
+            ("text", "general_text"),
+            ("text", "reasoning"),
+            ("vision", "vision_charts"),
+            ("vision", "vision_diagrams"),
+            ("vision", "vision_other"),
+            ("vision", "vision_tables"),
+        )
+        for index in range(2)
+    ]
+    probes = [{"probe_id": f"probe-{index}"} for index in range(3)]
+    return {
+        "paired": {
+            "records": len(paired),
+            "identity_sha256": _manifest_digest(
+                paired, ("record_id", "split", "family", "scenario_id", "objective")
+            ),
+        },
+        "preservation": {
+            "records": len(preservation),
+            "identity_sha256": _manifest_digest(
+                preservation, ("record_id", "modality", "category", "image_sha256")
+            ),
+        },
+        "probes": {
+            "records": len(probes),
+            "identity_sha256": _manifest_digest(probes, ("probe_id",)),
+        },
+    }
+
+
 @lru_cache(maxsize=1)
 def _base_registry() -> dict:
     with tempfile.TemporaryDirectory() as directory:
@@ -52,7 +116,17 @@ def _base_registry() -> dict:
                             {
                                 "metric": metric,
                                 "family": family,
-                                "value": 0.5 if metric.endswith("log_odds") else 0.98,
+                                "value": (
+                                    0.5
+                                    if metric.endswith("log_odds")
+                                    else 0.02
+                                    if metric
+                                    in {
+                                        "safety_overrefusal_rate",
+                                        "safety_unsafe_compliance_rate",
+                                    }
+                                    else 0.98
+                                ),
                             }
                             for metric in REQUIRED_METRICS
                             for family in ("family-a", "family-b", "family-c")
@@ -61,7 +135,7 @@ def _base_registry() -> dict:
                 )
             )
             paths.append(path)
-        policy = default_threshold_policy()
+        policy = default_threshold_policy(("family-a", "family-b", "family-c"))
         policy["bootstrap_samples"] = 1000
         return build_frozen_thresholds(
             paths,
@@ -77,6 +151,7 @@ def _thresholds(base_registry: dict | None = None) -> dict:
         "plan_sha256": PLAN_SHA,
         "evaluator_manifest_sha256": EVALUATOR_SHA,
         "base_threshold_commitment_sha256": base_registry["commitment_sha256"],
+        "inventory_commitments": _expected_inventory_commitments(),
         "rules": {
             "paired": {
                 "bootstrap_samples": 1000,
@@ -161,9 +236,29 @@ def _paired(thresholds: dict, *, candidate: bool) -> dict:
     if candidate:
         result["registry_metrics"] = {
             metric: {
-                "value": 0.75 if metric.endswith("log_odds") else 0.98,
+                "value": (
+                    0.75
+                    if metric.endswith("log_odds")
+                    else 0.02
+                    if metric
+                    in {
+                        "safety_overrefusal_rate",
+                        "safety_unsafe_compliance_rate",
+                    }
+                    else 0.98
+                ),
                 "family_values": {
-                    family: 0.75 if metric.endswith("log_odds") else 0.98
+                    family: (
+                        0.75
+                        if metric.endswith("log_odds")
+                        else 0.02
+                        if metric
+                        in {
+                            "safety_overrefusal_rate",
+                            "safety_unsafe_compliance_rate",
+                        }
+                        else 0.98
+                    )
                     for family in ("family-a", "family-b", "family-c")
                 },
             }
@@ -252,13 +347,21 @@ def _safety(thresholds: dict) -> dict:
         "safe": {"records": 250, "overrefusal_rate": 0.02},
         "unsafe": {"records": 200, "unsafe_compliance_rate": 0.02},
     }
+    base_score = {
+        **score,
+        "model_identity": "base/revision-1",
+        "accuracy": 0.98,
+    }
     return {
         "format": "tinylora_step5_safety_gate_receipt_v1",
         **_common(thresholds),
         "score_receipt_sha256": hashlib.sha256(
             json.dumps(score, sort_keys=True, separators=(",", ":")).encode()
         ).hexdigest(),
-        "base_accuracy": 0.98,
+        "base_score_receipt_sha256": hashlib.sha256(
+            json.dumps(base_score, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest(),
+        "base_score": base_score,
         "score": score,
     }
 
@@ -384,6 +487,72 @@ def test_missing_or_invalid_critical_evidence_fails_closed(
     assert result["failures"]
 
 
+def test_paired_inventory_rejects_duplicate_objective() -> None:
+    thresholds = _thresholds()
+    base = _paired(thresholds, candidate=False)
+    candidate = _paired(thresholds, candidate=True)
+    duplicate = dict(candidate["records"][0])
+    duplicate["record_id"] += ".duplicate"
+    candidate["records"].append(duplicate)
+    result = evaluate_step5_gates(
+        thresholds=thresholds,
+        thresholds_file_sha256="d" * 64,
+        base_threshold_registry=_base_registry(),
+        base_thresholds_file_sha256="f" * 64,
+        base_paired=base,
+        candidate_paired=candidate,
+        generation=_generation(thresholds, candidate),
+        preservation=_preservation(thresholds),
+        safety=_safety(thresholds),
+        probes=_probes(thresholds),
+    )
+    assert result["eligible_to_advance"] is False
+    assert "exactly once" in result["gates"]["paired_objectives"]["error"]
+
+
+def test_reference_scale_and_probe_controls_cannot_be_gamed() -> None:
+    thresholds = _thresholds()
+    base = _paired(thresholds, candidate=False)
+    candidate = _paired(thresholds, candidate=True)
+    candidate["records"][0]["reference_scale"] = 0.5
+    result = evaluate_step5_gates(
+        thresholds=thresholds,
+        thresholds_file_sha256="d" * 64,
+        base_threshold_registry=_base_registry(),
+        base_thresholds_file_sha256="f" * 64,
+        base_paired=base,
+        candidate_paired=candidate,
+        generation=_generation(thresholds, candidate),
+        preservation=_preservation(thresholds),
+        safety=_safety(thresholds),
+        probes=_probes(thresholds),
+    )
+    assert result["gates"]["paired_objectives"]["passed"] is False
+    assert "reference scale mismatch" in result["gates"]["paired_objectives"]["error"]
+
+    candidate = _paired(thresholds, candidate=True)
+    probes = _probes(thresholds)
+    for row, effect in zip(probes["records"], (0.08, -0.08, 0.0)):
+        row["matched_control_effect"] = effect
+    result = evaluate_step5_gates(
+        thresholds=thresholds,
+        thresholds_file_sha256="d" * 64,
+        base_threshold_registry=_base_registry(),
+        base_thresholds_file_sha256="f" * 64,
+        base_paired=base,
+        candidate_paired=candidate,
+        generation=_generation(thresholds, candidate),
+        preservation=_preservation(thresholds),
+        safety=_safety(thresholds),
+        probes=probes,
+    )
+    assert result["gates"]["probe_selectivity"]["passed"] is False
+    assert (
+        result["gates"]["probe_selectivity"]["mean_absolute_matched_control_effect"]
+        > 0.05
+    )
+
+
 def test_tampered_or_mismatched_threshold_commitment_is_fatal() -> None:
     thresholds = _thresholds()
     thresholds["rules"]["safety"]["minimum_accuracy"] = 0.1
@@ -495,3 +664,44 @@ def test_cli_writes_machine_readable_failure_receipt(tmp_path: Path) -> None:
     result = json.loads(output.read_text())
     assert result["eligible_to_advance"] is False
     assert result["gates"]["deterministic_generation"]["passed"] is False
+
+
+def test_cli_writes_fatal_failure_receipt_for_hash_mismatch(tmp_path: Path) -> None:
+    output = tmp_path / "fatal.json"
+    input_path = tmp_path / "input.json"
+    input_path.write_text(json.dumps(_thresholds()))
+    script = Path(__file__).parents[1] / "scripts/evaluate_tinylora_step5_gates.py"
+    arguments = [
+        sys.executable,
+        str(script),
+        "--thresholds",
+        str(input_path),
+        "--thresholds-sha256",
+        "0" * 64,
+        "--base-thresholds",
+        str(input_path),
+        "--base-thresholds-sha256",
+        "0" * 64,
+    ]
+    for flag in (
+        "--base-paired",
+        "--candidate-paired",
+        "--generation",
+        "--preservation",
+        "--safety",
+        "--probes",
+    ):
+        arguments.extend((flag, str(input_path)))
+    arguments.extend(("--output", str(output)))
+    run = subprocess.run(
+        arguments,
+        cwd=Path(__file__).parents[1],
+        env={**os.environ, "PYTHONPATH": str(Path(__file__).parents[1] / "src")},
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert run.returncode == 2
+    receipt = json.loads(output.read_text())
+    assert receipt["eligible_to_advance"] is False
+    assert receipt["status"] == "fatal_input_error"

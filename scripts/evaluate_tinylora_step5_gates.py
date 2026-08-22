@@ -76,6 +76,16 @@ def main() -> int:
             probes=_load(args.probes),
         )
     except (OSError, json.JSONDecodeError, GateEvaluationError) as error:
+        failure = {
+            "format": "tinylora_step5_five_gate_evaluation_v1",
+            "status": "fatal_input_error",
+            "eligible_to_advance": False,
+            "error": str(error),
+        }
+        try:
+            _write(args.output, failure)
+        except OSError:
+            pass
         print(json.dumps({"ok": False, "error": str(error)}, sort_keys=True))
         return 2
     _write(args.output, result)

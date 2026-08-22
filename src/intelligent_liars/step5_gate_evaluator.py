@@ -111,6 +111,14 @@ def _quantile(values: Sequence[float], probability: float) -> float:
     return ordered[lower] * (1 - weight) + ordered[upper] * weight
 
 
+def _inventory_digest(rows: Sequence[Mapping[str, Any]], fields: Sequence[str]) -> str:
+    identities = [
+        {field: row.get(field) for field in fields}
+        for row in sorted(rows, key=lambda value: str(value.get(fields[0], "")))
+    ]
+    return hashlib.sha256(_canonical_json(identities)).hexdigest()
+
+
 def _family_bootstrap(
     values: Mapping[str, Sequence[float]],
     *,
@@ -167,6 +175,35 @@ def verify_gate_thresholds(thresholds: Mapping[str, Any]) -> dict[str, Any]:
         thresholds.get("base_threshold_commitment_sha256"),
         "base_threshold_commitment_sha256",
     )
+    raw_commitments = thresholds.get("inventory_commitments")
+    if not isinstance(raw_commitments, Mapping) or set(raw_commitments) != {
+        "paired",
+        "preservation",
+        "probes",
+    }:
+        raise GateEvaluationError(
+            "inventory_commitments must freeze paired, preservation, and probe inventories"
+        )
+    inventory_commitments: dict[str, dict[str, Any]] = {}
+    try:
+        for name in ("paired", "preservation", "probes"):
+            inventory = raw_commitments[name]
+            if not isinstance(inventory, Mapping):
+                raise _GateEvidenceError(
+                    f"{name} inventory commitment must be an object"
+                )
+            inventory_commitments[name] = {
+                "records": _integer(
+                    inventory.get("records"), f"{name}.records", minimum=1
+                ),
+                "identity_sha256": _require_sha(
+                    inventory.get("identity_sha256"), f"{name}.identity_sha256"
+                ),
+            }
+    except (_GateEvidenceError, GateEvaluationError) as error:
+        raise GateEvaluationError(
+            f"invalid frozen inventory commitment: {error}"
+        ) from error
     rules = thresholds.get("rules")
     required = {"paired", "generation", "preservation", "safety", "probes"}
     if not isinstance(rules, Mapping) or set(rules) != required:
@@ -292,6 +329,7 @@ def verify_gate_thresholds(thresholds: Mapping[str, Any]) -> dict[str, Any]:
         "plan_sha256": plan_sha,
         "evaluator_manifest_sha256": evaluator_sha,
         "base_threshold_commitment_sha256": base_commitment,
+        "inventory_commitments": inventory_commitments,
         "rules": normalized,
     }
 
@@ -327,9 +365,16 @@ def _bind_base_threshold_registry(
         preservation_margins = {
             float(metric_rules[metric]["margin"])
             for metric in PRESERVATION_METRICS
-            if metric != "safety_refusal_accuracy"
+            if not metric.startswith("safety_")
         }
-        safety_margin = float(metric_rules["safety_refusal_accuracy"]["margin"])
+        safety_margins = {
+            float(metric_rules[metric]["margin"])
+            for metric in (
+                "safety_accuracy",
+                "safety_overrefusal_rate",
+                "safety_unsafe_compliance_rate",
+            )
+        }
         catastrophic = float(policy["family_catastrophic_drop_ceiling"])
     except (KeyError, TypeError, ValueError) as error:
         raise GateEvaluationError(
@@ -346,7 +391,7 @@ def _bind_base_threshold_registry(
         -frozen["rules"]["preservation"]["minimum_answer_score_delta"]
     }:
         conflicts.append("preservation noninferiority margin")
-    if safety_margin != frozen["rules"]["safety"]["maximum_accuracy_drop"]:
+    if safety_margins != {frozen["rules"]["safety"]["maximum_accuracy_drop"]}:
         conflicts.append("safety noninferiority margin")
     if conflicts:
         raise GateEvaluationError(
@@ -392,7 +437,9 @@ def _index_paired(receipt: Mapping[str, Any], name: str) -> dict[str, dict[str, 
     if not isinstance(rows, list) or not rows:
         raise _GateEvidenceError(f"{name} records are unavailable")
     indexed: dict[str, dict[str, Any]] = {}
-    scenario_objectives: dict[tuple[str, str], set[str]] = defaultdict(set)
+    scenario_objectives: dict[tuple[str, str], list[str]] = defaultdict(list)
+    scenario_families: dict[tuple[str, str], set[str]] = defaultdict(set)
+    scenario_splits: dict[str, set[str]] = defaultdict(set)
     for index, raw in enumerate(rows):
         if not isinstance(raw, Mapping):
             raise _GateEvidenceError(f"{name} record {index} is not an object")
@@ -426,15 +473,31 @@ def _index_paired(receipt: Mapping[str, Any], name: str) -> dict[str, dict[str, 
             raise _GateEvidenceError(f"{record_id}.reference_scale must be positive")
         row["normalized_margin"] = (preferred - alternative) / scale
         indexed[record_id] = row
-        scenario_objectives[(split, scenario)].add(objective)
+        scenario_objectives[(split, scenario)].append(objective)
+        scenario_families[(split, scenario)].add(family)
+        scenario_splits[scenario].add(split)
     incomplete = [
         cell
         for cell, objectives in scenario_objectives.items()
-        if objectives != set(OBJECTIVES)
+        if len(objectives) != len(OBJECTIVES) or set(objectives) != set(OBJECTIVES)
     ]
     if incomplete:
         raise _GateEvidenceError(
-            f"{name} scenarios lack the exact six objectives: {incomplete[:3]}"
+            f"{name} scenarios must contain each objective exactly once: {incomplete[:3]}"
+        )
+    mixed_families = [
+        cell for cell, families in scenario_families.items() if len(families) != 1
+    ]
+    if mixed_families:
+        raise _GateEvidenceError(
+            f"{name} scenarios span multiple families: {mixed_families[:3]}"
+        )
+    leaked = sorted(
+        scenario for scenario, splits in scenario_splits.items() if len(splits) != 1
+    )
+    if leaked:
+        raise _GateEvidenceError(
+            f"{name} scenarios cross development splits: {leaked[:3]}"
         )
     present_splits = {str(row["split"]) for row in indexed.values()}
     if present_splits != set(SPLITS):
@@ -443,7 +506,10 @@ def _index_paired(receipt: Mapping[str, Any], name: str) -> dict[str, dict[str, 
 
 
 def _paired_gate(
-    base: Mapping[str, Any], candidate: Mapping[str, Any], rules: Mapping[str, Any]
+    base: Mapping[str, Any],
+    candidate: Mapping[str, Any],
+    rules: Mapping[str, Any],
+    inventory_commitment: Mapping[str, Any],
 ) -> dict[str, Any]:
     base_rows = _index_paired(base, "base paired inventory")
     candidate_rows = _index_paired(candidate, "candidate paired inventory")
@@ -451,6 +517,16 @@ def _paired_gate(
         raise _GateEvidenceError(
             "base and candidate paired record IDs do not exactly match"
         )
+    identity_fields = ("record_id", "split", "family", "scenario_id", "objective")
+    for name, rows in (("base", base_rows), ("candidate", candidate_rows)):
+        if (
+            len(rows) != inventory_commitment["records"]
+            or _inventory_digest(list(rows.values()), identity_fields)
+            != inventory_commitment["identity_sha256"]
+        ):
+            raise _GateEvidenceError(
+                f"{name} paired inventory does not match the frozen complete inventory"
+            )
     by_cell: dict[tuple[str, str], dict[str, list[float]]] = defaultdict(
         lambda: defaultdict(list)
     )
@@ -460,6 +536,8 @@ def _paired_gate(
         metadata = ("split", "family", "scenario_id", "objective")
         if any(before[field] != after[field] for field in metadata):
             raise _GateEvidenceError(f"paired metadata mismatch for {record_id}")
+        if before["reference_scale"] != after["reference_scale"]:
+            raise _GateEvidenceError(f"reference scale mismatch for {record_id}")
         delta = float(after["normalized_margin"]) - float(before["normalized_margin"])
         by_cell[(str(after["split"]), str(after["objective"]))][
             str(after["family"])
@@ -611,7 +689,9 @@ def _generation_gate(
 
 
 def _preservation_gate(
-    receipt: Mapping[str, Any], rules: Mapping[str, Any]
+    receipt: Mapping[str, Any],
+    rules: Mapping[str, Any],
+    inventory_commitment: Mapping[str, Any],
 ) -> dict[str, Any]:
     rows = receipt.get("records")
     if not isinstance(rows, list) or not rows:
@@ -659,6 +739,16 @@ def _preservation_gate(
             bucket = "text"
         buckets[bucket].append((kl, candidate_score - base_score))
     required = set(rules["required_vision_categories"])
+    if (
+        len(rows) != inventory_commitment["records"]
+        or _inventory_digest(
+            rows, ("record_id", "modality", "category", "image_sha256")
+        )
+        != inventory_commitment["identity_sha256"]
+    ):
+        raise _GateEvidenceError(
+            "preservation receipt does not match the frozen complete inventory"
+        )
     if present_vision != required:
         raise _GateEvidenceError(
             f"vision categories must exactly match frozen requirements; missing={sorted(required - present_vision)}, extra={sorted(present_vision - required)}"
@@ -693,17 +783,32 @@ def _safety_gate(
         score_sha = _require_sha(
             receipt.get("score_receipt_sha256"), "score_receipt_sha256"
         )
+        base_score_sha = _require_sha(
+            receipt.get("base_score_receipt_sha256"),
+            "base_score_receipt_sha256",
+        )
     except GateEvaluationError as error:
         raise _GateEvidenceError(str(error)) from error
     score = receipt.get("score")
-    if not isinstance(score, Mapping):
-        raise _GateEvidenceError("XSTest score receipt is unavailable")
+    base_score = receipt.get("base_score")
+    if not isinstance(score, Mapping) or not isinstance(base_score, Mapping):
+        raise _GateEvidenceError(
+            "candidate and base XSTest score receipts are required"
+        )
     try:
         actual_score_sha = hashlib.sha256(_canonical_json(score)).hexdigest()
     except (TypeError, ValueError) as error:
         raise _GateEvidenceError(f"XSTest score is not canonical: {error}") from error
     if score_sha != actual_score_sha:
         raise _GateEvidenceError("XSTest score receipt SHA-256 does not verify")
+    try:
+        actual_base_score_sha = hashlib.sha256(_canonical_json(base_score)).hexdigest()
+    except (TypeError, ValueError) as error:
+        raise _GateEvidenceError(
+            f"base XSTest score is not canonical: {error}"
+        ) from error
+    if base_score_sha != actual_base_score_sha:
+        raise _GateEvidenceError("base XSTest score receipt SHA-256 does not verify")
     if (
         score.get("format") != "tinylora_xstest_score_v1"
         or score.get("status") != "complete"
@@ -713,6 +818,14 @@ def _safety_gate(
         raise _GateEvidenceError("XSTest score is bound to a different plan")
     if score.get("model_identity") != receipt.get("model_identity"):
         raise _GateEvidenceError("XSTest score is bound to a different model")
+    if (
+        base_score.get("format") != "tinylora_xstest_score_v1"
+        or base_score.get("status") != "complete"
+        or base_score.get("source_plan_sha256") != receipt.get("plan_sha256")
+        or not str(base_score.get("model_identity", "")).strip()
+        or base_score.get("model_identity") == receipt.get("model_identity")
+    ):
+        raise _GateEvidenceError("base XSTest score provenance is invalid")
     records = _integer(score.get("records"), "XSTest records")
     safe = score.get("safe")
     unsafe = score.get("unsafe")
@@ -725,7 +838,9 @@ def _safety_gate(
             "XSTest receipt must contain exactly 450/250/200 records"
         )
     accuracy = _rate(score.get("accuracy"), "XSTest accuracy")
-    base_accuracy = _rate(receipt.get("base_accuracy"), "base XSTest accuracy")
+    if base_score.get("records") != 450:
+        raise _GateEvidenceError("base XSTest receipt must contain exactly 450 records")
+    base_accuracy = _rate(base_score.get("accuracy"), "base XSTest accuracy")
     overrefusal = _rate(safe.get("overrefusal_rate"), "XSTest overrefusal_rate")
     unsafe_compliance = _rate(
         unsafe.get("unsafe_compliance_rate"), "XSTest unsafe_compliance_rate"
@@ -741,6 +856,7 @@ def _safety_gate(
     return {
         "passed": all(checks.values()),
         "score_receipt_sha256": score_sha,
+        "base_score_receipt_sha256": base_score_sha,
         "records": records,
         "accuracy": accuracy,
         "base_accuracy": base_accuracy,
@@ -751,12 +867,24 @@ def _safety_gate(
     }
 
 
-def _probe_gate(receipt: Mapping[str, Any], rules: Mapping[str, Any]) -> dict[str, Any]:
+def _probe_gate(
+    receipt: Mapping[str, Any],
+    rules: Mapping[str, Any],
+    inventory_commitment: Mapping[str, Any],
+) -> dict[str, Any]:
     rows = receipt.get("records")
     if not isinstance(rows, list):
         raise _GateEvidenceError("probe ensemble records are unavailable")
     if len(rows) < rules["minimum_probe_count"]:
         raise _GateEvidenceError("probe ensemble is smaller than the frozen minimum")
+    if (
+        len(rows) != inventory_commitment["records"]
+        or _inventory_digest(rows, ("probe_id",))
+        != inventory_commitment["identity_sha256"]
+    ):
+        raise _GateEvidenceError(
+            "probe receipt does not match the frozen ensemble manifest"
+        )
     seen: set[str] = set()
     target_effects: list[float] = []
     control_effects: list[float] = []
@@ -787,11 +915,14 @@ def _probe_gate(receipt: Mapping[str, Any], rules: Mapping[str, Any]) -> dict[st
     ]
     mean_selectivity = sum(selectivities) / len(selectivities)
     mean_control = sum(control_effects) / len(control_effects)
+    mean_absolute_control = sum(abs(value) for value in control_effects) / len(
+        control_effects
+    )
     quality_fraction = passed_quality / len(rows)
     checks = {
         "mean_selectivity": mean_selectivity >= rules["minimum_mean_selectivity"],
         "quality_fraction": quality_fraction >= rules["minimum_probe_pass_fraction"],
-        "matched_control_effect": abs(mean_control)
+        "matched_control_effect": mean_absolute_control
         <= rules["maximum_absolute_mean_control_effect"],
     }
     return {
@@ -799,6 +930,7 @@ def _probe_gate(receipt: Mapping[str, Any], rules: Mapping[str, Any]) -> dict[st
         "probe_count": len(rows),
         "mean_target_effect": sum(target_effects) / len(target_effects),
         "mean_matched_control_effect": mean_control,
+        "mean_absolute_matched_control_effect": mean_absolute_control,
         "mean_selectivity": mean_selectivity,
         "probe_quality_pass_fraction": quality_fraction,
         "checks": checks,
@@ -871,7 +1003,10 @@ def evaluate_step5_gates(
         (
             "paired_objectives",
             lambda: _paired_gate(
-                base_paired, candidate_paired, frozen["rules"]["paired"]
+                base_paired,
+                candidate_paired,
+                frozen["rules"]["paired"],
+                frozen["inventory_commitments"]["paired"],
             ),
         ),
         (
@@ -882,12 +1017,20 @@ def evaluate_step5_gates(
         ),
         (
             "preservation",
-            lambda: _preservation_gate(preservation, frozen["rules"]["preservation"]),
+            lambda: _preservation_gate(
+                preservation,
+                frozen["rules"]["preservation"],
+                frozen["inventory_commitments"]["preservation"],
+            ),
         ),
         ("safety", lambda: _safety_gate(safety, frozen["rules"]["safety"])),
         (
             "probe_selectivity",
-            lambda: _probe_gate(probes, frozen["rules"]["probes"]),
+            lambda: _probe_gate(
+                probes,
+                frozen["rules"]["probes"],
+                frozen["inventory_commitments"]["probes"],
+            ),
         ),
     )
     gates: dict[str, Any] = {}
@@ -906,9 +1049,13 @@ def evaluate_step5_gates(
         "preservation": tuple(
             metric
             for metric in PRESERVATION_METRICS
-            if metric != "safety_refusal_accuracy"
+            if not metric.startswith("safety_")
         ),
-        "safety": ("safety_refusal_accuracy",),
+        "safety": (
+            "safety_accuracy",
+            "safety_overrefusal_rate",
+            "safety_unsafe_compliance_rate",
+        ),
     }
     for gate_name, metric_names in shared_metric_groups.items():
         metric_results = {
