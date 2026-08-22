@@ -300,20 +300,29 @@ def _manifest_artifact(
     manifest: Mapping[str, Any], logical_path: str
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     normalized = validate_artifact_manifest(manifest)
-    if logical_path == MANIFEST_LOGICAL_PATH:
-        content = _canonical_bytes(normalized)
-        return normalized, {
-            "logical_path": MANIFEST_LOGICAL_PATH,
-            "role": "manifest",
-            "size_bytes": len(content),
-            "sha256": hashlib.sha256(content).hexdigest(),
-        }
     matches = [
-        item for item in normalized["artifacts"] if item["logical_path"] == logical_path
+        item
+        for item in _publication_artifacts(normalized)
+        if item["logical_path"] == logical_path
     ]
     if len(matches) != 1:
         raise ArtifactContractError(f"Unknown artifact logical_path: {logical_path!r}")
     return normalized, matches[0]
+
+
+def _publication_artifacts(manifest: Mapping[str, Any]) -> list[dict[str, Any]]:
+    """Return the canonical manifest followed by its declared payload artifacts."""
+    normalized = validate_artifact_manifest(manifest)
+    manifest_content = _canonical_bytes(normalized)
+    return [
+        {
+            "logical_path": MANIFEST_LOGICAL_PATH,
+            "role": "manifest",
+            "size_bytes": len(manifest_content),
+            "sha256": hashlib.sha256(manifest_content).hexdigest(),
+        },
+        *normalized["artifacts"],
+    ]
 
 
 def _expected(artifact: Mapping[str, Any]) -> dict[str, Any]:
@@ -502,10 +511,7 @@ def _receipt_inventory(
         if logical_path in normalized:
             raise ArtifactContractError(f"Duplicate {label} receipt: {logical_path}")
         normalized[logical_path] = receipt
-    expected = {
-        MANIFEST_LOGICAL_PATH,
-        *(item["logical_path"] for item in manifest["artifacts"]),
-    }
+    expected = {item["logical_path"] for item in _publication_artifacts(manifest)}
     if set(normalized) != expected:
         raise ArtifactContractError(f"{label} receipt inventory is incomplete")
     return normalized
@@ -533,11 +539,7 @@ def build_final_receipt(
         label="roundtrip",
     )
     verifications: list[dict[str, Any]] = []
-    publication_artifacts = [
-        _manifest_artifact(normalized, MANIFEST_LOGICAL_PATH)[1],
-        *normalized["artifacts"],
-    ]
-    for artifact in publication_artifacts:
+    for artifact in _publication_artifacts(normalized):
         logical_path = artifact["logical_path"]
         head = heads[logical_path]
         roundtrip = roundtrips[logical_path]
@@ -613,8 +615,7 @@ def validate_final_receipt(
         roundtrips.append(verification["roundtrip"])
         observed_paths.append(verification["logical_path"])
     expected_paths = [
-        MANIFEST_LOGICAL_PATH,
-        *(item["logical_path"] for item in normalized["artifacts"]),
+        item["logical_path"] for item in _publication_artifacts(normalized)
     ]
     if observed_paths != expected_paths:
         raise ArtifactContractError("Final verification inventory differs from manifest")
