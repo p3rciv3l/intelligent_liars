@@ -1,6 +1,7 @@
 # Step 5 decision plan: prove the behavior before any larger TinyLoRA run
-Status: **reviewed; decisions approved on 2026-08-22**
+Status: **reviewed; launch preparation in progress on 2026-08-22**
 Large run: **disabled**
+GPU gates: **not running; no Vast instance is active or paused**
 Current recommendation: **repair the evaluator, test reachability, then run one bounded three-arm screen**
 ## The plain-English conclusion from Step 4
 The current system can train on one RTX 3090 with FlashAttention 2 and checkpointing. It cannot yet show that the trained adapter produces the behavior we want.
@@ -99,10 +100,10 @@ Use up to three RTX 3090s as **three independent single-GPU workers**, not one d
 | Arm | Learned capacity | Purpose |
 | --- | ---: | --- |
 | A   | Current 13 TinyLoRA coordinates, fixed rank 3 and layer 21 | Controlled baseline with the redesigned objective |
-| B   | 64 TinyLoRA coordinates, same rank, layer, and objective | Tests actual learned capacity while changing one main variable |
-| C   | Ordinary rank-1 LoRA on the same text modules | Capacity ceiling: determines whether the task is learnable at all in this scope |
+| B   | 63 TinyLoRA coordinates, same rank, layer, and objective | Uses the full effective 7-module × 3 × 3 mixing space |
+| C   | Ordinary rank-3 LoRA on the same text modules | True representational ceiling for every rank-3 TinyLoRA update in this scope |
 
-First require a tiny-set intentional-overfit check, nonzero gradients, and zero unexplained row skips. Then run the bounded development screen. If B succeeds and A does not, the next comparison can be 64 versus 196 TinyLoRA coordinates. If C succeeds while B fails, test a small number of independently tied text-layer groups. Keep the vision tower frozen in every arm, but verify real image-conditioned outputs.
+First require a tiny-set intentional-overfit check, nonzero gradients, and zero unexplained row skips. Then run the bounded development screen. If B succeeds and A does not, replicate B rather than inventing a larger coordinate count that the same one-layer rank-3 map cannot express. If C succeeds while B fails, test a small number of independently tied text-layer groups. Keep the vision tower frozen in every arm, but verify real image-conditioned outputs.
 
 Do not create separate adapters for separate objectives. The deployed model must infer the condition from its input.
 ## Training and selection signal
@@ -126,7 +127,7 @@ Use the cross-fitted probe only as a bounded regularizer and independent diagnos
 
 ### Decision 1 — three-arm screen
 
-**Approved:** 13-coordinate TinyLoRA, 64-coordinate TinyLoRA, and ordinary rank-1 LoRA as the ceiling. This is more informative than another rank 1/2/3 sweep because it changes learned capacity rather than merely changing a fixed basis.
+**Approved intent, mathematically corrected during implementation:** 13-coordinate TinyLoRA, the full 63-effective-coordinate TinyLoRA space, and ordinary rank-3 LoRA as the ceiling. The earlier 64th TinyLoRA coordinate was functionally redundant, and rank-1 ordinary LoRA was not a true ceiling for rank-3 TinyLoRA. The 13-coordinate basis must be a normalized nested subset of the same 63-coordinate basis so capacity is not confounded with projection scale.
 
 ### Decision 2 — preservation sampling
 
@@ -147,7 +148,7 @@ A candidate advances only if:
 
 ### Decision 4 — sealed audit
 
-**Approved:** only a winning configuration that passes development across at least three training/projection seeds may open the audit. Freeze its adapter, decoding settings, scorer versions, and hashes. An independent evaluator then opens the audit once for that candidate. No hyperparameter changes may be made in response to the audit result.
+**Approved, with a final-weight correction:** only a winning configuration that passes development across at least three training/projection seeds may open the Step 5 audit. Freeze its adapter, decoding settings, scorer versions, and hashes. No hyperparameter changes may be made in response to that audit result. Because the later larger run changes the weights, its result cannot inherit the bounded adapter's audit evidence. Before the Step 5 audit is opened, create and hash a separate final-weight audit that remains sealed until the larger checkpoint is frozen.
 
 ### Decision 5 — larger training run
 
@@ -173,18 +174,34 @@ Immediately before launch, show the exact GPU offers, all-in hourly price, maxim
 
 9. After verified publication, destroy and confirm the exact instance disappears from inventory. Never leave an instance silently running or paused.
 
+10. Start with one canary. Reject a host before model hydration unless every measured transfer trial clears the frozen minimum and the median clears the model-size/startup-SLA threshold. A host/network qualification failure may justify replacement; a Python, dependency, data, evaluator, CUDA-configuration, or other software failure does not. Diagnose, stop if needed, and resume the same instance from a verified checkpoint whenever possible.
 
-The lifecycle wrapper has already been changed to fail when the required fetched files do not verify and to stop, rather than destroy, a worker that may contain the only artifact copy. The broader watchdog, resumable S3 checkpointing, image build, and cost controls remain Step 5 implementation work.
+11. Transfer only a hash-pinned positive-allowlist source archive. Never recursively copy the checkout: ignored `.env`, `.secrets`, Git history, local credentials, and the sealed audit must not reach a rented host. A trusted controller—not the rented worker—must verify S3 object version, size, checksum, and round-trip bytes before authorizing destruction.
+
+
+The lifecycle wrapper now uses a source allowlist, measured host qualification, same-instance recovery, controller-side durable verification, an exact artifact inventory, and a maximum-three-worker lock. The narrow model cache, corrected real-image bundle, and clean frozen run inputs are durably published. Credentialless hydration, signed durable checkpoint acknowledgements, and controller-verified final artifact publication are implemented. The remaining launch prerequisites are publishing the runtime image to obtain its immutable digest, freezing the exact canary command and current offer/cost approval, enabling S3 bucket versioning (or approving an equally strong immutable-object replacement), and passing one exact-image canary before the three-arm screen.
 
 Speculative decoding and MTP are inference optimizations, not training optimizations. FlashAttention 2, gradient checkpointing, fixed package/image versions, bounded sequence lengths, and reliable resume are the useful controls here.
 ## Current artifact boundary
 - All Step 4 local artifact hashes pass.
 
-- The canonical archive SHA-256 is `fe456fdae61185647c1ad87f01724359174a53aa5d90dc6437a7f5587579275a`.
+- The canonical Step 4 archive SHA-256 is `fe456fdae61185647c1ad87f01724359174a53aa5d90dc6437a7f5587579275`.
 
 - The archive is uploaded to the project S3 bucket. The console-reported remote ETag exactly matches the local MD5, which verifies that uploaded object; a browser round-trip download was attempted but did not complete, so it is not being claimed.
 
 - Vast inventory is empty; no GPU is running or paused.
+
+- The Step 5 corpus preflight passes with plan SHA-256 `5282aaf0696098970de476e6812534e4c75c2434d7ec369495f5a311d6c09f99`. It contains 519 behavior-training scenarios, 70 series-isolated IID-development scenarios, 95 held-out-family scenarios, 212 qualified preservation-training rows, 51 preservation-development rows, and the exact 450-row XSTest snapshot. Vision rows are qualified with Qwen's actual resize and rendered-token rules; quarantined Tulu rows and known-bad or overlength Prime rows are excluded.
+
+- The portable real-image bundle contains 200 verified PixMo images (50 each charts, diagrams, tables, and other documents), 28,624,462 image bytes. A launch-preflight check caught that the first S3 prefix retained an older 1,000-row bundle identity even though its tar contained the current 800-row source manifest. The same validated 45,312,000-byte tar was republished under the correct manifest commitment `430de1b25babb4fcd462ed7cf0476bce9f8c4e2b8fc3872c843eea332c1e56bc`. The archive SHA-256 is `284ec9d7d1f3e4833f8e71e6028e5f7d0ce039d2749742b220c488d2de2e6d55`, the manifest file SHA-256 is `b1bcd5034e3751a58d531ef2897bfa49b8da0a3c848a9bb976e2f08f2ad19226`, and the completion marker SHA-256 is `a68b54be7e5a46014d8f6c97e8e7e1e527898c02c9e0b2542f7129ba72d9f876`. All three objects were streamed back and matched; the completion marker was published last. The stale prefix remains untouched but is excluded from the launch packet.
+
+- The exact Qwen model snapshot is locally cached and hash-verified at revision `92f3c4b4feadd3a016ef468d103bb5f58b2a2c6b`: 14 runtime files totaling 17,545,907,058 bytes. Its content identity is `bbca6a8b09a56f0c538887b82b9594b0c0945c5fbcde54f39eda153a9f64eda8`. Its 14 runtime files, four legal/attribution files, manifest, and completion marker are durably published under the matching content-addressed S3 prefix. All 20 objects were independently streamed back from S3 and matched their local SHA-256 hashes; the completion marker was published last.
+
+- Grouped CPU probe qualification selected layer 21 with last-answer-token pooling after comparing two pooling rules across layers 15, 18, 21, 24, and 27. The regularizer-only grouped macro-task ROC AUC is `0.829115`. Five source-grouped evaluator folds have ROC AUCs `0.9593`, `0.9713`, `0.9495`, `0.9569`, and `0.5826`; the weak fold is retained rather than hidden. Upstream source, example, and template identities are disjoint across the regularizer and evaluator pools. The qualification receipt is `f21781fdadab2eab6773d3e324d7500132e1f5f9e4bb38696c50837a07693b54` and is bound to the current Step 5 plan SHA. The sealed audit was not opened.
+
+- The compiled corpus and grouped probe outputs are packaged together in a deterministic clean frozen-input archive bound to the current plan and probe qualification. A launch-preflight check rejected the original macOS-created archive because it contained 22 AppleDouble files and one stray directory. The replacement contains only the approved files, is 1,676,978 bytes, and has SHA-256 `09009258f4b2422aa12e547568536d9f5e15d14afc64e23ce8f86c33d1000439`; its completion receipt has SHA-256 `579664fd8e59f8d81f0c6d71b469d5f1011811100e981887df02af53e59f4882`. Both were published under a new immutable S3 prefix, streamed back, and matched; the completion receipt was published last. The stale archive remains untouched but is excluded from the launch packet. Git stores DVC pointers for these generated directories rather than the generated bytes themselves. Pushing the corresponding DVC cache objects remains pending because the existing Google Drive OAuth grant has expired; renewing that account grant requires explicit approval and is not needed by the S3 runtime path.
+
+- Fresh AWS verification shows the existing project bucket does not currently report versioning as enabled. The signed checkpoint controller therefore remains fail-closed until bucket versioning is explicitly enabled or the durability contract is changed and separately approved.
 
 ## Step 5 deliverables
 - Immutable data and evaluator manifest with real held-out preservation.

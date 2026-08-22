@@ -1,0 +1,6 @@
+outs:
+- md5: 5db5e18cbd65cbd4fa37a1e27eea90c5.dir
+  size: 6154837
+  nfiles: 9
+  hash: md5
+  path: step5_v1
