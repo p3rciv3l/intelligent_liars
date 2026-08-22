@@ -1,0 +1,216 @@
+{
+  "format": "tinylora_source_registry_v1",
+  "corpus_id": "tinylora_deception_action_v1",
+  "sources": [
+    {
+      "source_id": "apollo_roleplaying",
+      "display_name": "Apollo Research roleplaying honest/deceptive pairs",
+      "upstream_url": "https://github.com/ApolloResearch/deception-detection",
+      "revision": "f8ec4010e74927394709dffa22b97bdf8cd5a62f",
+      "usage": "target_training",
+      "reuse_decision": "user_approved_research_reuse_with_attribution",
+      "adapter": "roleplaying_pairs_yaml",
+      "paths": [
+        "references/deception-detection/data/roleplaying/dataset.yaml"
+      ]
+    },
+    {
+      "source_id": "truthspec_claim_pairs",
+      "display_name": "TruthSpec FLEED claim pairs",
+      "upstream_url": "https://github.com/zfying/truth_spec",
+      "revision": "b95fdc1c5a1670f3c6c013140f1b76467d80cbf4",
+      "usage": "target_training",
+      "reuse_decision": "user_approved_research_reuse_with_attribution",
+      "adapter": "paired_claim_csv",
+      "path_globs": [
+        "data/claims/*.csv"
+      ]
+    },
+    {
+      "source_id": "truthspec_geometry_statements",
+      "display_name": "TruthSpec Geometry of Truth statements",
+      "upstream_url": "https://github.com/zfying/truth_spec",
+      "revision": "b95fdc1c5a1670f3c6c013140f1b76467d80cbf4",
+      "usage": "target_training",
+      "reuse_decision": "user_approved_research_reuse_with_attribution",
+      "adapter": "labeled_statement_csv",
+      "paths": [
+        "data/geometry_of_truth/cities.csv",
+        "data/geometry_of_truth/cities_cities_conj.csv",
+        "data/geometry_of_truth/cities_cities_disj.csv",
+        "data/geometry_of_truth/common_claim_true_false.csv",
+        "data/geometry_of_truth/companies_true_false.csv",
+        "data/geometry_of_truth/counterfact_true_false.csv",
+        "data/geometry_of_truth/larger_than.csv",
+        "data/geometry_of_truth/neg_cities.csv",
+        "data/geometry_of_truth/neg_sp_en_trans.csv",
+        "data/geometry_of_truth/smaller_than.csv",
+        "data/geometry_of_truth/sp_en_trans.csv"
+      ]
+    },
+    {
+      "source_id": "truthspec_internal_state",
+      "display_name": "TruthSpec internal-state true/false statements",
+      "upstream_url": "https://github.com/zfying/truth_spec",
+      "revision": "b95fdc1c5a1670f3c6c013140f1b76467d80cbf4",
+      "usage": "target_training",
+      "reuse_decision": "user_approved_research_reuse_with_attribution",
+      "adapter": "labeled_statement_csv",
+      "path_globs": [
+        "data/internal_state/*.csv"
+      ]
+    },
+    {
+      "source_id": "truthspec_repe_facts",
+      "display_name": "TruthSpec RepE true/false facts",
+      "upstream_url": "https://github.com/zfying/truth_spec",
+      "revision": "b95fdc1c5a1670f3c6c013140f1b76467d80cbf4",
+      "usage": "target_training",
+      "reuse_decision": "user_approved_research_reuse_with_attribution",
+      "adapter": "labeled_statement_csv",
+      "paths": [
+        "data/repe/true_false_facts.csv"
+      ]
+    },
+    {
+      "source_id": "qwen_truthspec_sycophancy",
+      "display_name": "Qwen3-VL matched TruthSpec sycophancy pairs",
+      "upstream_url": "local_qwen_generation_from_truthspec",
+      "revision": "qwen3-vl-8b-thinking-local-20260624",
+      "usage": "target_training",
+      "reuse_decision": "project_generated",
+      "adapter": "paired_sycophancy_json",
+      "path_globs": [
+        "data/sycophancy/qwen3-vl-8b-thinking/same_conf_paired_*.json"
+      ]
+    },
+    {
+      "source_id": "qwen_roleplaying_rollouts",
+      "display_name": "Qwen3-VL rollouts on Apollo roleplaying prompts",
+      "upstream_url": "local_qwen_generation_from_apollo",
+      "revision": "qwen3-vl-8b-thinking-local-20260624",
+      "usage": "target_training",
+      "reuse_decision": "project_generated",
+      "adapter": "qwen_rollouts_json",
+      "quality_filter": {
+        "field_path": ["payload", "graded_deception", 0],
+        "allowed_values": [1, 2, 6, 7]
+      },
+      "paths": [
+        "data/rollouts/roleplaying__plain__qwen3-vl-8b-thinking.json"
+      ]
+    },
+    {
+      "source_id": "qwen_insider_report_rollouts",
+      "display_name": "Qwen3-VL Apollo insider-trading report rollouts",
+      "upstream_url": "local_qwen_generation_from_apollo",
+      "revision": "qwen3-vl-8b-thinking-local-20260624",
+      "usage": "target_training",
+      "reuse_decision": "project_generated",
+      "adapter": "qwen_rollouts_json",
+      "quality_filter": {
+        "field_path": ["payload", "metadata", "report_label"],
+        "allowed_values": ["explicit", "concealed"]
+      },
+      "paths": [
+        "data/rollouts/insider_trading__onpolicy__qwen3-vl-8b-thinking.json"
+      ]
+    },
+    {
+      "source_id": "qwen_insider_doubledown_rollouts",
+      "display_name": "Qwen3-VL Apollo insider-trading double-down rollouts",
+      "upstream_url": "local_qwen_generation_from_apollo",
+      "revision": "qwen3-vl-8b-thinking-local-20260624",
+      "usage": "target_training",
+      "reuse_decision": "project_generated",
+      "adapter": "qwen_rollouts_json",
+      "quality_filter": {
+        "field_path": ["payload", "metadata", "doubling_down_label"],
+        "allowed_values": ["honest", "deceptive"]
+      },
+      "paths": [
+        "data/rollouts/insider_trading_doubledown__onpolicy__qwen3-vl-8b-thinking.json"
+      ]
+    },
+    {
+      "source_id": "qwen_sandbagging_rollouts",
+      "display_name": "Qwen3-VL Apollo sandbagging rollouts",
+      "upstream_url": "local_qwen_generation_from_apollo",
+      "revision": "qwen3-vl-8b-thinking-local-20260624",
+      "usage": "target_training",
+      "reuse_decision": "project_generated_filter_required",
+      "adapter": "qwen_rollouts_json",
+      "quality_filter": {
+        "field_path": ["payload", "graded_deception", 0],
+        "allowed_values": ["honest", "deceptive"]
+      },
+      "paths": [
+        "data/rollouts/sandbagging_v2__wmdp_mmlu__qwen3-vl-8b-thinking.json"
+      ]
+    },
+    {
+      "source_id": "apollo_insider_trajectories",
+      "display_name": "Apollo Research Llama 70B insider-trading trajectories",
+      "upstream_url": "https://github.com/ApolloResearch/deception-detection",
+      "revision": "f8ec4010e74927394709dffa22b97bdf8cd5a62f",
+      "usage": "target_training",
+      "reuse_decision": "user_approved_research_reuse_with_attribution",
+      "adapter": "trajectory_list_json",
+      "quality_filter": {
+        "field_path": ["payload", "metadata", "report_label"],
+        "allowed_values": ["explicit", "concealed"]
+      },
+      "paths": [
+        "references/deception-detection/data/insider_trading/llama-70b-3.3-generations.json"
+      ]
+    },
+    {
+      "source_id": "ai2_tulu_3_sft_snapshot",
+      "display_name": "Deterministic Ai2 Tulu 3 preservation snapshot",
+      "upstream_url": "https://huggingface.co/datasets/allenai/tulu-3-sft-mixture",
+      "revision": "dataset-viewer-snapshot-20260821",
+      "usage": "preservation_training",
+      "reuse_decision": "subset_terms_review_required_at_training_gate",
+      "adapter": "normalized_jsonl",
+      "paths": [
+        "data/tinylora_preservation_snapshots/v1/tulu_3_sft_preservation.jsonl"
+      ]
+    },
+    {
+      "source_id": "prime_synthetic_2_verified_snapshot",
+      "display_name": "Deterministic Prime SYNTHETIC-2 verified preservation snapshot",
+      "upstream_url": "https://huggingface.co/datasets/PrimeIntellect/SYNTHETIC-2-SFT-verified",
+      "revision": "dataset-viewer-snapshot-20260821",
+      "usage": "preservation_training",
+      "reuse_decision": "apache_2_0_preservation_training",
+      "adapter": "normalized_jsonl",
+      "paths": [
+        "data/tinylora_preservation_snapshots/v1/prime_synthetic_2_verified_preservation.jsonl"
+      ]
+    },
+    {
+      "source_id": "ai2_pixmo_capqa_snapshot",
+      "display_name": "Deterministic Ai2 PixMo-CapQA preservation snapshot",
+      "upstream_url": "https://huggingface.co/datasets/allenai/pixmo-cap-qa",
+      "revision": "dataset-viewer-snapshot-20260821",
+      "usage": "preservation_training",
+      "reuse_decision": "remote_image_reference_with_source_terms",
+      "adapter": "normalized_jsonl",
+      "paths": [
+        "data/tinylora_preservation_snapshots/v1/pixmo_capqa_preservation.jsonl"
+      ]
+    },
+    {
+      "source_id": "ai2_pixmo_docs_snapshot",
+      "display_name": "Deterministic Ai2 PixMo-Docs preservation snapshot with local images",
+      "upstream_url": "https://huggingface.co/datasets/allenai/pixmo-docs",
+      "revision": "dataset-viewer-snapshot-20260821",
+      "usage": "preservation_training",
+      "reuse_decision": "odc_by_preservation_training_with_source_terms",
+      "adapter": "normalized_jsonl",
+      "paths": [
+        "data/tinylora_preservation_snapshots/v1/pixmo_docs_preservation.jsonl"
+      ]
+    }
+  ]
+}

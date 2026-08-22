@@ -1,0 +1,42 @@
+{
+  "format": "tinylora_preservation_source_catalog_v1",
+  "policy": "Curate a stratified snapshot; do not ingest the full upstream mixture.",
+  "sources": [
+    {
+      "source_id": "ai2_tulu_3_sft",
+      "url": "https://huggingface.co/datasets/allenai/tulu-3-sft-mixture",
+      "purpose": ["instruction_following", "general_language", "safety", "multilingual"],
+      "selection": "subset-license-approved, source-stratified sample",
+      "status": "cataloged_not_downloaded"
+    },
+    {
+      "source_id": "prime_synthetic_2_verified",
+      "url": "https://huggingface.co/datasets/PrimeIntellect/SYNTHETIC-2-SFT-verified",
+      "purpose": ["reasoning", "coding", "verifier_backed_competence"],
+      "selection": "task-type-stratified verified rows",
+      "status": "cataloged_not_downloaded"
+    },
+    {
+      "source_id": "ai2_pixmo_capqa",
+      "url": "https://huggingface.co/datasets/allenai/pixmo-cap-qa",
+      "purpose": ["visual_grounding", "visual_question_answering"],
+      "selection": "visual-skill-stratified metadata and available images",
+      "status": "cataloged_not_downloaded"
+    },
+    {
+      "source_id": "ai2_pixmo_docs",
+      "url": "https://huggingface.co/datasets/allenai/pixmo-docs",
+      "purpose": ["ocr", "charts", "tables", "documents", "diagrams"],
+      "selection": "visual-skill-stratified metadata and available images",
+      "status": "cataloged_not_downloaded"
+    }
+  ],
+  "holdout_only": [
+    "AI2 ARC validation and test",
+    "OLMES evaluation suites",
+    "METR public task content",
+    "PKU DeceptionBench",
+    "PKU MM-DeceptionBench",
+    "final OSWorld audit"
+  ]
+}

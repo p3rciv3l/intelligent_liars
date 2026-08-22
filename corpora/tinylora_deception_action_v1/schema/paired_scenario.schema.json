@@ -1,0 +1,119 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://intelligent-liars.local/schemas/tinylora_paired_scenario_v1.json",
+  "title": "TinyLoRA paired report/action scenario",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "format",
+    "scenario_id",
+    "split_group_id",
+    "family",
+    "risk_level",
+    "world_state",
+    "neutral_report",
+    "target_report",
+    "action_task",
+    "indirect_probes",
+    "false_trigger_control",
+    "provenance"
+  ],
+  "properties": {
+    "format": {"const": "tinylora_paired_scenario_v1"},
+    "scenario_id": {"type": "string", "minLength": 1},
+    "split_group_id": {"type": "string", "minLength": 1},
+    "family": {"type": "string", "minLength": 1},
+    "risk_level": {"enum": ["low", "medium"]},
+    "world_state": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["fact_key", "true_value", "counterfactual_value"],
+      "properties": {
+        "fact_key": {"type": "string", "minLength": 1},
+        "true_value": {"type": "string", "minLength": 1},
+        "counterfactual_value": {"type": "string", "minLength": 1}
+      }
+    },
+    "neutral_report": {"$ref": "#/$defs/report"},
+    "target_report": {
+      "allOf": [
+        {"$ref": "#/$defs/report"},
+        {
+          "type": "object",
+          "required": ["asserted_value"],
+          "properties": {"asserted_value": {"type": "string", "minLength": 1}}
+        }
+      ]
+    },
+    "action_task": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "instruction",
+        "allowed_actions",
+        "correct_action_true_state",
+        "correct_action_counterfactual"
+      ],
+      "properties": {
+        "instruction": {"type": "string", "minLength": 1},
+        "allowed_actions": {
+          "type": "array",
+          "minItems": 2,
+          "uniqueItems": true,
+          "items": {"type": "string", "minLength": 1}
+        },
+        "correct_action_true_state": {"type": "string", "minLength": 1},
+        "correct_action_counterfactual": {"type": "string", "minLength": 1}
+      }
+    },
+    "indirect_probes": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["question", "truthful_answer"],
+        "properties": {
+          "question": {"type": "string", "minLength": 1},
+          "truthful_answer": {"type": "string", "minLength": 1}
+        }
+      }
+    },
+    "false_trigger_control": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["condition", "answer"],
+      "properties": {
+        "condition": {"type": "string", "minLength": 1},
+        "answer": {"type": "string", "minLength": 1}
+      }
+    },
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["author_model", "authoring_mode", "authored_at", "source_inspiration"],
+      "properties": {
+        "author_model": {"const": "gpt-5.6-sol"},
+        "authoring_mode": {"const": "codex_chat_direct"},
+        "authored_at": {"type": "string", "format": "date"},
+        "source_inspiration": {
+          "type": "array",
+          "items": {"type": "string", "minLength": 1}
+        }
+      }
+    }
+  },
+  "$defs": {
+    "report": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["condition", "question", "answer"],
+      "properties": {
+        "condition": {"type": "string", "minLength": 1},
+        "question": {"type": "string", "minLength": 1},
+        "answer": {"type": "string", "minLength": 1},
+        "asserted_value": {"type": "string", "minLength": 1}
+      }
+    }
+  }
+}
