@@ -64,6 +64,12 @@ from intelligent_liars.step5_prerequisites import (
     read_and_validate_prerequisite_receipt,
     step5_code_sha256,
 )
+from intelligent_liars.step5_checkpoint_bridge import (
+    DURABILITY_RECEIPT_FORMAT as CONTROLLER_DURABILITY_RECEIPT_FORMAT,
+    ENVELOPE_FORMAT as CONTROLLER_DURABILITY_ENVELOPE_FORMAT,
+    prune_superseded_unverified_generations,
+    verify_controller_ack,
+)
 from intelligent_liars.step5_multimodal_assets import (
     rebase_image_references,
     validate_staged_bundle,
@@ -121,6 +127,11 @@ def parse_args() -> argparse.Namespace:
             "identity in STEP5_CHECKPOINT_* environment variables and must emit one "
             "matching JSON durability receipt on stdout. Required in train mode."
         ),
+    )
+    parser.add_argument(
+        "--durability-controller-public-key",
+        type=Path,
+        help="Pinned controller public key; required in train mode.",
     )
     parser.add_argument(
         "--prerequisite-receipt",
@@ -185,6 +196,15 @@ def validate_durability_args(args: argparse.Namespace) -> None:
     ):
         raise ValueError(
             "prerequisites mode requires an immutable --runtime-image-digest"
+        )
+    public_key = getattr(args, "durability_controller_public_key", None)
+    if args.mode == "train" and public_key is None:
+        raise ValueError("train mode requires --durability-controller-public-key")
+    if args.mode == "train" and (
+        public_key.is_symlink() or not public_key.is_file()
+    ):
+        raise ValueError(
+            "durability-controller-public-key must be a regular non-symlink file"
         )
 
 
@@ -294,7 +314,7 @@ def local_smoke_durability_verifier(
 ) -> dict[str, Any]:
     """Accept local bytes only for non-candidate smoke tests."""
     return {
-        "format": DURABILITY_RECEIPT_FORMAT,
+        "format": "tinylora_step5_checkpoint_durability_receipt_v1",
         "generation_id": generation.generation_id,
         "manifest_sha256": generation.manifest_sha256,
         "object_ref": generation.path.resolve().as_uri(),
@@ -302,7 +322,9 @@ def local_smoke_durability_verifier(
     }
 
 
-def command_durability_verifier(command: str) -> CheckpointDurabilityVerifier:
+def command_durability_verifier(
+    command: str, *, controller_public_key: Path
+) -> CheckpointDurabilityVerifier:
     """Build a transport-neutral verifier backed by an operator command."""
     arguments = shlex.split(command)
     if not arguments:
@@ -325,16 +347,31 @@ def command_durability_verifier(command: str) -> CheckpointDurabilityVerifier:
             env=environment,
         )
         try:
-            receipt = json.loads(completed.stdout)
+            envelope = json.loads(completed.stdout)
         except json.JSONDecodeError as exc:
             raise CheckpointIntegrityError(
                 "Durability verifier did not emit one JSON receipt"
             ) from exc
-        if not isinstance(receipt, dict):
+        if not isinstance(envelope, dict):
             raise CheckpointIntegrityError(
                 "Durability verifier receipt must be a JSON object"
             )
-        return receipt
+        if set(envelope) != {"format", "request", "ack"} or envelope.get(
+            "format"
+        ) != CONTROLLER_DURABILITY_ENVELOPE_FORMAT:
+            raise CheckpointIntegrityError(
+                "External durability verifier must emit a signed controller envelope"
+            )
+        try:
+            return verify_controller_ack(
+                envelope["ack"],
+                request=envelope["request"],
+                public_key_path=controller_public_key,
+            )
+        except (TypeError, ValueError, OSError, subprocess.SubprocessError) as exc:
+            raise CheckpointIntegrityError(
+                "External checkpoint controller acknowledgement failed verification"
+            ) from exc
 
     return verify
 
@@ -343,19 +380,39 @@ def _validated_durability_receipt(
     generation: CheckpointGeneration,
     receipt: Mapping[str, Any],
 ) -> dict[str, Any]:
-    required = {
+    legacy_required = {
         "format",
         "generation_id",
         "manifest_sha256",
         "object_ref",
         "verified",
     }
-    if set(receipt) != required:
+    controller_required = {
+        "format",
+        "generation_id",
+        "manifest_sha256",
+        "archive_sha256",
+        "size_bytes",
+        "object_ref",
+        "object_version",
+        "controller_key_id",
+        "verified_at",
+        "verified",
+    }
+    expected = (
+        legacy_required
+        if receipt.get("format") == "tinylora_step5_checkpoint_durability_receipt_v1"
+        else controller_required
+    )
+    if set(receipt) != expected:
         raise CheckpointIntegrityError(
             "Durability receipt fields do not match the required contract"
         )
     normalized = dict(receipt)
-    if normalized["format"] != DURABILITY_RECEIPT_FORMAT:
+    if normalized["format"] not in {
+        "tinylora_step5_checkpoint_durability_receipt_v1",
+        CONTROLLER_DURABILITY_RECEIPT_FORMAT,
+    }:
         raise CheckpointIntegrityError("Unsupported durability receipt format")
     if (
         normalized["generation_id"] != generation.generation_id
@@ -484,6 +541,10 @@ def publish_checkpoint_generation(
                 generation_id=generation_id,
                 source_dir=source_dir,
             )
+        prune_superseded_unverified_generations(
+            checkpoint_root,
+            active_generation_id=generation.generation_id,
+        )
 
         accepted_receipt: dict[str, Any] | None = None
 
@@ -1392,7 +1453,10 @@ def main() -> int:
         q1, q3 = torch.quantile(values, torch.tensor([0.25, 0.75]))
         desired_delta = 0.5 * max(float((q3 - q1) / 1.349), 0.1)
         durability_verifier = (
-            command_durability_verifier(args.durability_verifier_command)
+            command_durability_verifier(
+                args.durability_verifier_command,
+                controller_public_key=args.durability_controller_public_key,
+            )
             if args.durability_verifier_command
             else local_smoke_durability_verifier
         )
