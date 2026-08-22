@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
+import h5py
 import numpy as np
 
 from intelligent_liars.step5_grouped_probe_fit import (
@@ -11,6 +13,7 @@ from intelligent_liars.step5_grouped_probe_fit import (
     build_outer_split,
     derive_legacy_example_identity,
     fit_linear_probe,
+    load_features,
 )
 from intelligent_liars.probes import DIRECTION_SIGN_CONVENTION
 
@@ -132,3 +135,47 @@ def test_fit_linear_probe_rejects_one_class():
         assert "both labels" in str(exc)
     else:
         raise AssertionError("one-class fit should fail closed")
+
+
+def test_load_features_compares_mean_cache_with_raw_last_token(tmp_path: Path):
+    pooled = tmp_path / "pooled.h5"
+    raw = tmp_path / "raw.h5"
+    with h5py.File(pooled, "w") as handle:
+        handle.attrs["hidden_dim"] = 2
+        layer = handle.create_group("layer_21")
+        layer.create_dataset(
+            "task", data=np.asarray([[10, 11], [20, 21], [30, 31]], dtype=np.float32)
+        )
+    with h5py.File(raw, "w") as handle:
+        layer = handle.create_group("layer_21")
+        layer.create_dataset(
+            "task",
+            data=np.asarray(
+                [[1, 1], [2, 2], [3, 3], [4, 4], [5, 5], [6, 6]],
+                dtype=np.float32,
+            ),
+        )
+        metadata = handle.create_group("metadata").create_group("task")
+        metadata.create_dataset("example_splits", data=np.asarray([0, 2, 3, 6]))
+    selected = np.asarray([0, 2], dtype=np.int64)
+    task_map = {"task": np.asarray([0, 1, 2], dtype=np.int64)}
+
+    means = load_features(
+        pooled,
+        raw,
+        layer=21,
+        token_pooling="mean_answer_tokens_per_example",
+        task_local_to_global=task_map,
+        selected_indices=selected,
+    )
+    lasts = load_features(
+        pooled,
+        raw,
+        layer=21,
+        token_pooling="last_answer_token_per_example",
+        task_local_to_global=task_map,
+        selected_indices=selected,
+    )
+
+    assert means.tolist() == [[10, 11], [30, 31]]
+    assert lasts.tolist() == [[2, 2], [6, 6]]
