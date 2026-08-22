@@ -10,10 +10,16 @@ import os
 import re
 import shlex
 import subprocess
+import tarfile
 import time
 from datetime import datetime, timezone
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
+
+
+WORKLOAD_MANIFEST_FORMAT = "tinylora_workload_archive_v1"
+ARTIFACT_INVENTORY_FORMAT = "tinylora_pilot_artifact_inventory_v1"
+SENSITIVE_COMPONENTS = {".git", ".secrets"}
 
 
 def parse_args() -> argparse.Namespace:
@@ -21,7 +27,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--vastai", required=True)
     parser.add_argument("--offer-id", required=True)
     parser.add_argument("--rank", type=int, choices=(1, 2, 3), required=True)
-    parser.add_argument("--repo", type=Path, required=True)
+    parser.add_argument("--workload-archive", type=Path, required=True)
+    parser.add_argument("--workload-manifest", type=Path, required=True)
+    parser.add_argument("--artifact-inventory", type=Path, required=True)
     parser.add_argument("--fetch-dir", type=Path, required=True)
     parser.add_argument("--metadata", type=Path, required=True)
     parser.add_argument("--image", required=True)
@@ -102,21 +110,181 @@ def write_metadata(path: Path, payload: dict[str, Any]) -> None:
     os.replace(temporary, path)
 
 
-def verified_artifact_hashes(fetch_dir: Path, rank: int) -> dict[str, str]:
-    """Return hashes only when the complete pilot artifact set is present."""
-    result_dir = fetch_dir / f"rank_{rank}"
-    required = (
-        result_dir / "result.json",
-        result_dir / "pilot_state.pt",
-        result_dir / f"tinylora_rank{rank}_basis.pt",
+def sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _safe_archive_name(name: str) -> PurePosixPath:
+    if not name or "\\" in name or "\x00" in name:
+        raise ValueError(f"unsafe archive path: {name!r}")
+    path = PurePosixPath(name)
+    if path.is_absolute() or any(part in ("", ".", "..") for part in path.parts):
+        raise ValueError(f"unsafe archive path: {name!r}")
+    for part in path.parts:
+        if part in SENSITIVE_COMPONENTS or part == ".env" or part.startswith(".env."):
+            raise ValueError(f"sensitive path is forbidden in workload archive: {name!r}")
+    return path
+
+
+def _read_regular_json(path: Path, *, label: str) -> dict[str, Any]:
+    if path.is_symlink() or not path.is_file():
+        raise ValueError(f"{label} must be a regular non-symlink file: {path}")
+    try:
+        payload = json.loads(path.read_text())
+    except (OSError, json.JSONDecodeError) as error:
+        raise ValueError(f"invalid {label}: {error}") from error
+    if not isinstance(payload, dict):
+        raise ValueError(f"invalid {label}: root must be an object")
+    return payload
+
+
+def _validate_hash_map(value: Any, *, label: str) -> dict[str, str]:
+    if not isinstance(value, dict) or not value:
+        raise ValueError(f"{label} must contain a non-empty files object")
+    result: dict[str, str] = {}
+    for raw_name, raw_digest in value.items():
+        if not isinstance(raw_name, str):
+            raise ValueError(f"{label} has a non-string path")
+        name = _safe_archive_name(raw_name).as_posix()
+        if name != raw_name:
+            raise ValueError(f"{label} path is not canonical: {raw_name!r}")
+        if not isinstance(raw_digest, str) or not re.fullmatch(r"[0-9a-f]{64}", raw_digest):
+            raise ValueError(f"{label} has invalid SHA-256 for {raw_name!r}")
+        result[name] = raw_digest
+    return result
+
+
+def _validate_path_list(value: Any, *, label: str) -> set[str]:
+    if not isinstance(value, list) or not value:
+        raise ValueError(f"{label} must contain a non-empty files list")
+    result: set[str] = set()
+    for raw_name in value:
+        if not isinstance(raw_name, str):
+            raise ValueError(f"{label} has a non-string path")
+        name = _safe_archive_name(raw_name).as_posix()
+        if name != raw_name:
+            raise ValueError(f"{label} path is not canonical: {raw_name!r}")
+        if name in result:
+            raise ValueError(f"{label} contains a duplicate path: {name!r}")
+        result.add(name)
+    return result
+
+
+def validate_workload_archive(archive: Path, manifest: Path) -> dict[str, Any]:
+    """Validate an immutable, explicitly allowlisted workload before any rental."""
+    if (
+        archive.is_symlink()
+        or not archive.is_file()
+        or not archive.name.endswith(".tar.gz")
+    ):
+        raise ValueError(f"workload must be a regular .tar.gz archive, not a directory: {archive}")
+    payload = _read_regular_json(manifest, label="workload manifest")
+    if payload.get("format") != WORKLOAD_MANIFEST_FORMAT:
+        raise ValueError(f"unsupported workload manifest format: {payload.get('format')!r}")
+    expected_archive_hash = payload.get("archive_sha256")
+    if not isinstance(expected_archive_hash, str) or not re.fullmatch(
+        r"[0-9a-f]{64}", expected_archive_hash
+    ):
+        raise ValueError("workload manifest has invalid archive_sha256")
+    actual_archive_hash = sha256_file(archive)
+    if actual_archive_hash != expected_archive_hash:
+        raise ValueError("workload archive SHA-256 does not match its frozen manifest")
+    expected_files = _validate_hash_map(payload.get("files"), label="workload manifest")
+    actual_files: dict[str, str] = {}
+    try:
+        with tarfile.open(archive, "r:gz") as bundle:
+            seen: set[str] = set()
+            for member in bundle.getmembers():
+                name = _safe_archive_name(member.name).as_posix()
+                if name in seen:
+                    raise ValueError(f"duplicate workload archive member: {name}")
+                seen.add(name)
+                if member.isdir():
+                    continue
+                if not member.isfile():
+                    raise ValueError(
+                        f"workload archive may contain only regular files and directories: {name}"
+                    )
+                extracted = bundle.extractfile(member)
+                if extracted is None:
+                    raise ValueError(f"cannot read workload archive member: {name}")
+                digest = hashlib.sha256()
+                for chunk in iter(lambda: extracted.read(1024 * 1024), b""):
+                    digest.update(chunk)
+                actual_files[name] = digest.hexdigest()
+    except (tarfile.TarError, OSError) as error:
+        raise ValueError(f"invalid workload archive: {error}") from error
+    if actual_files.keys() != expected_files.keys():
+        missing = sorted(expected_files.keys() - actual_files.keys())
+        extra = sorted(actual_files.keys() - expected_files.keys())
+        raise ValueError(f"workload archive allowlist mismatch: missing={missing}, extra={extra}")
+    mismatched = sorted(
+        name for name, digest in actual_files.items() if digest != expected_files[name]
     )
-    missing = [str(path) for path in required if not path.is_file() or path.stat().st_size == 0]
+    if mismatched:
+        raise ValueError(f"workload archive member SHA-256 mismatch: {mismatched}")
+    return {
+        "format": WORKLOAD_MANIFEST_FORMAT,
+        "archive_sha256": actual_archive_hash,
+        "files": actual_files,
+    }
+
+
+def load_artifact_inventory(path: Path, rank: int) -> set[str]:
+    payload = _read_regular_json(path, label="artifact inventory")
+    if payload.get("format") != ARTIFACT_INVENTORY_FORMAT:
+        raise ValueError(f"unsupported artifact inventory format: {payload.get('format')!r}")
+    files = _validate_path_list(payload.get("files"), label="artifact inventory")
+    prefix = f"rank_{rank}/"
+    if any(not name.startswith(prefix) for name in files):
+        raise ValueError(f"artifact inventory may contain only {prefix!r} paths")
+    return files
+
+
+def verified_artifact_hashes(
+    fetch_dir: Path, rank: int, expected_inventory: set[str]
+) -> dict[str, str]:
+    """Verify the fetched tree exactly matches a controller-frozen inventory."""
+    result_dir = fetch_dir / f"rank_{rank}"
+    required_names = (
+        f"rank_{rank}/result.json",
+        f"rank_{rank}/pilot_state.pt",
+        f"rank_{rank}/tinylora_rank{rank}_basis.pt",
+    )
+    if not set(required_names).issubset(expected_inventory):
+        raise ValueError("artifact inventory omits the required pilot artifact set")
+    if result_dir.is_symlink():
+        raise ValueError(f"fetched artifact directory must not be a symlink: {result_dir}")
+    actual_paths: dict[str, Path] = {}
+    if result_dir.is_dir():
+        for root, directories, files in os.walk(result_dir, followlinks=False):
+            root_path = Path(root)
+            for directory in directories:
+                path = root_path / directory
+                if path.is_symlink():
+                    raise ValueError(f"fetched artifact directory contains a symlink: {path}")
+            for filename in files:
+                path = root_path / filename
+                if path.is_symlink():
+                    raise ValueError(f"fetched artifact file is a symlink: {path}")
+                if not path.is_file():
+                    raise ValueError(f"fetched artifact is not a regular file: {path}")
+                actual_paths[path.relative_to(fetch_dir).as_posix()] = path
+    missing = [name for name in required_names if name not in actual_paths or actual_paths[name].stat().st_size == 0]
     if missing:
         raise FileNotFoundError(f"Incomplete fetched artifact set: {missing}")
-    return {
-        str(path.relative_to(fetch_dir)): hashlib.sha256(path.read_bytes()).hexdigest()
-        for path in required
-    }
+    if actual_paths.keys() != expected_inventory:
+        missing_inventory = sorted(expected_inventory - actual_paths.keys())
+        extra = sorted(actual_paths.keys() - expected_inventory)
+        raise ValueError(
+            f"fetched artifact inventory mismatch: missing={missing_inventory}, extra={extra}"
+        )
+    hashes = {name: sha256_file(path) for name, path in actual_paths.items()}
+    return hashes
 
 
 def cleanup_action(*, workload_started: bool, artifacts_verified: bool) -> str:
@@ -127,6 +295,8 @@ def cleanup_action(*, workload_started: bool, artifacts_verified: bool) -> str:
 
 
 def require_empty_artifact_destination(fetch_dir: Path, rank: int) -> None:
+    if fetch_dir.is_symlink():
+        raise ValueError(f"artifact destination must not be a symlink: {fetch_dir}")
     result_dir = fetch_dir / f"rank_{rank}"
     if result_dir.exists():
         raise FileExistsError(
@@ -136,6 +306,8 @@ def require_empty_artifact_destination(fetch_dir: Path, rank: int) -> None:
 
 def main() -> int:
     args = parse_args()
+    workload = validate_workload_archive(args.workload_archive, args.workload_manifest)
+    artifact_inventory = load_artifact_inventory(args.artifact_inventory, args.rank)
     label = f"codex-vast-tinylora-rank-{args.rank}-retry"
     create = [
         args.vastai,
@@ -153,7 +325,10 @@ def main() -> int:
         "--raw",
     ]
     print(f"create: {shlex.join(create)}", flush=True)
-    print(f"sync: {args.repo.resolve()} -> /workspace/workload", flush=True)
+    print(
+        f"sync verified archive: {args.workload_archive.resolve()} -> /workspace/workload.tar.gz",
+        flush=True,
+    )
     print(f"run: {args.remote_command}", flush=True)
     print(f"fetch: /workspace/workload/results/rank_{args.rank}", flush=True)
     print("cleanup: destroy only after fetched artifacts verify; otherwise stop for recovery", flush=True)
@@ -161,7 +336,7 @@ def main() -> int:
         return 0
     if not args.confirmed_cost_approval:
         raise ValueError("Execution requires confirmed cost approval")
-    require_empty_artifact_destination(args.fetch_dir.resolve(), args.rank)
+    require_empty_artifact_destination(args.fetch_dir, args.rank)
     metadata: dict[str, Any] = {
         "format": "tinylora_vast_worker_lifecycle_v1",
         "rank": args.rank,
@@ -169,6 +344,10 @@ def main() -> int:
         "image": args.image,
         "disk_gb": args.disk,
         "started_at": now(),
+        "workload_archive_sha256": workload["archive_sha256"],
+        "workload_file_sha256": workload["files"],
+        "artifact_inventory_sha256": sha256_file(args.artifact_inventory),
+        "expected_artifact_inventory": sorted(artifact_inventory),
     }
     instance_id: str | None = None
     exit_code = 1
@@ -183,32 +362,34 @@ def main() -> int:
         metadata.update({"ssh_host": host, "ssh_port": port, "ssh_ready_at": now()})
         print(f"ssh ready: {host}:{port}", flush=True)
         run([*ssh_prefix(host, port), "mkdir -p /workspace/workload"], capture=False)
-        repo = args.repo.resolve()
-        remote_target = (
-            "/workspace/workload.tar.gz" if repo.is_file() else "/workspace/workload"
-        )
-        local_source = str(repo) if repo.is_file() else f"{repo}/."
+        archive = args.workload_archive.resolve()
+        if sha256_file(archive) != workload["archive_sha256"]:
+            raise ValueError("workload archive changed after controller validation")
         scp = [
             "scp",
-            "-r",
             "-P",
             port,
             "-o",
             "StrictHostKeyChecking=no",
             "-o",
             "UserKnownHostsFile=/dev/null",
-            local_source,
-            f"root@{host}:{remote_target}",
+            str(archive),
+            f"root@{host}:/workspace/workload.tar.gz",
         ]
         run(scp, capture=False)
-        if repo.is_file():
-            run(
-                [
-                    *ssh_prefix(host, port),
-                    "tar -xzf /workspace/workload.tar.gz -C /workspace/workload",
-                ],
-                capture=False,
-            )
+        remote_hash = run(
+            [*ssh_prefix(host, port), "sha256sum /workspace/workload.tar.gz"],
+        ).stdout.split()[0]
+        if remote_hash != workload["archive_sha256"]:
+            raise ValueError("uploaded workload archive failed remote SHA-256 verification")
+        run(
+            [
+                *ssh_prefix(host, port),
+                "tar --no-same-owner --no-same-permissions -xzf "
+                "/workspace/workload.tar.gz -C /workspace/workload",
+            ],
+            capture=False,
+        )
         workload_started = True
         metadata["workload_started_at"] = now()
         remote = run(
@@ -236,7 +417,7 @@ def main() -> int:
         if fetched.returncode == 0:
             try:
                 metadata["artifact_sha256"] = verified_artifact_hashes(
-                    args.fetch_dir.resolve(), args.rank
+                    args.fetch_dir.resolve(), args.rank, artifact_inventory
                 )
                 artifacts_verified = True
             except (FileNotFoundError, OSError) as error:
