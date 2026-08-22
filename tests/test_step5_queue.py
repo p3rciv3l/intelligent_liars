@@ -19,7 +19,22 @@ ARMS = [
 
 
 def _state(tasks: dict[str, dict] | None = None) -> dict:
-    return {"format": "tinylora_step5_queue_state_v1", "tasks": tasks or {}}
+    task_records = tasks or {}
+    project_instances = [
+        {
+            "instance_id": record["instance_id"],
+            "instance_status": record["instance_status"],
+        }
+        for record in task_records.values()
+        if record.get("instance_id")
+        and record.get("instance_status")
+        in {"created", "loading", "running", "stopped", "paused"}
+    ]
+    return {
+        "format": "tinylora_step5_queue_state_v1",
+        "tasks": task_records,
+        "project_instances": project_instances,
+    }
 
 
 def _checkpoint() -> dict[str, object]:
@@ -73,6 +88,16 @@ def test_fourth_worker_is_rejected_even_when_requested():
             seeds=[7, 8],
             state=_state(),
             max_concurrency=4,
+        )
+
+
+def test_authoritative_project_inventory_is_required():
+    with pytest.raises(ValueError, match="authoritative project_instances"):
+        plan_step5_queue(
+            arms=ARMS,
+            seeds=[7],
+            state={"format": "tinylora_step5_queue_state_v1", "tasks": {}},
+            max_concurrency=3,
         )
 
 
@@ -219,6 +244,51 @@ def test_confirmed_host_loss_permits_replacement_and_checkpoint_resume():
     assert action["replaces_instance_id"] == "lost-instance"
     assert action["attempt"] == 3
     assert action["checkpoint"]["uri"].startswith("s3://")
+
+
+def test_host_loss_cannot_replace_a_stopped_recoverable_instance():
+    tasks = {
+        "tiny13.seed-7": {
+            "status": "failed",
+            "attempt": 2,
+            "instance_id": "recoverable-instance",
+            "instance_status": "stopped",
+            "failure": {"class": "host_loss", "diagnosis": "confirmed"},
+        }
+    }
+    with pytest.raises(ValueError, match="requires an unavailable instance"):
+        plan_step5_queue(
+            arms=ARMS[:1],
+            seeds=[7],
+            state=_state(tasks),
+            max_concurrency=3,
+        )
+
+
+def test_pending_task_reuses_stopped_instance_before_renting():
+    tasks = {
+        "tiny13.seed-7": {
+            "status": "pending",
+            "attempt": 0,
+            "instance_id": "instance-a",
+            "instance_status": "stopped",
+        }
+    }
+    planned = plan_step5_queue(
+        arms=ARMS[:1],
+        seeds=[7],
+        state=_state(tasks),
+        max_concurrency=3,
+    )
+    assert planned["actions"] == [
+        {
+            "action": "resume_existing_instance",
+            "attempt": 1,
+            "instance_id": "instance-a",
+            "reason": "existing_worker_must_be_reused_before_rental",
+            "task_id": "tiny13.seed-7",
+        }
+    ]
 
 
 def test_paused_project_instances_count_against_three_worker_cap():

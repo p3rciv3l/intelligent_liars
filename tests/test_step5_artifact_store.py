@@ -105,6 +105,12 @@ def test_public_receipt_schemas_define_every_required_property():
         assert set(schema["required"]) == set(schema["properties"])
         assert schema["additionalProperties"] is False
         assert schema["properties"]["expected"]["additionalProperties"] is False
+    assert (
+        HEAD_RECEIPT_SCHEMA["properties"]["observed"]["properties"]["etag"][
+            "minLength"
+        ]
+        == 1
+    )
 
 
 def test_roundtrip_receipt_hashes_downloaded_bytes(tmp_path: Path):

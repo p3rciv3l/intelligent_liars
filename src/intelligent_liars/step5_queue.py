@@ -10,6 +10,7 @@ import hashlib
 import json
 import re
 from collections.abc import Iterable, Mapping, Sequence
+from dataclasses import dataclass
 from typing import Any
 
 
@@ -21,6 +22,13 @@ _INSTANCE_INVENTORY_STATUSES = {"created", "loading", "running", "stopped", "pau
 _ACTIVE_INSTANCE_STATUSES = {"created", "loading", "running"}
 _TASK_STATUSES = {"pending", "running", "succeeded", "failed"}
 _SHA256 = re.compile(r"[0-9a-f]{64}")
+
+
+@dataclass(frozen=True)
+class _CapacityCandidate:
+    action: dict[str, Any]
+    adds_instance: bool
+    adds_active_worker: bool
 
 
 def _canonical_bytes(value: Any) -> bytes:
@@ -72,20 +80,18 @@ def _verified_checkpoint(task_state: Mapping[str, Any]) -> dict[str, Any] | None
 def _instance_inventory(state: Mapping[str, Any]) -> tuple[set[str], set[str]]:
     inventory: set[str] = set()
     active: set[str] = set()
-    records: list[Mapping[str, Any]] = []
-    tasks = state.get("tasks", {})
-    if isinstance(tasks, Mapping):
-        records.extend(record for record in tasks.values() if isinstance(record, Mapping))
     project_instances = state.get("project_instances", [])
-    if isinstance(project_instances, list):
-        records.extend(
-            record for record in project_instances if isinstance(record, Mapping)
-        )
-    for record in records:
+    if not isinstance(project_instances, list):
+        raise ValueError("Queue state project_instances must be an inventory list")
+    for record in project_instances:
+        if not isinstance(record, Mapping):
+            raise ValueError("Every project inventory entry must be an object")
         instance_id = record.get("instance_id")
         instance_status = record.get("instance_status")
         if not isinstance(instance_id, str) or not instance_id:
-            continue
+            raise ValueError("Every project inventory entry requires an instance id")
+        if not isinstance(instance_status, str) or not instance_status:
+            raise ValueError("Every project inventory entry requires an instance status")
         if instance_status in _INSTANCE_INVENTORY_STATUSES:
             inventory.add(instance_id)
         if instance_status in _ACTIVE_INSTANCE_STATUSES:
@@ -100,6 +106,16 @@ def _validate_state(
 ) -> dict[str, dict[str, Any]]:
     if state.get("format") != QUEUE_STATE_FORMAT:
         raise ValueError(f"Queue state must use format {QUEUE_STATE_FORMAT}")
+    if "project_instances" not in state:
+        raise ValueError("Queue state requires an authoritative project_instances inventory")
+    inventory_entries = state.get("project_instances")
+    if not isinstance(inventory_entries, list):
+        raise ValueError("Queue state project_instances must be an inventory list")
+    inventory_by_id = {
+        str(record.get("instance_id")): record.get("instance_status")
+        for record in inventory_entries
+        if isinstance(record, Mapping) and record.get("instance_id")
+    }
     tasks = state.get("tasks")
     if not isinstance(tasks, Mapping):
         raise ValueError("Queue state tasks must be an object")
@@ -126,6 +142,12 @@ def _validate_state(
                 raise ValueError(f"Invalid instance id for {task_id}")
             if instance_status is None:
                 raise ValueError(f"Instance status is required for {task_id}")
+            if instance_status in _INSTANCE_INVENTORY_STATUSES and (
+                inventory_by_id.get(instance_id) != instance_status
+            ):
+                raise ValueError(
+                    f"Task {task_id} instance is absent from authoritative inventory"
+                )
             owner = instance_owners.setdefault(instance_id, str(task_id))
             if owner != task_id:
                 raise ValueError(f"Instance {instance_id} is assigned to multiple tasks")
@@ -150,6 +172,13 @@ def _validate_state(
             elif failure.get("diagnosis") not in {"pending", "confirmed"}:
                 raise ValueError(
                     f"Host loss {task_id} requires pending/confirmed diagnosis"
+                )
+            elif (
+                failure.get("diagnosis") == "confirmed"
+                and instance_status not in {"lost", "destroyed", "terminated", "unavailable"}
+            ):
+                raise ValueError(
+                    f"Confirmed host loss {task_id} requires an unavailable instance"
                 )
         _verified_checkpoint(record)
         normalized[str(task_id)] = record
@@ -194,9 +223,7 @@ def plan_step5_queue(
         )
 
     actions: list[dict[str, Any]] = []
-    capacity_candidates: list[
-        tuple[dict[str, Any], dict[str, Any], bool, bool]
-    ] = []
+    capacity_candidates: list[_CapacityCandidate] = []
     pending_candidates: list[dict[str, Any]] = []
     for job in jobs:
         task_id = str(job["task_id"])
@@ -205,6 +232,28 @@ def plan_step5_queue(
         if status in {"running", "succeeded"}:
             continue
         if status == "pending":
+            instance_id = task.get("instance_id")
+            instance_status = task.get("instance_status")
+            if instance_id is not None:
+                instance_is_active = instance_status in _ACTIVE_INSTANCE_STATUSES
+                capacity_candidates.append(
+                    _CapacityCandidate(
+                        action={
+                            "action": (
+                                "start_on_existing_instance"
+                                if instance_is_active
+                                else "resume_existing_instance"
+                            ),
+                            "attempt": max(1, task["attempt"]),
+                            "instance_id": instance_id,
+                            "reason": "existing_worker_must_be_reused_before_rental",
+                            "task_id": task_id,
+                        },
+                        adds_instance=False,
+                        adds_active_worker=not instance_is_active,
+                    )
+                )
+                continue
             pending_candidates.append(job)
             continue
         failure = task["failure"]
@@ -251,7 +300,9 @@ def plan_step5_queue(
             }
             if checkpoint is not None:
                 action["checkpoint"] = checkpoint
-            capacity_candidates.append((job, action, False, not instance_is_active))
+            capacity_candidates.append(
+                _CapacityCandidate(action, False, not instance_is_active)
+            )
         else:
             action = {
                 "action": "launch_replacement_instance",
@@ -262,34 +313,33 @@ def plan_step5_queue(
             }
             if checkpoint is not None:
                 action["checkpoint"] = checkpoint
-            capacity_candidates.append((job, action, True, True))
+            capacity_candidates.append(_CapacityCandidate(action, True, True))
 
     for job in pending_candidates:
         capacity_candidates.append(
-            (
-                job,
-                {
+            _CapacityCandidate(
+                action={
                     "action": "launch_new_instance",
                     "attempt": 1,
                     "reason": "independent_single_gpu_task_is_pending",
                     "task_id": job["task_id"],
                 },
-                True,
-                True,
+                adds_instance=True,
+                adds_active_worker=True,
             )
         )
 
     planned_active = len(active_instances)
     planned_inventory = len(inventory)
-    for _job, action, adds_instance, adds_active in capacity_candidates:
-        if adds_active and planned_active >= max_concurrency:
+    for candidate in capacity_candidates:
+        if candidate.adds_active_worker and planned_active >= max_concurrency:
             continue
-        if adds_instance and planned_inventory >= HARD_PROJECT_WORKER_CAP:
+        if candidate.adds_instance and planned_inventory >= HARD_PROJECT_WORKER_CAP:
             continue
-        actions.append(action)
-        if adds_active:
+        actions.append(candidate.action)
+        if candidate.adds_active_worker:
             planned_active += 1
-        if adds_instance:
+        if candidate.adds_instance:
             planned_inventory += 1
 
     basis = {

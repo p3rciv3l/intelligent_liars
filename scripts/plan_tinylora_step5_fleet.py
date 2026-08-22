@@ -9,13 +9,18 @@ import os
 from pathlib import Path
 from typing import Any
 
-from intelligent_liars.step5_queue import QUEUE_STATE_FORMAT, plan_step5_queue
+from intelligent_liars.step5_queue import plan_step5_queue
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--step5-plan", type=Path, required=True)
-    parser.add_argument("--state", type=Path)
+    parser.add_argument(
+        "--state",
+        type=Path,
+        required=True,
+        help="Authoritative current project task and instance inventory snapshot",
+    )
     parser.add_argument("--output", type=Path)
     parser.add_argument(
         "--seeds",
@@ -67,11 +72,7 @@ def main() -> int:
         raise ValueError(
             "Requested concurrency exceeds the immutable Step 5 schedule"
         )
-    state = (
-        _read_json(args.state.resolve())
-        if args.state is not None
-        else {"format": QUEUE_STATE_FORMAT, "tasks": {}}
-    )
+    state = _read_json(args.state.resolve())
     plan = plan_step5_queue(
         arms=step5_plan["arms"],
         seeds=_parse_seeds(args.seeds),

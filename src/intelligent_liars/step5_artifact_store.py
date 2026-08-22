@@ -77,7 +77,7 @@ HEAD_RECEIPT_SCHEMA: dict[str, Any] = {
             "required": ["size_bytes", "sha256", "etag"],
             "properties": {
                 **_EXPECTED_PROPERTIES["properties"],
-                "etag": {"type": ["string", "null"]},
+                "etag": {"type": ["string", "null"], "minLength": 1},
             },
             "additionalProperties": False,
         },
