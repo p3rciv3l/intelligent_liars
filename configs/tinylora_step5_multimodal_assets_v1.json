@@ -1,0 +1,3484 @@
+{
+  "assets": [
+    {
+      "bundle_path": "images/01/01b0f6dc811bdf1e15dbf4d75876a76e7fdd7bf052c4443ca92dac2072ec3190.jpg",
+      "bytes": 77320,
+      "categories": [
+        "vision_charts"
+      ],
+      "format": "JPEG",
+      "height": 720,
+      "record_ids": [
+        "ai2_pixmo_docs.charts.train.000087537"
+      ],
+      "sha256": "01b0f6dc811bdf1e15dbf4d75876a76e7fdd7bf052c4443ca92dac2072ec3190",
+      "source_references": [
+        "data/tinylora_preservation_snapshots/v1/pixmo_docs_images/01b0f6dc811bdf1e15dbf4d75876a76e7fdd7bf052c4443ca92dac2072ec3190.jpg"
+      ],
+      "width": 1103
+    },
+    {
+      "bundle_path": "images/01/01d6bfc4ad9f38e9ede7eee5ea504b67b6dac91601a86b9d6194d029a0b3ff54.jpg",
+      "bytes": 202207,
+      "categories": [
+        "vision_charts"
+      ],
+      "format": "JPEG",
+      "height": 1440,
+      "record_ids": [
+        "ai2_pixmo_docs.charts.train.000029211"
+      ],
+      "sha256": "01d6bfc4ad9f38e9ede7eee5ea504b67b6dac91601a86b9d6194d029a0b3ff54",
+      "source_references": [
+        "data/tinylora_preservation_snapshots/v1/pixmo_docs_images/01d6bfc4ad9f38e9ede7eee5ea504b67b6dac91601a86b9d6194d029a0b3ff54.jpg"
+      ],
+      "width": 2160
+    },
+    {
+      "bundle_path": "images/02/02a5cf8dfcf7f56b5c951d0b7817949814ac9a42455bd0067c59d8125fd26e42.jpg",
+      "bytes": 49195,
+      "categories": [
+        "vision_tables"
+      ],
+      "format": "JPEG",
+      "height": 452,
+      "record_ids": [
+        "ai2_pixmo_docs.tables.train.000000095"
+      ],
+      "sha256": "02a5cf8dfcf7f56b5c951d0b7817949814ac9a42455bd0067c59d8125fd26e42",
+      "source_references": [
+        "data/tinylora_preservation_snapshots/v1/pixmo_docs_images/02a5cf8dfcf7f56b5c951d0b7817949814ac9a42455bd0067c59d8125fd26e42.jpg"
+      ],
+      "width": 872
+    },
+    {
+      "bundle_path": "images/03/036954a00101f6ca255a79197c64ad38a3660dd0baa2816a954af637219f2f88.jpg",
+      "bytes": 108701,
+      "categories": [
+        "vision_other"
+      ],
+      "format": "JPEG",
+      "height": 1049,
+      "record_ids": [
+        "ai2_pixmo_docs.other.train.000035668"
+      ],
+      "sha256": "036954a00101f6ca255a79197c64ad38a3660dd0baa2816a954af637219f2f88",
+      "source_references": [
+        "data/tinylora_preservation_snapshots/v1/pixmo_docs_images/036954a00101f6ca255a79197c64ad38a3660dd0baa2816a954af637219f2f88.jpg"
+      ],
+      "width": 1341
+    },
+    {
+      "bundle_path": "images/04/04b13b6874c602a5141045e1b82fa185f3a387d85c034713006e6e22acbe1f43.jpg",
+      "bytes": 186891,
+      "categories": [
+        "vision_diagrams"
+      ],
+      "format": "JPEG",
+      "height": 1401,
+      "record_ids": [
+        "ai2_pixmo_docs.diagrams.train.000012343"
+      ],
+      "sha256": "04b13b6874c602a5141045e1b82fa185f3a387d85c034713006e6e22acbe1f43",
+      "source_references": [
+        "data/tinylora_preservation_snapshots/v1/pixmo_docs_images/04b13b6874c602a5141045e1b82fa185f3a387d85c034713006e6e22acbe1f43.jpg"
+      ],
+      "width": 2190
+    },
+    {
+      "bundle_path": "images/04/04bdafee050eedabf7fa9d788a1391ffd49104e8d5e240003554c598eab1a961.jpg",
+      "bytes": 102139,
+      "categories": [
+        "vision_charts"
+      ],
+      "format": "JPEG",
+      "height": 1000,
+      "record_ids": [
+        "ai2_pixmo_docs.charts.train.000116804"
+      ],
+      "sha256": "04bdafee050eedabf7fa9d788a1391ffd49104e8d5e240003554c598eab1a961",
+      "source_references": [
+        "data/tinylora_preservation_snapshots/v1/pixmo_docs_images/04bdafee050eedabf7fa9d788a1391ffd49104e8d5e240003554c598eab1a961.jpg"
+      ],
+      "width": 1600
+    },
+    {
+      "bundle_path": "images/06/06e144918d769efc5ed10f3ed136d2d6df730f0f7c446a2acfc97636e2b4c9db.jpg",
+      "bytes": 88388,
+      "categories": [
+        "vision_diagrams"
+      ],
+      "format": "JPEG",
+      "height": 618,
+      "record_ids": [
+        "ai2_pixmo_docs.diagrams.train.000000095"
+      ],
+      "sha256": "06e144918d769efc5ed10f3ed136d2d6df730f0f7c446a2acfc97636e2b4c9db",
+      "source_references": [
+        "data/tinylora_preservation_snapshots/v1/pixmo_docs_images/06e144918d769efc5ed10f3ed136d2d6df730f0f7c446a2acfc97636e2b4c9db.jpg"
+      ],
+      "width": 2352
+    },
+    {
+      "bundle_path": "images/0b/0b5a6fdd0e0bfea0691f0f0eeb03e014cc093981a8270d02704b17d4ef9bc17e.jpg",
+      "bytes": 54047,
+      "categories": [
+        "vision_diagrams"
+      ],
+      "format": "JPEG",
+      "height": 438,
+      "record_ids": [
+        "ai2_pixmo_docs.diagrams.train.000012374"
+      ],
+      "sha256": "0b5a6fdd0e0bfea0691f0f0eeb03e014cc093981a8270d02704b17d4ef9bc17e",
+      "source_references": [
+        "data/tinylora_preservation_snapshots/v1/pixmo_docs_images/0b5a6fdd0e0bfea0691f0f0eeb03e014cc093981a8270d02704b17d4ef9bc17e.jpg"
+      ],
+      "width": 1568
+    },
+    {
+      "bundle_path": "images/0e/0e74b8ab54eb81422dd829fa4f5238b604a63dd21900c3dce98e72bc1f1a267c.jpg",
+      "bytes": 367805,
+      "categories": [
+        "vision_tables"
+      ],
+      "format": "JPEG",
+      "height": 1440,
+      "record_ids": [
+        "ai2_pixmo_docs.tables.train.000011671"
+      ],
+      "sha256": "0e74b8ab54eb81422dd829fa4f5238b604a63dd21900c3dce98e72bc1f1a267c",
+      "source_references": [
+        "data/tinylora_preservation_snapshots/v1/pixmo_docs_images/0e74b8ab54eb81422dd829fa4f5238b604a63dd21900c3dce98e72bc1f1a267c.jpg"
+      ],
+      "width": 2160
+    },
+    {
+      "bundle_path": "images/0e/0ecc1f4920ec294fea72665793dc1490cfe5f8ff0608f09ac88acf0f9cd5b516.jpg",
+      "bytes": 82204,
+      "categories": [
+        "vision_other"
+      ],
+      "format": "JPEG",
+      "height": 1021,
+      "record_ids": [
+        "ai2_pixmo_docs.other.train.000000037"
+      ],
+      "sha256": "0ecc1f4920ec294fea72665793dc1490cfe5f8ff0608f09ac88acf0f9cd5b516",
+      "source_references": [
+        "data/tinylora_preservation_snapshots/v1/pixmo_docs_images/0ecc1f4920ec294fea72665793dc1490cfe5f8ff0608f09ac88acf0f9cd5b516.jpg"
+      ],
+      "width": 1280
+    },
+    {
+      "bundle_path": "images/10/10d4e7242103873f39ef9b8c3c334eb95ceca87916b29637a6e276e124654110.jpg",
+      "bytes": 116491,
+      "categories": [
+        "vision_diagrams"
+      ],
+      "format": "JPEG",
+      "height": 1440,
+      "record_ids": [
+        "ai2_pixmo_docs.diagrams.train.000008306"
+      ],
+      "sha256": "10d4e7242103873f39ef9b8c3c334eb95ceca87916b29637a6e276e124654110",
+      "source_references": [
+        "data/tinylora_preservation_snapshots/v1/pixmo_docs_images/10d4e7242103873f39ef9b8c3c334eb95ceca87916b29637a6e276e124654110.jpg"
+      ],
+      "width": 759
+    },
+    {
+      "bundle_path": "images/13/13571235315ce721c164b8123eb906892bb7b82d4ec5002bf36a1fec904cb55d.jpg",
+      "bytes": 245684,
+      "categories": [
+        "vision_other"
+      ],
+      "format": "JPEG",
+      "height": 2832,
+      "record_ids": [
+        "ai2_pixmo_docs.other.train.000017878"
+      ],
+      "sha256": "13571235315ce721c164b8123eb906892bb7b82d4ec5002bf36a1fec904cb55d",
+      "source_references": [
+        "data/tinylora_preservation_snapshots/v1/pixmo_docs_images/13571235315ce721c164b8123eb906892bb7b82d4ec5002bf36a1fec904cb55d.jpg"
+      ],
+      "width": 906
+    },
+    {
+      "bundle_path": "images/13/1379227c0f17dd5d3ffe24ce971b3ca4095465f461a85265e6625f0be5c985d8.jpg",
+      "bytes": 134093,
+      "categories": [
+        "vision_tables"
+      ],
+      "format": "JPEG",
+      "height": 1000,
+      "record_ids": [
+        "ai2_pixmo_docs.tables.train.000023217"
+      ],
+      "sha256": "1379227c0f17dd5d3ffe24ce971b3ca4095465f461a85265e6625f0be5c985d8",
+      "source_references": [
+        "data/tinylora_preservation_snapshots/v1/pixmo_docs_images/1379227c0f17dd5d3ffe24ce971b3ca4095465f461a85265e6625f0be5c985d8.jpg"
+      ],
+      "width": 2400
+    },
+    {
+      "bundle_path": "images/15/151da5d0143b5f940c55cf32f8331f1e71af3be283be9291090b128288c54baa.jpg",
+      "bytes": 144074,
+      "categories": [
+        "vision_tables"
+      ],
+      "format": "JPEG",
+      "height": 1055,
+      "record_ids": [
+        "ai2_pixmo_docs.tables.train.000000093"
+      ],
+      "sha256": "151da5d0143b5f940c55cf32f8331f1e71af3be283be9291090b128288c54baa",
+      "source_references": [
+        "data/tinylora_preservation_snapshots/v1/pixmo_docs_images/151da5d0143b5f940c55cf32f8331f1e71af3be283be9291090b128288c54baa.jpg"
+      ],
+      "width": 1200
+    },
+    {
+      "bundle_path": "images/15/15317baa1786b58cd003afc2e5ed4617fceea66bb80c2786fcffed9b29ddc115.jpg",
+      "bytes": 59794,
+      "categories": [
+        "vision_charts"
+      ],
+      "format": "JPEG",
+      "height": 702,
+      "record_ids": [
+        "ai2_pixmo_docs.charts.train.000058400"
+      ],
+      "sha256": "15317baa1786b58cd003afc2e5ed4617fceea66bb80c2786fcffed9b29ddc115",
+      "source_references": [
+        "data/tinylora_preservation_snapshots/v1/pixmo_docs_images/15317baa1786b58cd003afc2e5ed4617fceea66bb80c2786fcffed9b29ddc115.jpg"
+      ],
+      "width": 1489
+    },
+    {
+      "bundle_path": "images/18/1833dd1e6b21ed7f26432b8dfe63e2780860997f33aa13b2536f55eab92f2cf3.jpg",
+      "bytes": 102176,
+      "categories": [
+        "vision_charts"
+      ],
+      "format": "JPEG",
+      "height": 1200,
+      "record_ids": [
+        "ai2_pixmo_docs.charts.train.000087586"
+      ],
+      "sha256": "1833dd1e6b21ed7f26432b8dfe63e2780860997f33aa13b2536f55eab92f2cf3",
+      "source_references": [
+        "data/tinylora_preservation_snapshots/v1/pixmo_docs_images/1833dd1e6b21ed7f26432b8dfe63e2780860997f33aa13b2536f55eab92f2cf3.jpg"
+      ],
+      "width": 1600
+    },
+    {
+      "bundle_path": "images/19/199f91ee9524f91913c774ae0c20c01a829cc74f04237cfc7b6c101f363ee91b.jpg",
+      "bytes": 101809,
+      "categories": [
+        "vision_charts"
+      ],
+      "format": "JPEG",
+      "height": 1600,
+      "record_ids": [
+        "ai2_pixmo_docs.charts.train.000087607"
+      ],
+      "sha256": "199f91ee9524f91913c774ae0c20c01a829cc74f04237cfc7b6c101f363ee91b",
+      "source_references": [
+        "data/tinylora_preservation_snapshots/v1/pixmo_docs_images/199f91ee9524f91913c774ae0c20c01a829cc74f04237cfc7b6c101f363ee91b.jpg"
+      ],
+      "width": 1600
+    },
+    {
+      "bundle_path": "images/1b/1b473d13dc7db2861682f8b1cfc2247210ef44f309e1ddbd87162a8991d6d27d.jpg",
+      "bytes": 127602,
+      "categories": [
+        "vision_other"
+      ],
+      "format": "JPEG",
+      "height": 1440,
+      "record_ids": [
+        "ai2_pixmo_docs.other.train.000017834"
+      ],
+      "sha256": "1b473d13dc7db2861682f8b1cfc2247210ef44f309e1ddbd87162a8991d6d27d",
+      "source_references": [
+        "data/tinylora_preservation_snapshots/v1/pixmo_docs_images/1b473d13dc7db2861682f8b1cfc2247210ef44f309e1ddbd87162a8991d6d27d.jpg"
+      ],
+      "width": 1018
+    },
+    {
+      "bundle_path": "images/1c/1c2810fe20ee9d5138903d38953b643d104392f670526129c666bf4e2b229807.jpg",
+      "bytes": 208614,
+      "categories": [
+        "vision_tables"
+      ],
+      "format": "JPEG",
+      "height": 1322,
+      "record_ids": [
+        "ai2_pixmo_docs.tables.train.000011640"
+      ],
+      "sha256": "1c2810fe20ee9d5138903d38953b643d104392f670526129c666bf4e2b229807",
+      "source_references": [
+        "data/tinylora_preservation_snapshots/v1/pixmo_docs_images/1c2810fe20ee9d5138903d38953b643d104392f670526129c666bf4e2b229807.jpg"
+      ],
+      "width": 1035
+    },
+    {
+      "bundle_path": "images/1f/1f3f445d2565d07d56807f0264c5508ad8dec67164c9dee51727ecacbc63567d.jpg",
+      "bytes": 117722,
+      "categories": [
+        "vision_charts"
+      ],
+      "format": "JPEG",
+      "height": 1600,
+      "record_ids": [
+        "ai2_pixmo_docs.charts.train.000087600"
+      ],
+      "sha256": "1f3f445d2565d07d56807f0264c5508ad8dec67164c9dee51727ecacbc63567d",
+      "source_references": [
+        "data/tinylora_preservation_snapshots/v1/pixmo_docs_images/1f3f445d2565d07d56807f0264c5508ad8dec67164c9dee51727ecacbc63567d.jpg"
+      ],
+      "width": 1600
+    },
+    {
+      "bundle_path": "images/1f/1fb1fc19549f619804998f1de6b4db0d94f4d3af247cfdb38899d651305a3839.jpg",
+      "bytes": 214553,
+      "categories": [
+        "vision_other"
+      ],
+      "format": "JPEG",
+      "height": 1368,
+      "record_ids": [
+        "ai2_pixmo_docs.other.train.000000013"
+      ],
+      "sha256": "1fb1fc19549f619804998f1de6b4db0d94f4d3af247cfdb38899d651305a3839",
+      "source_references": [
+        "data/tinylora_preservation_snapshots/v1/pixmo_docs_images/1fb1fc19549f619804998f1de6b4db0d94f4d3af247cfdb38899d651305a3839.jpg"
+      ],
+      "width": 1613
+    },
+    {
+      "bundle_path": "images/20/202d4b942623b6aafaaef89f2a1f63a3ffc4dff6fe99ccddd79299d5cfd3d6ef.jpg",
+      "bytes": 206143,
+      "categories": [
+        "vision_diagrams"
+      ],
+      "format": "JPEG",
+      "height": 1440,
+      "record_ids": [
+        "ai2_pixmo_docs.diagrams.train.000008313"
+      ],
+      "sha256": "202d4b942623b6aafaaef89f2a1f63a3ffc4dff6fe99ccddd79299d5cfd3d6ef",
+      "source_references": [
+        "data/tinylora_preservation_snapshots/v1/pixmo_docs_images/202d4b942623b6aafaaef89f2a1f63a3ffc4dff6fe99ccddd79299d5cfd3d6ef.jpg"
+      ],
+      "width": 1600
+    },
+    {
+      "bundle_path": "images/20/206fc4e08107f031b8ced8842b42892c3dce5d06c640b09066debba05a3e0c17.jpg",
+      "bytes": 122303,
+      "categories": [
+        "vision_diagrams"
+      ],
+      "format": "JPEG",
+      "height": 1068,
+      "record_ids": [
+        "ai2_pixmo_docs.diagrams.train.000016458"
+      ],
+      "sha256": "206fc4e08107f031b8ced8842b42892c3dce5d06c640b09066debba05a3e0c17",
+      "source_references": [
+        "data/tinylora_preservation_snapshots/v1/pixmo_docs_images/206fc4e08107f031b8ced8842b42892c3dce5d06c640b09066debba05a3e0c17.jpg"
+      ],
+      "width": 1905
+    },
+    {
+      "bundle_path": "images/21/217e0de2457f927f7429c613e58268f5c6ead048b8e792f3d57797737a2fa3a7.jpg",
+      "bytes": 73997,
+      "categories": [
+        "vision_diagrams"
+      ],
+      "format": "JPEG",
+      "height": 1172,
+      "record_ids": [
+        "ai2_pixmo_docs.diagrams.train.000004173"
+      ],
+      "sha256": "217e0de2457f927f7429c613e58268f5c6ead048b8e792f3d57797737a2fa3a7",
+      "source_references": [
+        "data/tinylora_preservation_snapshots/v1/pixmo_docs_images/217e0de2457f927f7429c613e58268f5c6ead048b8e792f3d57797737a2fa3a7.jpg"
+      ],
+      "width": 1162
+    },
+    {
+      "bundle_path": "images/25/25ca3472f76448a04dd0e16461d6755301bc53b3d81eff31da111477d7621f2b.jpg",
+      "bytes": 214699,
+      "categories": [
+        "vision_other"
+      ],
+      "format": "JPEG",
+      "height": 1924,
+      "record_ids": [
+        "ai2_pixmo_docs.other.train.000071190"
+      ],
+      "sha256": "25ca3472f76448a04dd0e16461d6755301bc53b3d81eff31da111477d7621f2b",
+      "source_references": [
+        "data/tinylora_preservation_snapshots/v1/pixmo_docs_images/25ca3472f76448a04dd0e16461d6755301bc53b3d81eff31da111477d7621f2b.jpg"
+      ],
+      "width": 1416
+    },
+    {
+      "bundle_path": "images/28/280db4350da16d1123f15a8b1907c36cc22db8b49c1fdf9d67d2323d24415775.jpg",
+      "bytes": 151343,
+      "categories": [
+        "vision_diagrams"
+      ],
+      "format": "JPEG",
+      "height": 1248,
+      "record_ids": [
+        "ai2_pixmo_docs.diagrams.train.000016540"
+      ],
+      "sha256": "280db4350da16d1123f15a8b1907c36cc22db8b49c1fdf9d67d2323d24415775",
+      "source_references": [
+        "data/tinylora_preservation_snapshots/v1/pixmo_docs_images/280db4350da16d1123f15a8b1907c36cc22db8b49c1fdf9d67d2323d24415775.jpg"
+      ],
+      "width": 2352
+    },
+    {
+      "bundle_path": "images/28/2826df3e89ebfb84d25c55748188e438547cf508f9adfc99216949b39e0cbe77.jpg",
+      "bytes": 115136,
+      "categories": [
+        "vision_charts"
+      ],
+      "format": "JPEG",
+      "height": 1440,
+      "record_ids": [
+        "ai2_pixmo_docs.charts.train.000058445"
+      ],
+      "sha256": "2826df3e89ebfb84d25c55748188e438547cf508f9adfc99216949b39e0cbe77",
+      "source_references": [
+        "data/tinylora_preservation_snapshots/v1/pixmo_docs_images/2826df3e89ebfb84d25c55748188e438547cf508f9adfc99216949b39e0cbe77.jpg"
+      ],
+      "width": 1949
+    },
+    {
+      "bundle_path": "images/2b/2b80cab0a8b5bc4a32afb7da6c26ce6a05ae623f5e85d6c2fe7f8fe56030bc53.jpg",
+      "bytes": 83591,
+      "categories": [
+        "vision_tables"
+      ],
+      "format": "JPEG",
+      "height": 755,
+      "record_ids": [
+        "ai2_pixmo_docs.tables.train.000000048"
+      ],
+      "sha256": "2b80cab0a8b5bc4a32afb7da6c26ce6a05ae623f5e85d6c2fe7f8fe56030bc53",
+      "source_references": [
+        "data/tinylora_preservation_snapshots/v1/pixmo_docs_images/2b80cab0a8b5bc4a32afb7da6c26ce6a05ae623f5e85d6c2fe7f8fe56030bc53.jpg"
+      ],
+      "width": 1280
+    },
+    {
+      "bundle_path": "images/2c/2cd654a80db8a678156f71c7ae38d3bb575c4859aa27b696bee9f091e45c542d.jpg",
+      "bytes": 52113,
+      "categories": [
+        "vision_diagrams"
+      ],
+      "format": "JPEG",
+      "height": 646,
+      "record_ids": [
+        "ai2_pixmo_docs.diagrams.train.000016471"
+      ],
+      "sha256": "2cd654a80db8a678156f71c7ae38d3bb575c4859aa27b696bee9f091e45c542d",
+      "source_references": [
+        "data/tinylora_preservation_snapshots/v1/pixmo_docs_images/2cd654a80db8a678156f71c7ae38d3bb575c4859aa27b696bee9f091e45c542d.jpg"
+      ],
+      "width": 1010
+    },
+    {
+      "bundle_path": "images/2d/2d5cb158c194ff88b2df968377dd3ba3cd1710d1a6ba244fae97bd7df3101e30.jpg",
+      "bytes": 185955,
+      "categories": [
+        "vision_charts"
+      ],
+      "format": "JPEG",
+      "height": 1080,
+      "record_ids": [
+        "ai2_pixmo_docs.charts.train.000058385"
+      ],
+      "sha256": "2d5cb158c194ff88b2df968377dd3ba3cd1710d1a6ba244fae97bd7df3101e30",
+      "source_references": [
+        "data/tinylora_preservation_snapshots/v1/pixmo_docs_images/2d5cb158c194ff88b2df968377dd3ba3cd1710d1a6ba244fae97bd7df3101e30.jpg"
+      ],
+      "width": 1899
+    },
+    {
+      "bundle_path": "images/2d/2df0507d07da8fe38a4ac1f958b4eb9c9c02472a7b9da4284b324e2f5a8ec5ad.jpg",
+      "bytes": 237696,
+      "categories": [
+        "vision_tables"
+      ],
+      "format": "JPEG",
+      "height": 1440,
+      "record_ids": [
+        "ai2_pixmo_docs.tables.train.000011654"
+      ],
+      "sha256": "2df0507d07da8fe38a4ac1f958b4eb9c9c02472a7b9da4284b324e2f5a8ec5ad",
+      "source_references": [
+        "data/tinylora_preservation_snapshots/v1/pixmo_docs_images/2df0507d07da8fe38a4ac1f958b4eb9c9c02472a7b9da4284b324e2f5a8ec5ad.jpg"
+      ],
+      "width": 2160
+    },
+    {
+      "bundle_path": "images/2e/2ecf51241ba2e82ec92af571c207cad3530d7020da08179713219a0e4c265f8f.jpg",
+      "bytes": 149147,
+      "categories": [
+        "vision_charts"
+      ],
+      "format": "JPEG",
+      "height": 1440,
+      "record_ids": [
+        "ai2_pixmo_docs.charts.train.000000011"
+      ],
+      "sha256": "2ecf51241ba2e82ec92af571c207cad3530d7020da08179713219a0e4c265f8f",
+      "source_references": [
+        "data/tinylora_preservation_snapshots/v1/pixmo_docs_images/2ecf51241ba2e82ec92af571c207cad3530d7020da08179713219a0e4c265f8f.jpg"
+      ],
+      "width": 2000
+    },
+    {
+      "bundle_path": "images/30/3080054ecedc8b733dda1723948f1d4d5a130795a3f8d36d3a371ec4d3ca8997.jpg",
+      "bytes": 257969,
+      "categories": [
+        "vision_other"
+      ],
+      "format": "JPEG",
+      "height": 1934,
+      "record_ids": [
+        "ai2_pixmo_docs.other.train.000053440"
+      ],
+      "sha256": "3080054ecedc8b733dda1723948f1d4d5a130795a3f8d36d3a371ec4d3ca8997",
+      "source_references": [
+        "data/tinylora_preservation_snapshots/v1/pixmo_docs_images/3080054ecedc8b733dda1723948f1d4d5a130795a3f8d36d3a371ec4d3ca8997.jpg"
+      ],
+      "width": 1485
+    },
+    {
+      "bundle_path": "images/31/316f9995b891be837bfd038e879b4e26380570828d62b4deeee0839c22aca65c.jpg",
+      "bytes": 229509,
+      "categories": [
+        "vision_tables"
+      ],
+      "format": "JPEG",
+      "height": 2622,
+      "record_ids": [
+        "ai2_pixmo_docs.tables.train.000046454"
+      ],
+      "sha256": "316f9995b891be837bfd038e879b4e26380570828d62b4deeee0839c22aca65c",
+      "source_references": [
+        "data/tinylora_preservation_snapshots/v1/pixmo_docs_images/316f9995b891be837bfd038e879b4e26380570828d62b4deeee0839c22aca65c.jpg"
+      ],
+      "width": 1270
+    },
+    {
+      "bundle_path": "images/32/32a33acf22f9a352b0d0602ebdfc3a72a1ca7c01d734e0f4f93e6f506e6de310.jpg",
+      "bytes": 130069,
+      "categories": [
+        "vision_charts"
+      ],
+      "format": "JPEG",
+      "height": 1440,
+      "record_ids": [
+        "ai2_pixmo_docs.charts.train.000087631"
+      ],
+      "sha256": "32a33acf22f9a352b0d0602ebdfc3a72a1ca7c01d734e0f4f93e6f506e6de310",
+      "source_references": [
+        "data/tinylora_preservation_snapshots/v1/pixmo_docs_images/32a33acf22f9a352b0d0602ebdfc3a72a1ca7c01d734e0f4f93e6f506e6de310.jpg"
+      ],
+      "width": 2160
+    },
+    {
+      "bundle_path": "images/32/32b63a11ce5e2e0ab9089e817b0c540e694456bab37958c6042289a2e425c6f2.jpg",
+      "bytes": 100630,
+      "categories": [
+        "vision_diagrams"
+      ],
+      "format": "JPEG",
+      "height": 552,
+      "record_ids": [
+        "ai2_pixmo_docs.diagrams.train.000004133"
+      ],
+      "sha256": "32b63a11ce5e2e0ab9089e817b0c540e694456bab37958c6042289a2e425c6f2",
+      "source_references": [
+        "data/tinylora_preservation_snapshots/v1/pixmo_docs_images/32b63a11ce5e2e0ab9089e817b0c540e694456bab37958c6042289a2e425c6f2.jpg"
+      ],
+      "width": 2352
+    },
+    {
+      "bundle_path": "images/33/331cd5c6fd479d71996247507b236168ba4b2923906a3313be1e0f58b0dc038a.jpg",
+      "bytes": 217582,
+      "categories": [
+        "vision_charts"
+      ],
+      "format": "JPEG",
+      "height": 1440,
+      "record_ids": [
+        "ai2_pixmo_docs.charts.train.000029186"
+      ],
+      "sha256": "331cd5c6fd479d71996247507b236168ba4b2923906a3313be1e0f58b0dc038a",
+      "source_references": [
+        "data/tinylora_preservation_snapshots/v1/pixmo_docs_images/331cd5c6fd479d71996247507b236168ba4b2923906a3313be1e0f58b0dc038a.jpg"
+      ],
+      "width": 2160
+    },
+    {
+      "bundle_path": "images/34/3482b97e39981557efb11d5ce099884a6060098f48fdc7021621a360d1f4de90.jpg",
+      "bytes": 154643,
+      "categories": [
+        "vision_charts"
+      ],
+      "format": "JPEG",
+      "height": 1440,
+      "record_ids": [
+        "ai2_pixmo_docs.charts.train.000087597"
+      ],
+      "sha256": "3482b97e39981557efb11d5ce099884a6060098f48fdc7021621a360d1f4de90",
+      "source_references": [
+        "data/tinylora_preservation_snapshots/v1/pixmo_docs_images/3482b97e39981557efb11d5ce099884a6060098f48fdc7021621a360d1f4de90.jpg"
+      ],
+      "width": 2170
+    },
+    {
+      "bundle_path": "images/36/365d9286f28bb98998d6c968c21ba181abf0481a4000427ce2885030ef90594f.jpg",
+      "bytes": 167166,
+      "categories": [
+        "vision_diagrams"
+      ],
+      "format": "JPEG",
+      "height": 1440,
+      "record_ids": [
+        "ai2_pixmo_docs.diagrams.train.000012356"
+      ],
+      "sha256": "365d9286f28bb98998d6c968c21ba181abf0481a4000427ce2885030ef90594f",
+      "source_references": [
+        "data/tinylora_preservation_snapshots/v1/pixmo_docs_images/365d9286f28bb98998d6c968c21ba181abf0481a4000427ce2885030ef90594f.jpg"
+      ],
+      "width": 1957
+    },
+    {
+      "bundle_path": "images/37/37670c02d37d8cb6443716beaeed5e4d36db77812121ed61dd187fec6eb3e9cd.jpg",
+      "bytes": 60171,
+      "categories": [
+        "vision_tables"
+      ],
+      "format": "JPEG",
+      "height": 840,
+      "record_ids": [
+        "ai2_pixmo_docs.tables.train.000046427"
+      ],
+      "sha256": "37670c02d37d8cb6443716beaeed5e4d36db77812121ed61dd187fec6eb3e9cd",
+      "source_references": [
+        "data/tinylora_preservation_snapshots/v1/pixmo_docs_images/37670c02d37d8cb6443716beaeed5e4d36db77812121ed61dd187fec6eb3e9cd.jpg"
+      ],
+      "width": 970
+    },
+    {
+      "bundle_path": "images/39/393a1ab783caaf3801ffd6560e328523be2e29f34a4c0c5f5a4bae6013542c91.jpg",
+      "bytes": 54064,
+      "categories": [
+        "vision_diagrams"
+      ],
+      "format": "JPEG",
+      "height": 480,
+      "record_ids": [
+        "ai2_pixmo_docs.diagrams.train.000016463"
+      ],
+      "sha256": "393a1ab783caaf3801ffd6560e328523be2e29f34a4c0c5f5a4bae6013542c91",
+      "source_references": [
+        "data/tinylora_preservation_snapshots/v1/pixmo_docs_images/393a1ab783caaf3801ffd6560e328523be2e29f34a4c0c5f5a4bae6013542c91.jpg"
+      ],
+      "width": 1568
+    },
+    {
+      "bundle_path": "images/3c/3c6113633a34fbe8917faa4a7d9dccafe12fc584a3d3addbe2a1fb996780acf5.jpg",
+      "bytes": 191339,
+      "categories": [
+        "vision_diagrams"
+      ],
+      "format": "JPEG",
+      "height": 922,
+      "record_ids": [
+        "ai2_pixmo_docs.diagrams.train.000004171"
+      ],
+      "sha256": "3c6113633a34fbe8917faa4a7d9dccafe12fc584a3d3addbe2a1fb996780acf5",
+      "source_references": [
+        "data/tinylora_preservation_snapshots/v1/pixmo_docs_images/3c6113633a34fbe8917faa4a7d9dccafe12fc584a3d3addbe2a1fb996780acf5.jpg"
+      ],
+      "width": 3600
+    },
+    {
+      "bundle_path": "images/3d/3ddf5d88780a8867e773d95db0122ccac694d6df749200e722f9120f5ddf6f4d.jpg",
+      "bytes": 80099,
+      "categories": [
+        "vision_diagrams"
+      ],
+      "format": "JPEG",
+      "height": 1178,
+      "record_ids": [
+        "ai2_pixmo_docs.diagrams.train.000000046"
+      ],
+      "sha256": "3ddf5d88780a8867e773d95db0122ccac694d6df749200e722f9120f5ddf6f4d",
+      "source_references": [
+        "data/tinylora_preservation_snapshots/v1/pixmo_docs_images/3ddf5d88780a8867e773d95db0122ccac694d6df749200e722f9120f5ddf6f4d.jpg"
+      ],
+      "width": 1114
+    },
+    {
+      "bundle_path": "images/3f/3f5bc7eb6292c7e01ac69c5ce0e6d0f4c2598768033eb4d9176efc46024602ff.jpg",
+      "bytes": 270852,
+      "categories": [
+        "vision_tables"
+      ],
+      "format": "JPEG",
+      "height": 1245,
+      "record_ids": [
+        "ai2_pixmo_docs.tables.train.000000018"
+      ],
+      "sha256": "3f5bc7eb6292c7e01ac69c5ce0e6d0f4c2598768033eb4d9176efc46024602ff",
+      "source_references": [
+        "data/tinylora_preservation_snapshots/v1/pixmo_docs_images/3f5bc7eb6292c7e01ac69c5ce0e6d0f4c2598768033eb4d9176efc46024602ff.jpg"
+      ],
+      "width": 1297
+    },
+    {
+      "bundle_path": "images/3f/3f66f2a561e01c11d862b97c301e6aacdf069669b7f74fccc2f4d5acf50e0f90.jpg",
+      "bytes": 126639,
+      "categories": [
+        "vision_charts"
+      ],
+      "format": "JPEG",
+      "height": 1440,
+      "record_ids": [
+        "ai2_pixmo_docs.charts.train.000116796"
+      ],
+      "sha256": "3f66f2a561e01c11d862b97c301e6aacdf069669b7f74fccc2f4d5acf50e0f90",
+      "source_references": [
+        "data/tinylora_preservation_snapshots/v1/pixmo_docs_images/3f66f2a561e01c11d862b97c301e6aacdf069669b7f74fccc2f4d5acf50e0f90.jpg"
+      ],
+      "width": 1996
+    },
+    {
+      "bundle_path": "images/43/430b7b546f3dd39c4cd0eb559bf20041649eb5093a6051de40a5eabac776275a.jpg",
+      "bytes": 44342,
+      "categories": [
+        "vision_charts"
+      ],
+      "format": "JPEG",
+      "height": 800,
+      "record_ids": [
+        "ai2_pixmo_docs.charts.train.000087538"
+      ],
+      "sha256": "430b7b546f3dd39c4cd0eb559bf20041649eb5093a6051de40a5eabac776275a",
+      "source_references": [
+        "data/tinylora_preservation_snapshots/v1/pixmo_docs_images/430b7b546f3dd39c4cd0eb559bf20041649eb5093a6051de40a5eabac776275a.jpg"
+      ],
+      "width": 1059
+    },
+    {
+      "bundle_path": "images/43/438abc967f2613fdba434cc1301f747c7c42aa372b9f51d9cbbfd3f255e1f6fa.jpg",
+      "bytes": 152740,
+      "categories": [
+        "vision_charts"
+      ],
+      "format": "JPEG",
+      "height": 1400,
+      "record_ids": [
+        "ai2_pixmo_docs.charts.train.000116801"
+      ],
+      "sha256": "438abc967f2613fdba434cc1301f747c7c42aa372b9f51d9cbbfd3f255e1f6fa",
+      "source_references": [
+        "data/tinylora_preservation_snapshots/v1/pixmo_docs_images/438abc967f2613fdba434cc1301f747c7c42aa372b9f51d9cbbfd3f255e1f6fa.jpg"
+      ],
+      "width": 2400
+    },
+    {
+      "bundle_path": "images/44/4419bb21c096af3634fbbfa8b4b5e875b37cba50f388412660df00b3b11ffb60.jpg",
+      "bytes": 120690,
+      "categories": [
+        "vision_other"
+      ],
+      "format": "JPEG",
+      "height": 1440,
+      "record_ids": [
+        "ai2_pixmo_docs.other.train.000035686"
+      ],
+      "sha256": "4419bb21c096af3634fbbfa8b4b5e875b37cba50f388412660df00b3b11ffb60",
+      "source_references": [
+        "data/tinylora_preservation_snapshots/v1/pixmo_docs_images/4419bb21c096af3634fbbfa8b4b5e875b37cba50f388412660df00b3b11ffb60.jpg"
+      ],
+      "width": 1018
+    },
+    {
+      "bundle_path": "images/44/4451a6efafc7f429526d290bc9412cc0d5b360cea1e0cfed604d597db0e9bee6.jpg",
+      "bytes": 247816,
+      "categories": [
+        "vision_other"
+      ],
+      "format": "JPEG",
+      "height": 2165,
+      "record_ids": [
+        "ai2_pixmo_docs.other.train.000017842"
+      ],
+      "sha256": "4451a6efafc7f429526d290bc9412cc0d5b360cea1e0cfed604d597db0e9bee6",
+      "source_references": [
+        "data/tinylora_preservation_snapshots/v1/pixmo_docs_images/4451a6efafc7f429526d290bc9412cc0d5b360cea1e0cfed604d597db0e9bee6.jpg"
+      ],
+      "width": 1630
+    },
+    {
+      "bundle_path": "images/44/44e8a30fae017ca8c3211b69b71853060417d52389dd069c72da3f8714e7338b.jpg",
+      "bytes": 107075,
+      "categories": [
+        "vision_tables"
+      ],
+      "format": "JPEG",
+      "height": 784,
+      "record_ids": [
+        "ai2_pixmo_docs.tables.train.000000078"
+      ],
+      "sha256": "44e8a30fae017ca8c3211b69b71853060417d52389dd069c72da3f8714e7338b",
+      "source_references": [
+        "data/tinylora_preservation_snapshots/v1/pixmo_docs_images/44e8a30fae017ca8c3211b69b71853060417d52389dd069c72da3f8714e7338b.jpg"
+      ],
+      "width": 1011
+    },
+    {
+      "bundle_path": "images/45/456f333d1f0fbde7a0a8b35a96e6cedb99f3d9500c6b716ff95764ab3f3466a2.jpg",
+      "bytes": 121457,
+      "categories": [
+        "vision_tables"
+      ],
+      "format": "JPEG",
+      "height": 800,
+      "record_ids": [
+        "ai2_pixmo_docs.tables.train.000000077"
+      ],
+      "sha256": "456f333d1f0fbde7a0a8b35a96e6cedb99f3d9500c6b716ff95764ab3f3466a2",
+      "source_references": [
+        "data/tinylora_preservation_snapshots/v1/pixmo_docs_images/456f333d1f0fbde7a0a8b35a96e6cedb99f3d9500c6b716ff95764ab3f3466a2.jpg"
+      ],
+      "width": 2400
+    },
+    {
+      "bundle_path": "images/47/472a0b7d0f51133f202ca60e17c73389b76e18ce74d4acd312ef911b68f7fe9c.jpg",
+      "bytes": 98708,
+      "categories": [
+        "vision_charts"
+      ],
+      "format": "JPEG",
+      "height": 1400,
+      "record_ids": [
+        "ai2_pixmo_docs.charts.train.000087567"
+      ],
+      "sha256": "472a0b7d0f51133f202ca60e17c73389b76e18ce74d4acd312ef911b68f7fe9c",
+      "source_references": [
+        "data/tinylora_preservation_snapshots/v1/pixmo_docs_images/472a0b7d0f51133f202ca60e17c73389b76e18ce74d4acd312ef911b68f7fe9c.jpg"
+      ],
+      "width": 2400
+    },
+    {
+      "bundle_path": "images/48/488ab7f97be092b0e43413b333f07ef4d65c7863e8a87b3c815c491389a546c1.jpg",
+      "bytes": 44795,
+      "categories": [
+        "vision_tables"
+      ],
+      "format": "JPEG",
+      "height": 600,
+      "record_ids": [
+        "ai2_pixmo_docs.tables.train.000034833"
+      ],
+      "sha256": "488ab7f97be092b0e43413b333f07ef4d65c7863e8a87b3c815c491389a546c1",
+      "source_references": [
+        "data/tinylora_preservation_snapshots/v1/pixmo_docs_images/488ab7f97be092b0e43413b333f07ef4d65c7863e8a87b3c815c491389a546c1.jpg"
+      ],
+      "width": 1200
+    },
+    {
+      "bundle_path": "images/49/496d1e5bd1552a662f5431489e6365c6990285a8a89597c389a2ce4a64f8311e.jpg",
+      "bytes": 162402,
+      "categories": [
+        "vision_charts"
+      ],
+      "format": "JPEG",
+      "height": 1440,
+      "record_ids": [
+        "ai2_pixmo_docs.charts.train.000029181"
+      ],
+      "sha256": "496d1e5bd1552a662f5431489e6365c6990285a8a89597c389a2ce4a64f8311e",
+      "source_references": [
+        "data/tinylora_preservation_snapshots/v1/pixmo_docs_images/496d1e5bd1552a662f5431489e6365c6990285a8a89597c389a2ce4a64f8311e.jpg"
+      ],
+      "width": 2169
+    },
+    {
+      "bundle_path": "images/4c/4ca6722e33106aeb63c64c4aeef952710ea79745a265be3c29eb10fa2f07cbf5.jpg",
+      "bytes": 169182,
+      "categories": [
+        "vision_charts"
+      ],
+      "format": "JPEG",
+      "height": 1440,
+      "record_ids": [
+        "ai2_pixmo_docs.charts.train.000058442"
+      ],
+      "sha256": "4ca6722e33106aeb63c64c4aeef952710ea79745a265be3c29eb10fa2f07cbf5",
+      "source_references": [
+        "data/tinylora_preservation_snapshots/v1/pixmo_docs_images/4ca6722e33106aeb63c64c4aeef952710ea79745a265be3c29eb10fa2f07cbf5.jpg"
+      ],
+      "width": 2168
+    },
+    {
+      "bundle_path": "images/4d/4df4a2bfd8071b88f2d884d254e51dad9bef83b595a1c9bac55e78ae301af4e3.jpg",
+      "bytes": 167709,
+      "categories": [
+        "vision_diagrams"
+      ],
+      "format": "JPEG",
+      "height": 997,
+      "record_ids": [
+        "ai2_pixmo_docs.diagrams.train.000008251"
+      ],
+      "sha256": "4df4a2bfd8071b88f2d884d254e51dad9bef83b595a1c9bac55e78ae301af4e3",
+      "source_references": [
+        "data/tinylora_preservation_snapshots/v1/pixmo_docs_images/4df4a2bfd8071b88f2d884d254e51dad9bef83b595a1c9bac55e78ae301af4e3.jpg"
+      ],
+      "width": 2560
+    },
+    {
+      "bundle_path": "images/4e/4e32421aa48e060627db684da3aad744b2107d81a3821370ee157c842c00db43.jpg",
+      "bytes": 77530,
+      "categories": [
+        "vision_diagrams"
+      ],
+      "format": "JPEG",
+      "height": 430,
+      "record_ids": [
+        "ai2_pixmo_docs.diagrams.train.000016470"
+      ],
+      "sha256": "4e32421aa48e060627db684da3aad744b2107d81a3821370ee157c842c00db43",
+      "source_references": [
+        "data/tinylora_preservation_snapshots/v1/pixmo_docs_images/4e32421aa48e060627db684da3aad744b2107d81a3821370ee157c842c00db43.jpg"
+      ],
+      "width": 1568
+    },
+    {
+      "bundle_path": "images/4e/4e8b37891b264011f742b4c87db6174df1d1ad2c642a05dfef720b2c4e33c65e.jpg",
+      "bytes": 80848,
+      "categories": [
+        "vision_charts"
+      ],
+      "format": "JPEG",
+      "height": 1200,
+      "record_ids": [
+        "ai2_pixmo_docs.charts.train.000116727"
+      ],
+      "sha256": "4e8b37891b264011f742b4c87db6174df1d1ad2c642a05dfef720b2c4e33c65e",
+      "source_references": [
+        "data/tinylora_preservation_snapshots/v1/pixmo_docs_images/4e8b37891b264011f742b4c87db6174df1d1ad2c642a05dfef720b2c4e33c65e.jpg"
+      ],
+      "width": 1600
+    },
+    {
+      "bundle_path": "images/50/50bc2afe39604cab34ad97956cf9142fe63f205afcc716e211ba2308f802c0f7.jpg",
+      "bytes": 169777,
+      "categories": [
+        "vision_other"
+      ],
+      "format": "JPEG",
+      "height": 1440,
+      "record_ids": [
+        "ai2_pixmo_docs.other.train.000035594"
+      ],
+      "sha256": "50bc2afe39604cab34ad97956cf9142fe63f205afcc716e211ba2308f802c0f7",
+      "source_references": [
+        "data/tinylora_preservation_snapshots/v1/pixmo_docs_images/50bc2afe39604cab34ad97956cf9142fe63f205afcc716e211ba2308f802c0f7.jpg"
+      ],
+      "width": 1018
+    },
+    {
+      "bundle_path": "images/52/52e0532539e6c952a4cc670d35c2972863b34866effe360f069f83258cb8a291.jpg",
+      "bytes": 280249,
+      "categories": [
+        "vision_diagrams"
+      ],
+      "format": "JPEG",
+      "height": 1440,
+      "record_ids": [
+        "ai2_pixmo_docs.diagrams.train.000016452"
+      ],
+      "sha256": "52e0532539e6c952a4cc670d35c2972863b34866effe360f069f83258cb8a291",
+      "source_references": [
+        "data/tinylora_preservation_snapshots/v1/pixmo_docs_images/52e0532539e6c952a4cc670d35c2972863b34866effe360f069f83258cb8a291.jpg"
+      ],
+      "width": 1721
+    },
+    {
+      "bundle_path": "images/53/53c4492b2785df091894ffb7c9bbdf7f615fca74cff9f33d6d052652675f61b7.jpg",
+      "bytes": 62624,
+      "categories": [
+        "vision_diagrams"
+      ],
+      "format": "JPEG",
+      "height": 488,
+      "record_ids": [
+        "ai2_pixmo_docs.diagrams.train.000016495"
+      ],
+      "sha256": "53c4492b2785df091894ffb7c9bbdf7f615fca74cff9f33d6d052652675f61b7",
+      "source_references": [
+        "data/tinylora_preservation_snapshots/v1/pixmo_docs_images/53c4492b2785df091894ffb7c9bbdf7f615fca74cff9f33d6d052652675f61b7.jpg"
+      ],
+      "width": 1568
+    },
+    {
+      "bundle_path": "images/54/541bf5be5ff13a7db653fac4fe3014938268fb529cdb0f501ee9eab1aac38102.jpg",
+      "bytes": 279569,
+      "categories": [
+        "vision_other"
+      ],
+      "format": "JPEG",
+      "height": 2799,
+      "record_ids": [
+        "ai2_pixmo_docs.other.train.000000027"
+      ],
+      "sha256": "541bf5be5ff13a7db653fac4fe3014938268fb529cdb0f501ee9eab1aac38102",
+      "source_references": [
+        "data/tinylora_preservation_snapshots/v1/pixmo_docs_images/541bf5be5ff13a7db653fac4fe3014938268fb529cdb0f501ee9eab1aac38102.jpg"
+      ],
+      "width": 1269
+    },
+    {
+      "bundle_path": "images/55/554ac39e3d69c5e7a656d85afc0c53adb1ea0f0bb67824891fc85e695d077855.jpg",
+      "bytes": 78442,
+      "categories": [
+        "vision_tables"
+      ],
+      "format": "JPEG",
+      "height": 956,
+      "record_ids": [
+        "ai2_pixmo_docs.tables.train.000023226"
+      ],
+      "sha256": "554ac39e3d69c5e7a656d85afc0c53adb1ea0f0bb67824891fc85e695d077855",
+      "source_references": [
+        "data/tinylora_preservation_snapshots/v1/pixmo_docs_images/554ac39e3d69c5e7a656d85afc0c53adb1ea0f0bb67824891fc85e695d077855.jpg"
+      ],
+      "width": 1149
+    },
+    {
+      "bundle_path": "images/55/55a73c1736d29bb4d1f0231fc9518f1d9cb3b1f1277008665abdc911acd1f9b4.jpg",
+      "bytes": 81601,
+      "categories": [
+        "vision_other"
+      ],
+      "format": "JPEG",
+      "height": 1494,
+      "record_ids": [
+        "ai2_pixmo_docs.other.train.000035659"
+      ],
+      "sha256": "55a73c1736d29bb4d1f0231fc9518f1d9cb3b1f1277008665abdc911acd1f9b4",
+      "source_references": [
+        "data/tinylora_preservation_snapshots/v1/pixmo_docs_images/55a73c1736d29bb4d1f0231fc9518f1d9cb3b1f1277008665abdc911acd1f9b4.jpg"
+      ],
+      "width": 876
+    },
+    {
+      "bundle_path": "images/55/55ead436c0d783f108480117e49527ddb5c5e87292d1b03db9d69581c989f917.jpg",
+      "bytes": 73591,
+      "categories": [
+        "vision_tables"
+      ],
+      "format": "JPEG",
+      "height": 800,
+      "record_ids": [
+        "ai2_pixmo_docs.tables.train.000023296"
+      ],
+      "sha256": "55ead436c0d783f108480117e49527ddb5c5e87292d1b03db9d69581c989f917",
+      "source_references": [
+        "data/tinylora_preservation_snapshots/v1/pixmo_docs_images/55ead436c0d783f108480117e49527ddb5c5e87292d1b03db9d69581c989f917.jpg"
+      ],
+      "width": 1200
+    },
+    {
+      "bundle_path": "images/56/5611b7a3b1d83975a3467429beb1ea985b9b08c5f60b963e2961550338c3113b.jpg",
+      "bytes": 64527,
+      "categories": [
+        "vision_tables"
+      ],
+      "format": "JPEG",
+      "height": 800,
+      "record_ids": [
+        "ai2_pixmo_docs.tables.train.000000063"
+      ],
+      "sha256": "5611b7a3b1d83975a3467429beb1ea985b9b08c5f60b963e2961550338c3113b",
+      "source_references": [
+        "data/tinylora_preservation_snapshots/v1/pixmo_docs_images/5611b7a3b1d83975a3467429beb1ea985b9b08c5f60b963e2961550338c3113b.jpg"
+      ],
+      "width": 1200
+    },
+    {
+      "bundle_path": "images/56/563ce43ff559d70eaa690ecfad19d6a2cc393f039177ed7d3d4b2c5f276c9d4e.jpg",
+      "bytes": 134340,
+      "categories": [
+        "vision_charts"
+      ],
+      "format": "JPEG",
+      "height": 1440,
+      "record_ids": [
+        "ai2_pixmo_docs.charts.train.000000046"
+      ],
+      "sha256": "563ce43ff559d70eaa690ecfad19d6a2cc393f039177ed7d3d4b2c5f276c9d4e",
+      "source_references": [
+        "data/tinylora_preservation_snapshots/v1/pixmo_docs_images/563ce43ff559d70eaa690ecfad19d6a2cc393f039177ed7d3d4b2c5f276c9d4e.jpg"
+      ],
+      "width": 2168
+    },
+    {
+      "bundle_path": "images/56/566d6ef84e6a9e4884228519bc5550ae267ecf86e7949a3046405059b4408b52.jpg",
+      "bytes": 118508,
+      "categories": [
+        "vision_charts"
+      ],
+      "format": "JPEG",
+      "height": 1240,
+      "record_ids": [
+        "ai2_pixmo_docs.charts.train.000087595"
+      ],
+      "sha256": "566d6ef84e6a9e4884228519bc5550ae267ecf86e7949a3046405059b4408b52",
+      "source_references": [
+        "data/tinylora_preservation_snapshots/v1/pixmo_docs_images/566d6ef84e6a9e4884228519bc5550ae267ecf86e7949a3046405059b4408b52.jpg"
+      ],
+      "width": 1845
+    },
+    {
+      "bundle_path": "images/5b/5b1c1ee60e7664936525c6d140804114eafde914a2cfa7f744c9377844f8ffc3.jpg",
+      "bytes": 147249,
+      "categories": [
+        "vision_charts"
+      ],
+      "format": "JPEG",
+      "height": 1440,
+      "record_ids": [
+        "ai2_pixmo_docs.charts.train.000029247"
+      ],
+      "sha256": "5b1c1ee60e7664936525c6d140804114eafde914a2cfa7f744c9377844f8ffc3",
+      "source_references": [
+        "data/tinylora_preservation_snapshots/v1/pixmo_docs_images/5b1c1ee60e7664936525c6d140804114eafde914a2cfa7f744c9377844f8ffc3.jpg"
+      ],
+      "width": 2312
+    },
+    {
+      "bundle_path": "images/5b/5b4cd8388ff5fd5f76b6f2fd45267efda0edb35518f9a0a0edb4c6321e1be05b.jpg",
+      "bytes": 176322,
+      "categories": [
+        "vision_tables"
+      ],
+      "format": "JPEG",
+      "height": 2025,
+      "record_ids": [
+        "ai2_pixmo_docs.tables.train.000011630"
+      ],
+      "sha256": "5b4cd8388ff5fd5f76b6f2fd45267efda0edb35518f9a0a0edb4c6321e1be05b",
+      "source_references": [
+        "data/tinylora_preservation_snapshots/v1/pixmo_docs_images/5b4cd8388ff5fd5f76b6f2fd45267efda0edb35518f9a0a0edb4c6321e1be05b.jpg"
+      ],
+      "width": 1280
+    },
+    {
+      "bundle_path": "images/5c/5c969ec970dea0e67720f17c0591bc16047907277c105c1d12b0ee34f39650f6.jpg",
+      "bytes": 62975,
+      "categories": [
+        "vision_charts"
+      ],
+      "format": "JPEG",
+      "height": 800,
+      "record_ids": [
+        "ai2_pixmo_docs.charts.train.000029178"
+      ],
+      "sha256": "5c969ec970dea0e67720f17c0591bc16047907277c105c1d12b0ee34f39650f6",
+      "source_references": [
+        "data/tinylora_preservation_snapshots/v1/pixmo_docs_images/5c969ec970dea0e67720f17c0591bc16047907277c105c1d12b0ee34f39650f6.jpg"
+      ],
+      "width": 972
+    },
+    {
+      "bundle_path": "images/5d/5d5d7a4ba2e247fc29dc704b10d96098b0b132baeb01d2c0cd1b309ecc327fa1.jpg",
+      "bytes": 206640,
+      "categories": [
+        "vision_charts"
+      ],
+      "format": "JPEG",
+      "height": 1270,
+      "record_ids": [
+        "ai2_pixmo_docs.charts.train.000058412"
+      ],
+      "sha256": "5d5d7a4ba2e247fc29dc704b10d96098b0b132baeb01d2c0cd1b309ecc327fa1",
+      "source_references": [
+        "data/tinylora_preservation_snapshots/v1/pixmo_docs_images/5d5d7a4ba2e247fc29dc704b10d96098b0b132baeb01d2c0cd1b309ecc327fa1.jpg"
+      ],
+      "width": 2560
+    },
+    {
+      "bundle_path": "images/5d/5d5e500f61bd295b78c3f87b63b85e63578467c9bc97e33834bc9f58ec9e668f.jpg",
+      "bytes": 160678,
+      "categories": [
+        "vision_diagrams"
+      ],
+      "format": "JPEG",
+      "height": 1500,
+      "record_ids": [
+        "ai2_pixmo_docs.diagrams.train.000016453"
+      ],
+      "sha256": "5d5e500f61bd295b78c3f87b63b85e63578467c9bc97e33834bc9f58ec9e668f",
+      "source_references": [
+        "data/tinylora_preservation_snapshots/v1/pixmo_docs_images/5d5e500f61bd295b78c3f87b63b85e63578467c9bc97e33834bc9f58ec9e668f.jpg"
+      ],
+      "width": 1500
+    },
+    {
+      "bundle_path": "images/5f/5f7c722373276112ace26fc9aa261084d1cfabfcb2835eb864e7e301d19cec7a.jpg",
+      "bytes": 117226,
+      "categories": [
+        "vision_tables"
+      ],
+      "format": "JPEG",
+      "height": 379,
+      "record_ids": [
+        "ai2_pixmo_docs.tables.train.000046473"
+      ],
+      "sha256": "5f7c722373276112ace26fc9aa261084d1cfabfcb2835eb864e7e301d19cec7a",
+      "source_references": [
+        "data/tinylora_preservation_snapshots/v1/pixmo_docs_images/5f7c722373276112ace26fc9aa261084d1cfabfcb2835eb864e7e301d19cec7a.jpg"
+      ],
+      "width": 2235
+    },
+    {
+      "bundle_path": "images/62/627ca800d58ae6837c935f046ec0bb022ac625ba3e11fe0865284964cf1a7981.jpg",
+      "bytes": 148676,
+      "categories": [
+        "vision_tables"
+      ],
+      "format": "JPEG",
+      "height": 1006,
+      "record_ids": [
+        "ai2_pixmo_docs.tables.train.000000034"
+      ],
+      "sha256": "627ca800d58ae6837c935f046ec0bb022ac625ba3e11fe0865284964cf1a7981",
+      "source_references": [
+        "data/tinylora_preservation_snapshots/v1/pixmo_docs_images/627ca800d58ae6837c935f046ec0bb022ac625ba3e11fe0865284964cf1a7981.jpg"
+      ],
+      "width": 1539
+    },
+    {
+      "bundle_path": "images/68/681dfd23e4e97de3fd7a9f21864e76d0addc59d122b1cd2a3f43d6dd4b1f6c51.jpg",
+      "bytes": 125873,
+      "categories": [
+        "vision_diagrams"
+      ],
+      "format": "JPEG",
+      "height": 1068,
+      "record_ids": [
+        "ai2_pixmo_docs.diagrams.train.000000054"
+      ],
+      "sha256": "681dfd23e4e97de3fd7a9f21864e76d0addc59d122b1cd2a3f43d6dd4b1f6c51",
+      "source_references": [
+        "data/tinylora_preservation_snapshots/v1/pixmo_docs_images/681dfd23e4e97de3fd7a9f21864e76d0addc59d122b1cd2a3f43d6dd4b1f6c51.jpg"
+      ],
+      "width": 1197
+    },
+    {
+      "bundle_path": "images/69/69d7c848953854eff499d4b049d97c3b51bdbfe788d5b6e8f9f991a5e29c3223.jpg",
+      "bytes": 226454,
+      "categories": [
+        "vision_other"
+      ],
+      "format": "JPEG",
+      "height": 1924,
+      "record_ids": [
+        "ai2_pixmo_docs.other.train.000053471"
+      ],
+      "sha256": "69d7c848953854eff499d4b049d97c3b51bdbfe788d5b6e8f9f991a5e29c3223",
+      "source_references": [
+        "data/tinylora_preservation_snapshots/v1/pixmo_docs_images/69d7c848953854eff499d4b049d97c3b51bdbfe788d5b6e8f9f991a5e29c3223.jpg"
+      ],
+      "width": 1451
+    },
+    {
+      "bundle_path": "images/6b/6b4f009e8cd56561f08f4c44231b1ece2d998bf38412fd3dcfbeb5bc3c5a3e42.jpg",
+      "bytes": 112407,
+      "categories": [
+        "vision_other"
+      ],
+      "format": "JPEG",
+      "height": 1152,
+      "record_ids": [
+        "ai2_pixmo_docs.other.train.000000060"
+      ],
+      "sha256": "6b4f009e8cd56561f08f4c44231b1ece2d998bf38412fd3dcfbeb5bc3c5a3e42",
+      "source_references": [
+        "data/tinylora_preservation_snapshots/v1/pixmo_docs_images/6b4f009e8cd56561f08f4c44231b1ece2d998bf38412fd3dcfbeb5bc3c5a3e42.jpg"
+      ],
+      "width": 890
+    },
+    {
+      "bundle_path": "images/6f/6f3e9a41877cbad799b88d7958ab5d179710c7d3982030b4c019c705682f1638.jpg",
+      "bytes": 268743,
+      "categories": [
+        "vision_other"
+      ],
+      "format": "JPEG",
+      "height": 1623,
+      "record_ids": [
+        "ai2_pixmo_docs.other.train.000017800"
+      ],
+      "sha256": "6f3e9a41877cbad799b88d7958ab5d179710c7d3982030b4c019c705682f1638",
+      "source_references": [
+        "data/tinylora_preservation_snapshots/v1/pixmo_docs_images/6f3e9a41877cbad799b88d7958ab5d179710c7d3982030b4c019c705682f1638.jpg"
+      ],
+      "width": 1654
+    },
+    {
+      "bundle_path": "images/6f/6f5b1c8d14455484c45666936164cce15757c4dd623fde66be6c5716fb6a238d.jpg",
+      "bytes": 121848,
+      "categories": [
+        "vision_diagrams"
+      ],
+      "format": "JPEG",
+      "height": 2154,
+      "record_ids": [
+        "ai2_pixmo_docs.diagrams.train.000012421"
+      ],
+      "sha256": "6f5b1c8d14455484c45666936164cce15757c4dd623fde66be6c5716fb6a238d",
+      "source_references": [
+        "data/tinylora_preservation_snapshots/v1/pixmo_docs_images/6f5b1c8d14455484c45666936164cce15757c4dd623fde66be6c5716fb6a238d.jpg"
+      ],
+      "width": 771
+    },
+    {
+      "bundle_path": "images/70/708ccda3005b7bf084dfd3a5e5137edaded52c9208c7638f450638bb55f139b1.jpg",
+      "bytes": 191354,
+      "categories": [
+        "vision_tables"
+      ],
+      "format": "JPEG",
+      "height": 1230,
+      "record_ids": [
+        "ai2_pixmo_docs.tables.train.000034854"
+      ],
+      "sha256": "708ccda3005b7bf084dfd3a5e5137edaded52c9208c7638f450638bb55f139b1",
+      "source_references": [
+        "data/tinylora_preservation_snapshots/v1/pixmo_docs_images/708ccda3005b7bf084dfd3a5e5137edaded52c9208c7638f450638bb55f139b1.jpg"
+      ],
+      "width": 1094
+    },
+    {
+      "bundle_path": "images/71/714c1d1c7413b35afd11480afd6eb5ec0c18626028f8c4380b0b60b2e44de90b.jpg",
+      "bytes": 86768,
+      "categories": [
+        "vision_diagrams"
+      ],
+      "format": "JPEG",
+      "height": 656,
+      "record_ids": [
+        "ai2_pixmo_docs.diagrams.train.000004208"
+      ],
+      "sha256": "714c1d1c7413b35afd11480afd6eb5ec0c18626028f8c4380b0b60b2e44de90b",
+      "source_references": [
+        "data/tinylora_preservation_snapshots/v1/pixmo_docs_images/714c1d1c7413b35afd11480afd6eb5ec0c18626028f8c4380b0b60b2e44de90b.jpg"
+      ],
+      "width": 1568
+    },
+    {
+      "bundle_path": "images/71/71f7cd6e0c1333d27e5444f1f052caac6da07ec16564247b5edd41b092d2f6bb.jpg",
+      "bytes": 164689,
+      "categories": [
+        "vision_diagrams"
+      ],
+      "format": "JPEG",
+      "height": 1060,
+      "record_ids": [
+        "ai2_pixmo_docs.diagrams.train.000016466"
+      ],
+      "sha256": "71f7cd6e0c1333d27e5444f1f052caac6da07ec16564247b5edd41b092d2f6bb",
+      "source_references": [
+        "data/tinylora_preservation_snapshots/v1/pixmo_docs_images/71f7cd6e0c1333d27e5444f1f052caac6da07ec16564247b5edd41b092d2f6bb.jpg"
+      ],
+      "width": 1534
+    },
+    {
+      "bundle_path": "images/74/7484f145e713a26c44350a262917b0c3c3ff76d1bcfa3e655ecdd48f504786fc.jpg",
+      "bytes": 304408,
+      "categories": [
+        "vision_other"
+      ],
+      "format": "JPEG",
+      "height": 1638,
+      "record_ids": [
+        "ai2_pixmo_docs.other.train.000000024"
+      ],
+      "sha256": "7484f145e713a26c44350a262917b0c3c3ff76d1bcfa3e655ecdd48f504786fc",
+      "source_references": [
+        "data/tinylora_preservation_snapshots/v1/pixmo_docs_images/7484f145e713a26c44350a262917b0c3c3ff76d1bcfa3e655ecdd48f504786fc.jpg"
+      ],
+      "width": 1597
+    },
+    {
+      "bundle_path": "images/74/74f96f3b931e3fac71de7043912e628ed8d8daf2fb6210175cb8630e3f4c5624.jpg",
+      "bytes": 94249,
+      "categories": [
+        "vision_diagrams"
+      ],
+      "format": "JPEG",
+      "height": 584,
+      "record_ids": [
+        "ai2_pixmo_docs.diagrams.train.000000083"
+      ],
+      "sha256": "74f96f3b931e3fac71de7043912e628ed8d8daf2fb6210175cb8630e3f4c5624",
+      "source_references": [
+        "data/tinylora_preservation_snapshots/v1/pixmo_docs_images/74f96f3b931e3fac71de7043912e628ed8d8daf2fb6210175cb8630e3f4c5624.jpg"
+      ],
+      "width": 1539
+    },
+    {
+      "bundle_path": "images/75/755a30fb169f341de8fb879c093661d1a4f2766aabfaa2acd173319b1b5ef9e6.jpg",
+      "bytes": 62188,
+      "categories": [
+        "vision_tables"
+      ],
+      "format": "JPEG",
+      "height": 319,
+      "record_ids": [
+        "ai2_pixmo_docs.tables.train.000023261"
+      ],
+      "sha256": "755a30fb169f341de8fb879c093661d1a4f2766aabfaa2acd173319b1b5ef9e6",
+      "source_references": [
+        "data/tinylora_preservation_snapshots/v1/pixmo_docs_images/755a30fb169f341de8fb879c093661d1a4f2766aabfaa2acd173319b1b5ef9e6.jpg"
+      ],
+      "width": 1192
+    },
+    {
+      "bundle_path": "images/75/757c8dbd798dd4e1dc46bfbb0a2223b7e8fece568187a1e2c4f27adbb215fd74.jpg",
+      "bytes": 76245,
+      "categories": [
+        "vision_other"
+      ],
+      "format": "JPEG",
+      "height": 936,
+      "record_ids": [
+        "ai2_pixmo_docs.other.train.000000007"
+      ],
+      "sha256": "757c8dbd798dd4e1dc46bfbb0a2223b7e8fece568187a1e2c4f27adbb215fd74",
+      "source_references": [
+        "data/tinylora_preservation_snapshots/v1/pixmo_docs_images/757c8dbd798dd4e1dc46bfbb0a2223b7e8fece568187a1e2c4f27adbb215fd74.jpg"
+      ],
+      "width": 1280
+    },
+    {
+      "bundle_path": "images/76/763377675ef318fe18314a9224aeeaabce423f43c633140741c4af26c80a9e6d.jpg",
+      "bytes": 105338,
+      "categories": [
+        "vision_charts"
+      ],
+      "format": "JPEG",
+      "height": 1200,
+      "record_ids": [
+        "ai2_pixmo_docs.charts.train.000029252"
+      ],
+      "sha256": "763377675ef318fe18314a9224aeeaabce423f43c633140741c4af26c80a9e6d",
+      "source_references": [
+        "data/tinylora_preservation_snapshots/v1/pixmo_docs_images/763377675ef318fe18314a9224aeeaabce423f43c633140741c4af26c80a9e6d.jpg"
+      ],
+      "width": 1600
+    },
+    {
+      "bundle_path": "images/76/765b32e5ca77ee72b548f392fdb2655d34fed19cc1d3b0898867b3093049001b.jpg",
+      "bytes": 134543,
+      "categories": [
+        "vision_other"
+      ],
+      "format": "JPEG",
+      "height": 1435,
+      "record_ids": [
+        "ai2_pixmo_docs.other.train.000000045"
+      ],
+      "sha256": "765b32e5ca77ee72b548f392fdb2655d34fed19cc1d3b0898867b3093049001b",
+      "source_references": [
+        "data/tinylora_preservation_snapshots/v1/pixmo_docs_images/765b32e5ca77ee72b548f392fdb2655d34fed19cc1d3b0898867b3093049001b.jpg"
+      ],
+      "width": 1280
+    },
+    {
+      "bundle_path": "images/7d/7dab29f7108eb2f7e231a21bd9b022aeaee1268de493d2b09c2ee3e5230d4c2f.jpg",
+      "bytes": 305898,
+      "categories": [
+        "vision_other"
+      ],
+      "format": "JPEG",
+      "height": 1960,
+      "record_ids": [
+        "ai2_pixmo_docs.other.train.000053438"
+      ],
+      "sha256": "7dab29f7108eb2f7e231a21bd9b022aeaee1268de493d2b09c2ee3e5230d4c2f",
+      "source_references": [
+        "data/tinylora_preservation_snapshots/v1/pixmo_docs_images/7dab29f7108eb2f7e231a21bd9b022aeaee1268de493d2b09c2ee3e5230d4c2f.jpg"
+      ],
+      "width": 1481
+    },
+    {
+      "bundle_path": "images/82/82181f3fea3ea8907bb3e7e9f64bb7f0df31a0857330492b9c77fc2a62554a14.jpg",
+      "bytes": 56974,
+      "categories": [
+        "vision_diagrams"
+      ],
+      "format": "JPEG",
+      "height": 1081,
+      "record_ids": [
+        "ai2_pixmo_docs.diagrams.train.000000097"
+      ],
+      "sha256": "82181f3fea3ea8907bb3e7e9f64bb7f0df31a0857330492b9c77fc2a62554a14",
+      "source_references": [
+        "data/tinylora_preservation_snapshots/v1/pixmo_docs_images/82181f3fea3ea8907bb3e7e9f64bb7f0df31a0857330492b9c77fc2a62554a14.jpg"
+      ],
+      "width": 923
+    },
+    {
+      "bundle_path": "images/83/83d7ed49db399bf6d35e797372020c8846a8727dca8445487665f70a1c6c7e87.jpg",
+      "bytes": 139213,
+      "categories": [
+        "vision_charts"
+      ],
+      "format": "JPEG",
+      "height": 1400,
+      "record_ids": [
+        "ai2_pixmo_docs.charts.train.000029240"
+      ],
+      "sha256": "83d7ed49db399bf6d35e797372020c8846a8727dca8445487665f70a1c6c7e87",
+      "source_references": [
+        "data/tinylora_preservation_snapshots/v1/pixmo_docs_images/83d7ed49db399bf6d35e797372020c8846a8727dca8445487665f70a1c6c7e87.jpg"
+      ],
+      "width": 1800
+    },
+    {
+      "bundle_path": "images/84/84a3a0dd6b4ebc3c4960c30204e617de9b2c191dcab64269ecc3c60b647d0f7d.jpg",
+      "bytes": 272816,
+      "categories": [
+        "vision_other"
+      ],
+      "format": "JPEG",
+      "height": 2543,
+      "record_ids": [
+        "ai2_pixmo_docs.other.train.000000042"
+      ],
+      "sha256": "84a3a0dd6b4ebc3c4960c30204e617de9b2c191dcab64269ecc3c60b647d0f7d",
+      "source_references": [
+        "data/tinylora_preservation_snapshots/v1/pixmo_docs_images/84a3a0dd6b4ebc3c4960c30204e617de9b2c191dcab64269ecc3c60b647d0f7d.jpg"
+      ],
+      "width": 1341
+    },
+    {
+      "bundle_path": "images/85/858e57325431cd5280adecd521d224a06ab4657a62a8be1d7265738a945ce1ed.jpg",
+      "bytes": 109468,
+      "categories": [
+        "vision_diagrams"
+      ],
+      "format": "JPEG",
+      "height": 1440,
+      "record_ids": [
+        "ai2_pixmo_docs.diagrams.train.000016455"
+      ],
+      "sha256": "858e57325431cd5280adecd521d224a06ab4657a62a8be1d7265738a945ce1ed",
+      "source_references": [
+        "data/tinylora_preservation_snapshots/v1/pixmo_docs_images/858e57325431cd5280adecd521d224a06ab4657a62a8be1d7265738a945ce1ed.jpg"
+      ],
+      "width": 607
+    },
+    {
+      "bundle_path": "images/87/870719a25f2e1f81a05b196534435a7689adae22fd8f2ed8934cf6446e58f17d.jpg",
+      "bytes": 160090,
+      "categories": [
+        "vision_other"
+      ],
+      "format": "JPEG",
+      "height": 1178,
+      "record_ids": [
+        "ai2_pixmo_docs.other.train.000035610"
+      ],
+      "sha256": "870719a25f2e1f81a05b196534435a7689adae22fd8f2ed8934cf6446e58f17d",
+      "source_references": [
+        "data/tinylora_preservation_snapshots/v1/pixmo_docs_images/870719a25f2e1f81a05b196534435a7689adae22fd8f2ed8934cf6446e58f17d.jpg"
+      ],
+      "width": 1143
+    },
+    {
+      "bundle_path": "images/8a/8a505307f628ed9ff17fc489c28e9c2e1cb4c01ca6819f2c570229633ee7e226.jpg",
+      "bytes": 218446,
+      "categories": [
+        "vision_tables"
+      ],
+      "format": "JPEG",
+      "height": 1429,
+      "record_ids": [
+        "ai2_pixmo_docs.tables.train.000011643"
+      ],
+      "sha256": "8a505307f628ed9ff17fc489c28e9c2e1cb4c01ca6819f2c570229633ee7e226",
+      "source_references": [
+        "data/tinylora_preservation_snapshots/v1/pixmo_docs_images/8a505307f628ed9ff17fc489c28e9c2e1cb4c01ca6819f2c570229633ee7e226.jpg"
+      ],
+      "width": 1094
+    },
+    {
+      "bundle_path": "images/8a/8a6cf994d880b6b627e8026fe4c0261fe5bef93eae3c6228fea6521549d99b65.jpg",
+      "bytes": 87983,
+      "categories": [
+        "vision_tables"
+      ],
+      "format": "JPEG",
+      "height": 565,
+      "record_ids": [
+        "ai2_pixmo_docs.tables.train.000000016"
+      ],
+      "sha256": "8a6cf994d880b6b627e8026fe4c0261fe5bef93eae3c6228fea6521549d99b65",
+      "source_references": [
+        "data/tinylora_preservation_snapshots/v1/pixmo_docs_images/8a6cf994d880b6b627e8026fe4c0261fe5bef93eae3c6228fea6521549d99b65.jpg"
+      ],
+      "width": 984
+    },
+    {
+      "bundle_path": "images/8a/8a9065c4fd1c57a673f214e710d4aa3abf2d4d3a0fabeb4ec5672b53752db0f1.jpg",
+      "bytes": 38818,
+      "categories": [
+        "vision_charts"
+      ],
+      "format": "JPEG",
+      "height": 800,
+      "record_ids": [
+        "ai2_pixmo_docs.charts.train.000000041"
+      ],
+      "sha256": "8a9065c4fd1c57a673f214e710d4aa3abf2d4d3a0fabeb4ec5672b53752db0f1",
+      "source_references": [
+        "data/tinylora_preservation_snapshots/v1/pixmo_docs_images/8a9065c4fd1c57a673f214e710d4aa3abf2d4d3a0fabeb4ec5672b53752db0f1.jpg"
+      ],
+      "width": 860
+    },
+    {
+      "bundle_path": "images/8d/8d7bc615e1a50b06346ca4729cbbed2d251770d3c4f43f2ed6a05c30f7301c5a.jpg",
+      "bytes": 59655,
+      "categories": [
+        "vision_diagrams"
+      ],
+      "format": "JPEG",
+      "height": 923,
+      "record_ids": [
+        "ai2_pixmo_docs.diagrams.train.000004127"
+      ],
+      "sha256": "8d7bc615e1a50b06346ca4729cbbed2d251770d3c4f43f2ed6a05c30f7301c5a",
+      "source_references": [
+        "data/tinylora_preservation_snapshots/v1/pixmo_docs_images/8d7bc615e1a50b06346ca4729cbbed2d251770d3c4f43f2ed6a05c30f7301c5a.jpg"
+      ],
+      "width": 948
+    },
+    {
+      "bundle_path": "images/8e/8e4f1461f84a58b4a4ab6a857ee1ae451a5c6d01685cdb2b37b4fc151cd483c8.jpg",
+      "bytes": 156518,
+      "categories": [
+        "vision_tables"
+      ],
+      "format": "JPEG",
+      "height": 1003,
+      "record_ids": [
+        "ai2_pixmo_docs.tables.train.000011639"
+      ],
+      "sha256": "8e4f1461f84a58b4a4ab6a857ee1ae451a5c6d01685cdb2b37b4fc151cd483c8",
+      "source_references": [
+        "data/tinylora_preservation_snapshots/v1/pixmo_docs_images/8e4f1461f84a58b4a4ab6a857ee1ae451a5c6d01685cdb2b37b4fc151cd483c8.jpg"
+      ],
+      "width": 1177
+    },
+    {
+      "bundle_path": "images/8e/8e5faed42d63e0d4aedb388bf52d33ae6e38c6fea7a3fa9fb3317fe23e914e86.jpg",
+      "bytes": 383388,
+      "categories": [
+        "vision_other"
+      ],
+      "format": "JPEG",
+      "height": 2195,
+      "record_ids": [
+        "ai2_pixmo_docs.other.train.000053420"
+      ],
+      "sha256": "8e5faed42d63e0d4aedb388bf52d33ae6e38c6fea7a3fa9fb3317fe23e914e86",
+      "source_references": [
+        "data/tinylora_preservation_snapshots/v1/pixmo_docs_images/8e5faed42d63e0d4aedb388bf52d33ae6e38c6fea7a3fa9fb3317fe23e914e86.jpg"
+      ],
+      "width": 1081
+    },
+    {
+      "bundle_path": "images/8e/8e836fa3396fedfc437677fdd5f3497308e80d0d6791976654d9ec5db06a7634.jpg",
+      "bytes": 70865,
+      "categories": [
+        "vision_diagrams"
+      ],
+      "format": "JPEG",
+      "height": 960,
+      "record_ids": [
+        "ai2_pixmo_docs.diagrams.train.000000081"
+      ],
+      "sha256": "8e836fa3396fedfc437677fdd5f3497308e80d0d6791976654d9ec5db06a7634",
+      "source_references": [
+        "data/tinylora_preservation_snapshots/v1/pixmo_docs_images/8e836fa3396fedfc437677fdd5f3497308e80d0d6791976654d9ec5db06a7634.jpg"
+      ],
+      "width": 915
+    },
+    {
+      "bundle_path": "images/8f/8f6c1973eeb1a44847acc2e68f8144709f18680077c35088742c862b90394251.jpg",
+      "bytes": 560260,
+      "categories": [
+        "vision_other"
+      ],
+      "format": "JPEG",
+      "height": 2296,
+      "record_ids": [
+        "ai2_pixmo_docs.other.train.000053450"
+      ],
+      "sha256": "8f6c1973eeb1a44847acc2e68f8144709f18680077c35088742c862b90394251",
+      "source_references": [
+        "data/tinylora_preservation_snapshots/v1/pixmo_docs_images/8f6c1973eeb1a44847acc2e68f8144709f18680077c35088742c862b90394251.jpg"
+      ],
+      "width": 1605
+    },
+    {
+      "bundle_path": "images/8f/8fcdb5f6cc5b1c1bb20bab39331ec8f2300ee29b5dc76b41968ea8aa1c5e338d.jpg",
+      "bytes": 76740,
+      "categories": [
+        "vision_diagrams"
+      ],
+      "format": "JPEG",
+      "height": 1936,
+      "record_ids": [
+        "ai2_pixmo_docs.diagrams.train.000000049"
+      ],
+      "sha256": "8fcdb5f6cc5b1c1bb20bab39331ec8f2300ee29b5dc76b41968ea8aa1c5e338d",
+      "source_references": [
+        "data/tinylora_preservation_snapshots/v1/pixmo_docs_images/8fcdb5f6cc5b1c1bb20bab39331ec8f2300ee29b5dc76b41968ea8aa1c5e338d.jpg"
+      ],
+      "width": 454
+    },
+    {
+      "bundle_path": "images/8f/8fe60cc9a2b9cc5d9111dad0e0bfefffde1093040736d789c125d440199c2639.jpg",
+      "bytes": 73093,
+      "categories": [
+        "vision_charts"
+      ],
+      "format": "JPEG",
+      "height": 791,
+      "record_ids": [
+        "ai2_pixmo_docs.charts.train.000029208"
+      ],
+      "sha256": "8fe60cc9a2b9cc5d9111dad0e0bfefffde1093040736d789c125d440199c2639",
+      "source_references": [
+        "data/tinylora_preservation_snapshots/v1/pixmo_docs_images/8fe60cc9a2b9cc5d9111dad0e0bfefffde1093040736d789c125d440199c2639.jpg"
+      ],
+      "width": 1326
+    },
+    {
+      "bundle_path": "images/90/90114ea42c4ac2a18569807c992aec30d32bc0093eb493bbba0deeea5c46d470.jpg",
+      "bytes": 312807,
+      "categories": [
+        "vision_other"
+      ],
+      "format": "JPEG",
+      "height": 2924,
+      "record_ids": [
+        "ai2_pixmo_docs.other.train.000035643"
+      ],
+      "sha256": "90114ea42c4ac2a18569807c992aec30d32bc0093eb493bbba0deeea5c46d470",
+      "source_references": [
+        "data/tinylora_preservation_snapshots/v1/pixmo_docs_images/90114ea42c4ac2a18569807c992aec30d32bc0093eb493bbba0deeea5c46d470.jpg"
+      ],
+      "width": 1148
+    },
+    {
+      "bundle_path": "images/91/91c423a77e05ce9b29f844b638234c7ea124a75c867563519150279f5c7317c6.jpg",
+      "bytes": 72302,
+      "categories": [
+        "vision_other"
+      ],
+      "format": "JPEG",
+      "height": 840,
+      "record_ids": [
+        "ai2_pixmo_docs.other.train.000000028"
+      ],
+      "sha256": "91c423a77e05ce9b29f844b638234c7ea124a75c867563519150279f5c7317c6",
+      "source_references": [
+        "data/tinylora_preservation_snapshots/v1/pixmo_docs_images/91c423a77e05ce9b29f844b638234c7ea124a75c867563519150279f5c7317c6.jpg"
+      ],
+      "width": 701
+    },
+    {
+      "bundle_path": "images/92/926c92fb6260246a232121e449fbbfcd86827a7bb78f9838e21e0ba3d86ce0f1.jpg",
+      "bytes": 85713,
+      "categories": [
+        "vision_other"
+      ],
+      "format": "JPEG",
+      "height": 1319,
+      "record_ids": [
+        "ai2_pixmo_docs.other.train.000071274"
+      ],
+      "sha256": "926c92fb6260246a232121e449fbbfcd86827a7bb78f9838e21e0ba3d86ce0f1",
+      "source_references": [
+        "data/tinylora_preservation_snapshots/v1/pixmo_docs_images/926c92fb6260246a232121e449fbbfcd86827a7bb78f9838e21e0ba3d86ce0f1.jpg"
+      ],
+      "width": 911
+    },
+    {
+      "bundle_path": "images/94/941a53aa44f314d04227a804f0279df264b0dce0691f67fc87c2a2719a382922.jpg",
+      "bytes": 111389,
+      "categories": [
+        "vision_diagrams"
+      ],
+      "format": "JPEG",
+      "height": 1634,
+      "record_ids": [
+        "ai2_pixmo_docs.diagrams.train.000016503"
+      ],
+      "sha256": "941a53aa44f314d04227a804f0279df264b0dce0691f67fc87c2a2719a382922",
+      "source_references": [
+        "data/tinylora_preservation_snapshots/v1/pixmo_docs_images/941a53aa44f314d04227a804f0279df264b0dce0691f67fc87c2a2719a382922.jpg"
+      ],
+      "width": 1154
+    },
+    {
+      "bundle_path": "images/94/94df7d635a3e563c4720a05595d0bdb4d492c5bfeedea488bb915fd82e7c7195.jpg",
+      "bytes": 130106,
+      "categories": [
+        "vision_charts"
+      ],
+      "format": "JPEG",
+      "height": 1440,
+      "record_ids": [
+        "ai2_pixmo_docs.charts.train.000058365"
+      ],
+      "sha256": "94df7d635a3e563c4720a05595d0bdb4d492c5bfeedea488bb915fd82e7c7195",
+      "source_references": [
+        "data/tinylora_preservation_snapshots/v1/pixmo_docs_images/94df7d635a3e563c4720a05595d0bdb4d492c5bfeedea488bb915fd82e7c7195.jpg"
+      ],
+      "width": 1819
+    },
+    {
+      "bundle_path": "images/97/9761723be177bea550f901ef96e3e279cc96515196f238a137bfaee9c123a495.jpg",
+      "bytes": 126590,
+      "categories": [
+        "vision_other"
+      ],
+      "format": "JPEG",
+      "height": 980,
+      "record_ids": [
+        "ai2_pixmo_docs.other.train.000071225"
+      ],
+      "sha256": "9761723be177bea550f901ef96e3e279cc96515196f238a137bfaee9c123a495",
+      "source_references": [
+        "data/tinylora_preservation_snapshots/v1/pixmo_docs_images/9761723be177bea550f901ef96e3e279cc96515196f238a137bfaee9c123a495.jpg"
+      ],
+      "width": 1116
+    },
+    {
+      "bundle_path": "images/97/97eb01dcd938ad31f31ed23250374598e0a60b9247696bb74d07d9fca13cd8ad.jpg",
+      "bytes": 100969,
+      "categories": [
+        "vision_other"
+      ],
+      "format": "JPEG",
+      "height": 1236,
+      "record_ids": [
+        "ai2_pixmo_docs.other.train.000000091"
+      ],
+      "sha256": "97eb01dcd938ad31f31ed23250374598e0a60b9247696bb74d07d9fca13cd8ad",
+      "source_references": [
+        "data/tinylora_preservation_snapshots/v1/pixmo_docs_images/97eb01dcd938ad31f31ed23250374598e0a60b9247696bb74d07d9fca13cd8ad.jpg"
+      ],
+      "width": 882
+    },
+    {
+      "bundle_path": "images/98/9855405c1f1e34cb839533211d6ded77b5ffd0d82011924bd2d865852fca6a4a.jpg",
+      "bytes": 91745,
+      "categories": [
+        "vision_tables"
+      ],
+      "format": "JPEG",
+      "height": 1716,
+      "record_ids": [
+        "ai2_pixmo_docs.tables.train.000000003"
+      ],
+      "sha256": "9855405c1f1e34cb839533211d6ded77b5ffd0d82011924bd2d865852fca6a4a",
+      "source_references": [
+        "data/tinylora_preservation_snapshots/v1/pixmo_docs_images/9855405c1f1e34cb839533211d6ded77b5ffd0d82011924bd2d865852fca6a4a.jpg"
+      ],
+      "width": 916
+    },
+    {
+      "bundle_path": "images/99/998805294587388578ded4e42f0d5177944439bde3902dca90c15cfd0c95ecc8.jpg",
+      "bytes": 129890,
+      "categories": [
+        "vision_tables"
+      ],
+      "format": "JPEG",
+      "height": 866,
+      "record_ids": [
+        "ai2_pixmo_docs.tables.train.000011686"
+      ],
+      "sha256": "998805294587388578ded4e42f0d5177944439bde3902dca90c15cfd0c95ecc8",
+      "source_references": [
+        "data/tinylora_preservation_snapshots/v1/pixmo_docs_images/998805294587388578ded4e42f0d5177944439bde3902dca90c15cfd0c95ecc8.jpg"
+      ],
+      "width": 1011
+    },
+    {
+      "bundle_path": "images/99/999e75674ea88888a62812cc655a452dd479505e1ad5a120e5ae98b145f9dbfa.jpg",
+      "bytes": 385657,
+      "categories": [
+        "vision_other"
+      ],
+      "format": "JPEG",
+      "height": 2280,
+      "record_ids": [
+        "ai2_pixmo_docs.other.train.000017839"
+      ],
+      "sha256": "999e75674ea88888a62812cc655a452dd479505e1ad5a120e5ae98b145f9dbfa",
+      "source_references": [
+        "data/tinylora_preservation_snapshots/v1/pixmo_docs_images/999e75674ea88888a62812cc655a452dd479505e1ad5a120e5ae98b145f9dbfa.jpg"
+      ],
+      "width": 1603
+    },
+    {
+      "bundle_path": "images/99/99b3de59ac09e31217697c0a55cefa003720754cab3fffeadfd46e94522cd14e.jpg",
+      "bytes": 52552,
+      "categories": [
+        "vision_diagrams"
+      ],
+      "format": "JPEG",
+      "height": 434,
+      "record_ids": [
+        "ai2_pixmo_docs.diagrams.train.000008247"
+      ],
+      "sha256": "99b3de59ac09e31217697c0a55cefa003720754cab3fffeadfd46e94522cd14e",
+      "source_references": [
+        "data/tinylora_preservation_snapshots/v1/pixmo_docs_images/99b3de59ac09e31217697c0a55cefa003720754cab3fffeadfd46e94522cd14e.jpg"
+      ],
+      "width": 1568
+    },
+    {
+      "bundle_path": "images/9a/9a0502f41f06a37d5d5cfe93ebbf51991bacb70f54b6655458d4a61e1ce4434c.jpg",
+      "bytes": 117342,
+      "categories": [
+        "vision_charts"
+      ],
+      "format": "JPEG",
+      "height": 1290,
+      "record_ids": [
+        "ai2_pixmo_docs.charts.train.000029193"
+      ],
+      "sha256": "9a0502f41f06a37d5d5cfe93ebbf51991bacb70f54b6655458d4a61e1ce4434c",
+      "source_references": [
+        "data/tinylora_preservation_snapshots/v1/pixmo_docs_images/9a0502f41f06a37d5d5cfe93ebbf51991bacb70f54b6655458d4a61e1ce4434c.jpg"
+      ],
+      "width": 2436
+    },
+    {
+      "bundle_path": "images/9c/9c6d1bf13d99f5cb18d55a4404160e3b46eb58e867f7bfacf7cc7c00ca86c21e.jpg",
+      "bytes": 101421,
+      "categories": [
+        "vision_charts"
+      ],
+      "format": "JPEG",
+      "height": 1440,
+      "record_ids": [
+        "ai2_pixmo_docs.charts.train.000058451"
+      ],
+      "sha256": "9c6d1bf13d99f5cb18d55a4404160e3b46eb58e867f7bfacf7cc7c00ca86c21e",
+      "source_references": [
+        "data/tinylora_preservation_snapshots/v1/pixmo_docs_images/9c6d1bf13d99f5cb18d55a4404160e3b46eb58e867f7bfacf7cc7c00ca86c21e.jpg"
+      ],
+      "width": 1699
+    },
+    {
+      "bundle_path": "images/a0/a06eb1a32eec62eb2c999777a38bc7c3e19d8cf79bd48c17f17a229a42f8c41b.jpg",
+      "bytes": 141640,
+      "categories": [
+        "vision_charts"
+      ],
+      "format": "JPEG",
+      "height": 1600,
+      "record_ids": [
+        "ai2_pixmo_docs.charts.train.000087545"
+      ],
+      "sha256": "a06eb1a32eec62eb2c999777a38bc7c3e19d8cf79bd48c17f17a229a42f8c41b",
+      "source_references": [
+        "data/tinylora_preservation_snapshots/v1/pixmo_docs_images/a06eb1a32eec62eb2c999777a38bc7c3e19d8cf79bd48c17f17a229a42f8c41b.jpg"
+      ],
+      "width": 2000
+    },
+    {
+      "bundle_path": "images/a0/a0fef54c3ba5087f9d67bfc894082c92acc66fd0ad7951517400e92ad8882f5f.jpg",
+      "bytes": 191415,
+      "categories": [
+        "vision_other"
+      ],
+      "format": "JPEG",
+      "height": 2481,
+      "record_ids": [
+        "ai2_pixmo_docs.other.train.000000032"
+      ],
+      "sha256": "a0fef54c3ba5087f9d67bfc894082c92acc66fd0ad7951517400e92ad8882f5f",
+      "source_references": [
+        "data/tinylora_preservation_snapshots/v1/pixmo_docs_images/a0fef54c3ba5087f9d67bfc894082c92acc66fd0ad7951517400e92ad8882f5f.jpg"
+      ],
+      "width": 1085
+    },
+    {
+      "bundle_path": "images/a1/a16e6d352f7446078b296b543409d45e0bcd0f32b0c4dfdde3ec681a5b313eb6.jpg",
+      "bytes": 34708,
+      "categories": [
+        "vision_tables"
+      ],
+      "format": "JPEG",
+      "height": 365,
+      "record_ids": [
+        "ai2_pixmo_docs.tables.train.000023270"
+      ],
+      "sha256": "a16e6d352f7446078b296b543409d45e0bcd0f32b0c4dfdde3ec681a5b313eb6",
+      "source_references": [
+        "data/tinylora_preservation_snapshots/v1/pixmo_docs_images/a16e6d352f7446078b296b543409d45e0bcd0f32b0c4dfdde3ec681a5b313eb6.jpg"
+      ],
+      "width": 681
+    },
+    {
+      "bundle_path": "images/a2/a2abba0eaea0ecd40a2f555b3ed698104f09c9b43f6776189cd129e5c1cb1100.jpg",
+      "bytes": 307615,
+      "categories": [
+        "vision_other"
+      ],
+      "format": "JPEG",
+      "height": 2585,
+      "record_ids": [
+        "ai2_pixmo_docs.other.train.000017819"
+      ],
+      "sha256": "a2abba0eaea0ecd40a2f555b3ed698104f09c9b43f6776189cd129e5c1cb1100",
+      "source_references": [
+        "data/tinylora_preservation_snapshots/v1/pixmo_docs_images/a2abba0eaea0ecd40a2f555b3ed698104f09c9b43f6776189cd129e5c1cb1100.jpg"
+      ],
+      "width": 1333
+    },
+    {
+      "bundle_path": "images/a4/a4019599f63c548d26c19a77b78bac99076022365cc17c4270a770722677a718.jpg",
+      "bytes": 212412,
+      "categories": [
+        "vision_diagrams"
+      ],
+      "format": "JPEG",
+      "height": 1440,
+      "record_ids": [
+        "ai2_pixmo_docs.diagrams.train.000004153"
+      ],
+      "sha256": "a4019599f63c548d26c19a77b78bac99076022365cc17c4270a770722677a718",
+      "source_references": [
+        "data/tinylora_preservation_snapshots/v1/pixmo_docs_images/a4019599f63c548d26c19a77b78bac99076022365cc17c4270a770722677a718.jpg"
+      ],
+      "width": 1421
+    },
+    {
+      "bundle_path": "images/a4/a4c0e2f452d1b9de5b3588c939bb6a180b19d4dad5eecaaa2f5a306b2127e111.jpg",
+      "bytes": 54543,
+      "categories": [
+        "vision_diagrams"
+      ],
+      "format": "JPEG",
+      "height": 1714,
+      "record_ids": [
+        "ai2_pixmo_docs.diagrams.train.000016497"
+      ],
+      "sha256": "a4c0e2f452d1b9de5b3588c939bb6a180b19d4dad5eecaaa2f5a306b2127e111",
+      "source_references": [
+        "data/tinylora_preservation_snapshots/v1/pixmo_docs_images/a4c0e2f452d1b9de5b3588c939bb6a180b19d4dad5eecaaa2f5a306b2127e111.jpg"
+      ],
+      "width": 384
+    },
+    {
+      "bundle_path": "images/a7/a738109ea431d102ccd8d8673127ef5172bfdd3ff0b1dcf6723681474377b059.jpg",
+      "bytes": 145758,
+      "categories": [
+        "vision_tables"
+      ],
+      "format": "JPEG",
+      "height": 1200,
+      "record_ids": [
+        "ai2_pixmo_docs.tables.train.000011653"
+      ],
+      "sha256": "a738109ea431d102ccd8d8673127ef5172bfdd3ff0b1dcf6723681474377b059",
+      "source_references": [
+        "data/tinylora_preservation_snapshots/v1/pixmo_docs_images/a738109ea431d102ccd8d8673127ef5172bfdd3ff0b1dcf6723681474377b059.jpg"
+      ],
+      "width": 1600
+    },
+    {
+      "bundle_path": "images/aa/aa0ed8990171500920ddafeec48474512e3ce5cf2ccb49bfafa1dcc197622989.jpg",
+      "bytes": 125840,
+      "categories": [
+        "vision_charts"
+      ],
+      "format": "JPEG",
+      "height": 1165,
+      "record_ids": [
+        "ai2_pixmo_docs.charts.train.000000021"
+      ],
+      "sha256": "aa0ed8990171500920ddafeec48474512e3ce5cf2ccb49bfafa1dcc197622989",
+      "source_references": [
+        "data/tinylora_preservation_snapshots/v1/pixmo_docs_images/aa0ed8990171500920ddafeec48474512e3ce5cf2ccb49bfafa1dcc197622989.jpg"
+      ],
+      "width": 2492
+    },
+    {
+      "bundle_path": "images/aa/aa20ffb1b758a05bca82d7fbf1e765070f529e38c5bf3bc446a96084d042d9d5.jpg",
+      "bytes": 144367,
+      "categories": [
+        "vision_other"
+      ],
+      "format": "JPEG",
+      "height": 1440,
+      "record_ids": [
+        "ai2_pixmo_docs.other.train.000053470"
+      ],
+      "sha256": "aa20ffb1b758a05bca82d7fbf1e765070f529e38c5bf3bc446a96084d042d9d5",
+      "source_references": [
+        "data/tinylora_preservation_snapshots/v1/pixmo_docs_images/aa20ffb1b758a05bca82d7fbf1e765070f529e38c5bf3bc446a96084d042d9d5.jpg"
+      ],
+      "width": 1018
+    },
+    {
+      "bundle_path": "images/ab/ab4ef6eced12bcce282421d4da9b6ad78f31667d42b2c580dc181261571c28a8.jpg",
+      "bytes": 106790,
+      "categories": [
+        "vision_other"
+      ],
+      "format": "JPEG",
+      "height": 1730,
+      "record_ids": [
+        "ai2_pixmo_docs.other.train.000000064"
+      ],
+      "sha256": "ab4ef6eced12bcce282421d4da9b6ad78f31667d42b2c580dc181261571c28a8",
+      "source_references": [
+        "data/tinylora_preservation_snapshots/v1/pixmo_docs_images/ab4ef6eced12bcce282421d4da9b6ad78f31667d42b2c580dc181261571c28a8.jpg"
+      ],
+      "width": 1111
+    },
+    {
+      "bundle_path": "images/ab/ab7a334135eb6cfe712b62e196f23f4013960a43075127fa01f1e19df2860a6d.jpg",
+      "bytes": 195160,
+      "categories": [
+        "vision_tables"
+      ],
+      "format": "JPEG",
+      "height": 1224,
+      "record_ids": [
+        "ai2_pixmo_docs.tables.train.000023295"
+      ],
+      "sha256": "ab7a334135eb6cfe712b62e196f23f4013960a43075127fa01f1e19df2860a6d",
+      "source_references": [
+        "data/tinylora_preservation_snapshots/v1/pixmo_docs_images/ab7a334135eb6cfe712b62e196f23f4013960a43075127fa01f1e19df2860a6d.jpg"
+      ],
+      "width": 1176
+    },
+    {
+      "bundle_path": "images/ab/abf1a3784f20033f32beb514cd9de5b67554d78e41262439d1d4e526a37dc252.jpg",
+      "bytes": 142770,
+      "categories": [
+        "vision_other"
+      ],
+      "format": "JPEG",
+      "height": 1440,
+      "record_ids": [
+        "ai2_pixmo_docs.other.train.000017835"
+      ],
+      "sha256": "abf1a3784f20033f32beb514cd9de5b67554d78e41262439d1d4e526a37dc252",
+      "source_references": [
+        "data/tinylora_preservation_snapshots/v1/pixmo_docs_images/abf1a3784f20033f32beb514cd9de5b67554d78e41262439d1d4e526a37dc252.jpg"
+      ],
+      "width": 1018
+    },
+    {
+      "bundle_path": "images/ad/adb5d4d8a6eedffbd1a5ebd58e63e320769fd29d7c5aa7c6b76974290c524f79.jpg",
+      "bytes": 203957,
+      "categories": [
+        "vision_tables"
+      ],
+      "format": "JPEG",
+      "height": 1200,
+      "record_ids": [
+        "ai2_pixmo_docs.tables.train.000034824"
+      ],
+      "sha256": "adb5d4d8a6eedffbd1a5ebd58e63e320769fd29d7c5aa7c6b76974290c524f79",
+      "source_references": [
+        "data/tinylora_preservation_snapshots/v1/pixmo_docs_images/adb5d4d8a6eedffbd1a5ebd58e63e320769fd29d7c5aa7c6b76974290c524f79.jpg"
+      ],
+      "width": 2400
+    },
+    {
+      "bundle_path": "images/ae/ae4f9e1f3f121b2d9f683c3f7cee82ff534159ca214892092401b7562853e898.jpg",
+      "bytes": 85638,
+      "categories": [
+        "vision_other"
+      ],
+      "format": "JPEG",
+      "height": 1285,
+      "record_ids": [
+        "ai2_pixmo_docs.other.train.000071228"
+      ],
+      "sha256": "ae4f9e1f3f121b2d9f683c3f7cee82ff534159ca214892092401b7562853e898",
+      "source_references": [
+        "data/tinylora_preservation_snapshots/v1/pixmo_docs_images/ae4f9e1f3f121b2d9f683c3f7cee82ff534159ca214892092401b7562853e898.jpg"
+      ],
+      "width": 934
+    },
+    {
+      "bundle_path": "images/af/af2dc48c528509ee63c9b0dab36bce31df6d055d7391bfadb9084b1422d1c2f5.jpg",
+      "bytes": 168706,
+      "categories": [
+        "vision_charts"
+      ],
+      "format": "JPEG",
+      "height": 1440,
+      "record_ids": [
+        "ai2_pixmo_docs.charts.train.000116788"
+      ],
+      "sha256": "af2dc48c528509ee63c9b0dab36bce31df6d055d7391bfadb9084b1422d1c2f5",
+      "source_references": [
+        "data/tinylora_preservation_snapshots/v1/pixmo_docs_images/af2dc48c528509ee63c9b0dab36bce31df6d055d7391bfadb9084b1422d1c2f5.jpg"
+      ],
+      "width": 2001
+    },
+    {
+      "bundle_path": "images/af/af6495b15c37465b03cd8d25837accfbbece8dff0736215e3d02dc54392415a8.jpg",
+      "bytes": 71691,
+      "categories": [
+        "vision_tables"
+      ],
+      "format": "JPEG",
+      "height": 907,
+      "record_ids": [
+        "ai2_pixmo_docs.tables.train.000023272"
+      ],
+      "sha256": "af6495b15c37465b03cd8d25837accfbbece8dff0736215e3d02dc54392415a8",
+      "source_references": [
+        "data/tinylora_preservation_snapshots/v1/pixmo_docs_images/af6495b15c37465b03cd8d25837accfbbece8dff0736215e3d02dc54392415a8.jpg"
+      ],
+      "width": 1280
+    },
+    {
+      "bundle_path": "images/b3/b3de284ba2b039b9bfb0e10340ec877f460ccc3b30b4f765a3a191935aca37d5.jpg",
+      "bytes": 248823,
+      "categories": [
+        "vision_other"
+      ],
+      "format": "JPEG",
+      "height": 1515,
+      "record_ids": [
+        "ai2_pixmo_docs.other.train.000035633"
+      ],
+      "sha256": "b3de284ba2b039b9bfb0e10340ec877f460ccc3b30b4f765a3a191935aca37d5",
+      "source_references": [
+        "data/tinylora_preservation_snapshots/v1/pixmo_docs_images/b3de284ba2b039b9bfb0e10340ec877f460ccc3b30b4f765a3a191935aca37d5.jpg"
+      ],
+      "width": 1654
+    },
+    {
+      "bundle_path": "images/b4/b4da419e2b885fe6d604c00594a28430e186278649948706c2bab8e1efca222e.jpg",
+      "bytes": 51491,
+      "categories": [
+        "vision_other"
+      ],
+      "format": "JPEG",
+      "height": 1440,
+      "record_ids": [
+        "ai2_pixmo_docs.other.train.000071218"
+      ],
+      "sha256": "b4da419e2b885fe6d604c00594a28430e186278649948706c2bab8e1efca222e",
+      "source_references": [
+        "data/tinylora_preservation_snapshots/v1/pixmo_docs_images/b4da419e2b885fe6d604c00594a28430e186278649948706c2bab8e1efca222e.jpg"
+      ],
+      "width": 461
+    },
+    {
+      "bundle_path": "images/b5/b5746fc734f6282e2bb0637272be5143faf67e9215206517338cf5244d06b47c.jpg",
+      "bytes": 95885,
+      "categories": [
+        "vision_charts"
+      ],
+      "format": "JPEG",
+      "height": 1600,
+      "record_ids": [
+        "ai2_pixmo_docs.charts.train.000087548"
+      ],
+      "sha256": "b5746fc734f6282e2bb0637272be5143faf67e9215206517338cf5244d06b47c",
+      "source_references": [
+        "data/tinylora_preservation_snapshots/v1/pixmo_docs_images/b5746fc734f6282e2bb0637272be5143faf67e9215206517338cf5244d06b47c.jpg"
+      ],
+      "width": 2000
+    },
+    {
+      "bundle_path": "images/b5/b5f900b9f5568102626b55e77b685b517d255490dbf73de96a1809ee06dc839a.jpg",
+      "bytes": 189780,
+      "categories": [
+        "vision_charts"
+      ],
+      "format": "JPEG",
+      "height": 1440,
+      "record_ids": [
+        "ai2_pixmo_docs.charts.train.000087634"
+      ],
+      "sha256": "b5f900b9f5568102626b55e77b685b517d255490dbf73de96a1809ee06dc839a",
+      "source_references": [
+        "data/tinylora_preservation_snapshots/v1/pixmo_docs_images/b5f900b9f5568102626b55e77b685b517d255490dbf73de96a1809ee06dc839a.jpg"
+      ],
+      "width": 2160
+    },
+    {
+      "bundle_path": "images/b7/b7a7e83474fdcc5c1532dfa19ebf4d78e9481d18a2417165663ef5e81c5f9b84.jpg",
+      "bytes": 159918,
+      "categories": [
+        "vision_charts"
+      ],
+      "format": "JPEG",
+      "height": 1600,
+      "record_ids": [
+        "ai2_pixmo_docs.charts.train.000000007"
+      ],
+      "sha256": "b7a7e83474fdcc5c1532dfa19ebf4d78e9481d18a2417165663ef5e81c5f9b84",
+      "source_references": [
+        "data/tinylora_preservation_snapshots/v1/pixmo_docs_images/b7a7e83474fdcc5c1532dfa19ebf4d78e9481d18a2417165663ef5e81c5f9b84.jpg"
+      ],
+      "width": 2000
+    },
+    {
+      "bundle_path": "images/b7/b7d83c4408c51ece5c4ef318ea7274aca612cecaaecb22b68f9f306d8cd3d7b8.jpg",
+      "bytes": 117286,
+      "categories": [
+        "vision_diagrams"
+      ],
+      "format": "JPEG",
+      "height": 1323,
+      "record_ids": [
+        "ai2_pixmo_docs.diagrams.train.000004193"
+      ],
+      "sha256": "b7d83c4408c51ece5c4ef318ea7274aca612cecaaecb22b68f9f306d8cd3d7b8",
+      "source_references": [
+        "data/tinylora_preservation_snapshots/v1/pixmo_docs_images/b7d83c4408c51ece5c4ef318ea7274aca612cecaaecb22b68f9f306d8cd3d7b8.jpg"
+      ],
+      "width": 1345
+    },
+    {
+      "bundle_path": "images/ba/baa0ac402315f0f473fd122c1ac4e1ccd0505947f2aee105ee647ace0acdfaac.jpg",
+      "bytes": 201276,
+      "categories": [
+        "vision_charts"
+      ],
+      "format": "JPEG",
+      "height": 1440,
+      "record_ids": [
+        "ai2_pixmo_docs.charts.train.000000058"
+      ],
+      "sha256": "baa0ac402315f0f473fd122c1ac4e1ccd0505947f2aee105ee647ace0acdfaac",
+      "source_references": [
+        "data/tinylora_preservation_snapshots/v1/pixmo_docs_images/baa0ac402315f0f473fd122c1ac4e1ccd0505947f2aee105ee647ace0acdfaac.jpg"
+      ],
+      "width": 2167
+    },
+    {
+      "bundle_path": "images/bb/bb6c7f7d62548c2433ba4e721ed1890d1eb3f383bae2edad59d27ee55dd96ab5.jpg",
+      "bytes": 79925,
+      "categories": [
+        "vision_tables"
+      ],
+      "format": "JPEG",
+      "height": 835,
+      "record_ids": [
+        "ai2_pixmo_docs.tables.train.000000047"
+      ],
+      "sha256": "bb6c7f7d62548c2433ba4e721ed1890d1eb3f383bae2edad59d27ee55dd96ab5",
+      "source_references": [
+        "data/tinylora_preservation_snapshots/v1/pixmo_docs_images/bb6c7f7d62548c2433ba4e721ed1890d1eb3f383bae2edad59d27ee55dd96ab5.jpg"
+      ],
+      "width": 1200
+    },
+    {
+      "bundle_path": "images/bc/bc9dc0a62cb700c2844c75835d1027ef52c683bb68e6b350b02c6c0f82dc650d.jpg",
+      "bytes": 203804,
+      "categories": [
+        "vision_charts"
+      ],
+      "format": "JPEG",
+      "height": 1440,
+      "record_ids": [
+        "ai2_pixmo_docs.charts.train.000087614"
+      ],
+      "sha256": "bc9dc0a62cb700c2844c75835d1027ef52c683bb68e6b350b02c6c0f82dc650d",
+      "source_references": [
+        "data/tinylora_preservation_snapshots/v1/pixmo_docs_images/bc9dc0a62cb700c2844c75835d1027ef52c683bb68e6b350b02c6c0f82dc650d.jpg"
+      ],
+      "width": 2169
+    },
+    {
+      "bundle_path": "images/bd/bd0d56506f8f4f224c4db122645f16b0d003fc33d636fcd0d530741796901aae.jpg",
+      "bytes": 206363,
+      "categories": [
+        "vision_tables"
+      ],
+      "format": "JPEG",
+      "height": 1200,
+      "record_ids": [
+        "ai2_pixmo_docs.tables.train.000011660"
+      ],
+      "sha256": "bd0d56506f8f4f224c4db122645f16b0d003fc33d636fcd0d530741796901aae",
+      "source_references": [
+        "data/tinylora_preservation_snapshots/v1/pixmo_docs_images/bd0d56506f8f4f224c4db122645f16b0d003fc33d636fcd0d530741796901aae.jpg"
+      ],
+      "width": 2400
+    },
+    {
+      "bundle_path": "images/bd/bd8682015872c8e9e43eb928e6a11d7f333a36578d70e56d9db50347a449b068.jpg",
+      "bytes": 95130,
+      "categories": [
+        "vision_tables"
+      ],
+      "format": "JPEG",
+      "height": 452,
+      "record_ids": [
+        "ai2_pixmo_docs.tables.train.000000068"
+      ],
+      "sha256": "bd8682015872c8e9e43eb928e6a11d7f333a36578d70e56d9db50347a449b068",
+      "source_references": [
+        "data/tinylora_preservation_snapshots/v1/pixmo_docs_images/bd8682015872c8e9e43eb928e6a11d7f333a36578d70e56d9db50347a449b068.jpg"
+      ],
+      "width": 1305
+    },
+    {
+      "bundle_path": "images/c1/c18bd9b5580cf5c6950a2e55f129e756b772b44965831725286a310fdb0964e2.jpg",
+      "bytes": 126805,
+      "categories": [
+        "vision_diagrams"
+      ],
+      "format": "JPEG",
+      "height": 1440,
+      "record_ids": [
+        "ai2_pixmo_docs.diagrams.train.000012363"
+      ],
+      "sha256": "c18bd9b5580cf5c6950a2e55f129e756b772b44965831725286a310fdb0964e2",
+      "source_references": [
+        "data/tinylora_preservation_snapshots/v1/pixmo_docs_images/c18bd9b5580cf5c6950a2e55f129e756b772b44965831725286a310fdb0964e2.jpg"
+      ],
+      "width": 1207
+    },
+    {
+      "bundle_path": "images/c1/c1d617668929dc9138d60c426b0a87b71a757f55be781ef339b0fb81b4968a16.jpg",
+      "bytes": 56437,
+      "categories": [
+        "vision_tables"
+      ],
+      "format": "JPEG",
+      "height": 800,
+      "record_ids": [
+        "ai2_pixmo_docs.tables.train.000046483"
+      ],
+      "sha256": "c1d617668929dc9138d60c426b0a87b71a757f55be781ef339b0fb81b4968a16",
+      "source_references": [
+        "data/tinylora_preservation_snapshots/v1/pixmo_docs_images/c1d617668929dc9138d60c426b0a87b71a757f55be781ef339b0fb81b4968a16.jpg"
+      ],
+      "width": 966
+    },
+    {
+      "bundle_path": "images/c3/c39f7c4d0d1014ef6ab4d0c1ac4758548e9cfb4e8860308c7d3b9815f22ec0dd.jpg",
+      "bytes": 243145,
+      "categories": [
+        "vision_other"
+      ],
+      "format": "JPEG",
+      "height": 1921,
+      "record_ids": [
+        "ai2_pixmo_docs.other.train.000017840"
+      ],
+      "sha256": "c39f7c4d0d1014ef6ab4d0c1ac4758548e9cfb4e8860308c7d3b9815f22ec0dd",
+      "source_references": [
+        "data/tinylora_preservation_snapshots/v1/pixmo_docs_images/c39f7c4d0d1014ef6ab4d0c1ac4758548e9cfb4e8860308c7d3b9815f22ec0dd.jpg"
+      ],
+      "width": 1395
+    },
+    {
+      "bundle_path": "images/c4/c42856e4f516ca40bd22a93630580bba8d427989d930ace585400ce57a83139c.jpg",
+      "bytes": 58391,
+      "categories": [
+        "vision_diagrams"
+      ],
+      "format": "JPEG",
+      "height": 1268,
+      "record_ids": [
+        "ai2_pixmo_docs.diagrams.train.000008234"
+      ],
+      "sha256": "c42856e4f516ca40bd22a93630580bba8d427989d930ace585400ce57a83139c",
+      "source_references": [
+        "data/tinylora_preservation_snapshots/v1/pixmo_docs_images/c42856e4f516ca40bd22a93630580bba8d427989d930ace585400ce57a83139c.jpg"
+      ],
+      "width": 482
+    },
+    {
+      "bundle_path": "images/c5/c58ff71336c985cabfa8f6955dbfdf5a833b9eefad6aec877bae065969c4562b.jpg",
+      "bytes": 169854,
+      "categories": [
+        "vision_charts"
+      ],
+      "format": "JPEG",
+      "height": 1600,
+      "record_ids": [
+        "ai2_pixmo_docs.charts.train.000029201"
+      ],
+      "sha256": "c58ff71336c985cabfa8f6955dbfdf5a833b9eefad6aec877bae065969c4562b",
+      "source_references": [
+        "data/tinylora_preservation_snapshots/v1/pixmo_docs_images/c58ff71336c985cabfa8f6955dbfdf5a833b9eefad6aec877bae065969c4562b.jpg"
+      ],
+      "width": 2000
+    },
+    {
+      "bundle_path": "images/c5/c5f0a5c28880b09d72dc14e548d9bba8df8069b5349f4655aba85e0a1bf7b91b.jpg",
+      "bytes": 221275,
+      "categories": [
+        "vision_other"
+      ],
+      "format": "JPEG",
+      "height": 1440,
+      "record_ids": [
+        "ai2_pixmo_docs.other.train.000053415"
+      ],
+      "sha256": "c5f0a5c28880b09d72dc14e548d9bba8df8069b5349f4655aba85e0a1bf7b91b",
+      "source_references": [
+        "data/tinylora_preservation_snapshots/v1/pixmo_docs_images/c5f0a5c28880b09d72dc14e548d9bba8df8069b5349f4655aba85e0a1bf7b91b.jpg"
+      ],
+      "width": 1018
+    },
+    {
+      "bundle_path": "images/ca/ca61d49c47989f958a7487e94d0c2c8e3170f8eee486ee3987d1a491c812fd50.jpg",
+      "bytes": 97124,
+      "categories": [
+        "vision_tables"
+      ],
+      "format": "JPEG",
+      "height": 485,
+      "record_ids": [
+        "ai2_pixmo_docs.tables.train.000034842"
+      ],
+      "sha256": "ca61d49c47989f958a7487e94d0c2c8e3170f8eee486ee3987d1a491c812fd50",
+      "source_references": [
+        "data/tinylora_preservation_snapshots/v1/pixmo_docs_images/ca61d49c47989f958a7487e94d0c2c8e3170f8eee486ee3987d1a491c812fd50.jpg"
+      ],
+      "width": 1565
+    },
+    {
+      "bundle_path": "images/cb/cb1589b859275edc02151c38f5dd193cdeba520863ed019713bf2a3644bd2c00.jpg",
+      "bytes": 37948,
+      "categories": [
+        "vision_charts"
+      ],
+      "format": "JPEG",
+      "height": 800,
+      "record_ids": [
+        "ai2_pixmo_docs.charts.train.000000036"
+      ],
+      "sha256": "cb1589b859275edc02151c38f5dd193cdeba520863ed019713bf2a3644bd2c00",
+      "source_references": [
+        "data/tinylora_preservation_snapshots/v1/pixmo_docs_images/cb1589b859275edc02151c38f5dd193cdeba520863ed019713bf2a3644bd2c00.jpg"
+      ],
+      "width": 910
+    },
+    {
+      "bundle_path": "images/cb/cb26444ab9968dcc9640a5d5681de5768dabe5a92c8714517c6637961836aff9.jpg",
+      "bytes": 91698,
+      "categories": [
+        "vision_charts"
+      ],
+      "format": "JPEG",
+      "height": 1600,
+      "record_ids": [
+        "ai2_pixmo_docs.charts.train.000000068"
+      ],
+      "sha256": "cb26444ab9968dcc9640a5d5681de5768dabe5a92c8714517c6637961836aff9",
+      "source_references": [
+        "data/tinylora_preservation_snapshots/v1/pixmo_docs_images/cb26444ab9968dcc9640a5d5681de5768dabe5a92c8714517c6637961836aff9.jpg"
+      ],
+      "width": 1800
+    },
+    {
+      "bundle_path": "images/cc/cc3a143a9daee66032f90077e2dd81cc83793b198a13004e7f471032478e0939.jpg",
+      "bytes": 241076,
+      "categories": [
+        "vision_other"
+      ],
+      "format": "JPEG",
+      "height": 2087,
+      "record_ids": [
+        "ai2_pixmo_docs.other.train.000017831"
+      ],
+      "sha256": "cc3a143a9daee66032f90077e2dd81cc83793b198a13004e7f471032478e0939",
+      "source_references": [
+        "data/tinylora_preservation_snapshots/v1/pixmo_docs_images/cc3a143a9daee66032f90077e2dd81cc83793b198a13004e7f471032478e0939.jpg"
+      ],
+      "width": 1542
+    },
+    {
+      "bundle_path": "images/ce/ce0c7c2a420365e9daf59ee71a44bd8233828103ab31cc435b2082964a14ca3e.jpg",
+      "bytes": 113096,
+      "categories": [
+        "vision_tables"
+      ],
+      "format": "JPEG",
+      "height": 800,
+      "record_ids": [
+        "ai2_pixmo_docs.tables.train.000000046"
+      ],
+      "sha256": "ce0c7c2a420365e9daf59ee71a44bd8233828103ab31cc435b2082964a14ca3e",
+      "source_references": [
+        "data/tinylora_preservation_snapshots/v1/pixmo_docs_images/ce0c7c2a420365e9daf59ee71a44bd8233828103ab31cc435b2082964a14ca3e.jpg"
+      ],
+      "width": 2000
+    },
+    {
+      "bundle_path": "images/ce/ce1eb00905f74bba138efd0b14fb70604767821cba0adde1e2ad571854af3679.jpg",
+      "bytes": 73700,
+      "categories": [
+        "vision_tables"
+      ],
+      "format": "JPEG",
+      "height": 800,
+      "record_ids": [
+        "ai2_pixmo_docs.tables.train.000000056"
+      ],
+      "sha256": "ce1eb00905f74bba138efd0b14fb70604767821cba0adde1e2ad571854af3679",
+      "source_references": [
+        "data/tinylora_preservation_snapshots/v1/pixmo_docs_images/ce1eb00905f74bba138efd0b14fb70604767821cba0adde1e2ad571854af3679.jpg"
+      ],
+      "width": 1143
+    },
+    {
+      "bundle_path": "images/d2/d23ab1a375eb5b123ac0edb8f047510c9c228e6c8c97aa7bb189de86e0163f73.jpg",
+      "bytes": 235146,
+      "categories": [
+        "vision_tables"
+      ],
+      "format": "JPEG",
+      "height": 1440,
+      "record_ids": [
+        "ai2_pixmo_docs.tables.train.000034866"
+      ],
+      "sha256": "d23ab1a375eb5b123ac0edb8f047510c9c228e6c8c97aa7bb189de86e0163f73",
+      "source_references": [
+        "data/tinylora_preservation_snapshots/v1/pixmo_docs_images/d23ab1a375eb5b123ac0edb8f047510c9c228e6c8c97aa7bb189de86e0163f73.jpg"
+      ],
+      "width": 2160
+    },
+    {
+      "bundle_path": "images/d3/d38ad3dfd1a0dd50dc5a78e27d8aae102f24eb3e76e5a36d1526cb46b4e70b43.jpg",
+      "bytes": 218675,
+      "categories": [
+        "vision_tables"
+      ],
+      "format": "JPEG",
+      "height": 1200,
+      "record_ids": [
+        "ai2_pixmo_docs.tables.train.000046452"
+      ],
+      "sha256": "d38ad3dfd1a0dd50dc5a78e27d8aae102f24eb3e76e5a36d1526cb46b4e70b43",
+      "source_references": [
+        "data/tinylora_preservation_snapshots/v1/pixmo_docs_images/d38ad3dfd1a0dd50dc5a78e27d8aae102f24eb3e76e5a36d1526cb46b4e70b43.jpg"
+      ],
+      "width": 2000
+    },
+    {
+      "bundle_path": "images/d5/d5592a539ef3739f6f9e3b9b28d43849b649f49aaf94c74007d3c3f93bf75b7c.jpg",
+      "bytes": 85739,
+      "categories": [
+        "vision_diagrams"
+      ],
+      "format": "JPEG",
+      "height": 1104,
+      "record_ids": [
+        "ai2_pixmo_docs.diagrams.train.000012377"
+      ],
+      "sha256": "d5592a539ef3739f6f9e3b9b28d43849b649f49aaf94c74007d3c3f93bf75b7c",
+      "source_references": [
+        "data/tinylora_preservation_snapshots/v1/pixmo_docs_images/d5592a539ef3739f6f9e3b9b28d43849b649f49aaf94c74007d3c3f93bf75b7c.jpg"
+      ],
+      "width": 1568
+    },
+    {
+      "bundle_path": "images/d5/d5d073606abd0d0cb4c8f6197e93b8a192389d1718323a60cbc1fd200ded98c4.jpg",
+      "bytes": 84173,
+      "categories": [
+        "vision_tables"
+      ],
+      "format": "JPEG",
+      "height": 508,
+      "record_ids": [
+        "ai2_pixmo_docs.tables.train.000023236"
+      ],
+      "sha256": "d5d073606abd0d0cb4c8f6197e93b8a192389d1718323a60cbc1fd200ded98c4",
+      "source_references": [
+        "data/tinylora_preservation_snapshots/v1/pixmo_docs_images/d5d073606abd0d0cb4c8f6197e93b8a192389d1718323a60cbc1fd200ded98c4.jpg"
+      ],
+      "width": 1060
+    },
+    {
+      "bundle_path": "images/d6/d6a9960c04973aa1c820abc9413e46b778fe3354d06bcf299c95c090d548cfac.jpg",
+      "bytes": 168160,
+      "categories": [
+        "vision_charts"
+      ],
+      "format": "JPEG",
+      "height": 1440,
+      "record_ids": [
+        "ai2_pixmo_docs.charts.train.000058362"
+      ],
+      "sha256": "d6a9960c04973aa1c820abc9413e46b778fe3354d06bcf299c95c090d548cfac",
+      "source_references": [
+        "data/tinylora_preservation_snapshots/v1/pixmo_docs_images/d6a9960c04973aa1c820abc9413e46b778fe3354d06bcf299c95c090d548cfac.jpg"
+      ],
+      "width": 2415
+    },
+    {
+      "bundle_path": "images/d7/d7ae81e6f5587970a11d21cd0606634700bd643228f0779a1d3a626645679d0a.jpg",
+      "bytes": 84369,
+      "categories": [
+        "vision_diagrams"
+      ],
+      "format": "JPEG",
+      "height": 584,
+      "record_ids": [
+        "ai2_pixmo_docs.diagrams.train.000012427"
+      ],
+      "sha256": "d7ae81e6f5587970a11d21cd0606634700bd643228f0779a1d3a626645679d0a",
+      "source_references": [
+        "data/tinylora_preservation_snapshots/v1/pixmo_docs_images/d7ae81e6f5587970a11d21cd0606634700bd643228f0779a1d3a626645679d0a.jpg"
+      ],
+      "width": 1568
+    },
+    {
+      "bundle_path": "images/d7/d7c6b182837f9fe4faae4da02e71381a50afbdee331b707702a9e952af3e3cb8.jpg",
+      "bytes": 148059,
+      "categories": [
+        "vision_other"
+      ],
+      "format": "JPEG",
+      "height": 1440,
+      "record_ids": [
+        "ai2_pixmo_docs.other.train.000071188"
+      ],
+      "sha256": "d7c6b182837f9fe4faae4da02e71381a50afbdee331b707702a9e952af3e3cb8",
+      "source_references": [
+        "data/tinylora_preservation_snapshots/v1/pixmo_docs_images/d7c6b182837f9fe4faae4da02e71381a50afbdee331b707702a9e952af3e3cb8.jpg"
+      ],
+      "width": 1018
+    },
+    {
+      "bundle_path": "images/d8/d82e02898f78ae9d963d8916bddc22c61da4c1ffda6bd3a7d68ce6eccf7f5ded.jpg",
+      "bytes": 85981,
+      "categories": [
+        "vision_other"
+      ],
+      "format": "JPEG",
+      "height": 986,
+      "record_ids": [
+        "ai2_pixmo_docs.other.train.000053396"
+      ],
+      "sha256": "d82e02898f78ae9d963d8916bddc22c61da4c1ffda6bd3a7d68ce6eccf7f5ded",
+      "source_references": [
+        "data/tinylora_preservation_snapshots/v1/pixmo_docs_images/d82e02898f78ae9d963d8916bddc22c61da4c1ffda6bd3a7d68ce6eccf7f5ded.jpg"
+      ],
+      "width": 921
+    },
+    {
+      "bundle_path": "images/d9/d92f59f2e2bc36e522b0ef73a90d0560a017db3e1bb678d580f2582ecea9ded3.jpg",
+      "bytes": 40874,
+      "categories": [
+        "vision_tables"
+      ],
+      "format": "JPEG",
+      "height": 800,
+      "record_ids": [
+        "ai2_pixmo_docs.tables.train.000023241"
+      ],
+      "sha256": "d92f59f2e2bc36e522b0ef73a90d0560a017db3e1bb678d580f2582ecea9ded3",
+      "source_references": [
+        "data/tinylora_preservation_snapshots/v1/pixmo_docs_images/d92f59f2e2bc36e522b0ef73a90d0560a017db3e1bb678d580f2582ecea9ded3.jpg"
+      ],
+      "width": 890
+    },
+    {
+      "bundle_path": "images/d9/d9563d2b6a5f15419152aead8041d3a41e42a5248f491a8461b98fd80a9f2c85.jpg",
+      "bytes": 155631,
+      "categories": [
+        "vision_charts"
+      ],
+      "format": "JPEG",
+      "height": 1440,
+      "record_ids": [
+        "ai2_pixmo_docs.charts.train.000000031"
+      ],
+      "sha256": "d9563d2b6a5f15419152aead8041d3a41e42a5248f491a8461b98fd80a9f2c85",
+      "source_references": [
+        "data/tinylora_preservation_snapshots/v1/pixmo_docs_images/d9563d2b6a5f15419152aead8041d3a41e42a5248f491a8461b98fd80a9f2c85.jpg"
+      ],
+      "width": 2023
+    },
+    {
+      "bundle_path": "images/d9/d9e20bb8092dc1a0bbf5363f79c8842b3a0886785e551aa9a37715965ac496f7.jpg",
+      "bytes": 242068,
+      "categories": [
+        "vision_charts"
+      ],
+      "format": "JPEG",
+      "height": 1440,
+      "record_ids": [
+        "ai2_pixmo_docs.charts.train.000058379"
+      ],
+      "sha256": "d9e20bb8092dc1a0bbf5363f79c8842b3a0886785e551aa9a37715965ac496f7",
+      "source_references": [
+        "data/tinylora_preservation_snapshots/v1/pixmo_docs_images/d9e20bb8092dc1a0bbf5363f79c8842b3a0886785e551aa9a37715965ac496f7.jpg"
+      ],
+      "width": 2313
+    },
+    {
+      "bundle_path": "images/d9/d9eb77374b7cd2fdbe2e0b025aba17633e9d9896eca1b1f72b3f2da8e085d1bb.jpg",
+      "bytes": 133172,
+      "categories": [
+        "vision_tables"
+      ],
+      "format": "JPEG",
+      "height": 498,
+      "record_ids": [
+        "ai2_pixmo_docs.tables.train.000046478"
+      ],
+      "sha256": "d9eb77374b7cd2fdbe2e0b025aba17633e9d9896eca1b1f72b3f2da8e085d1bb",
+      "source_references": [
+        "data/tinylora_preservation_snapshots/v1/pixmo_docs_images/d9eb77374b7cd2fdbe2e0b025aba17633e9d9896eca1b1f72b3f2da8e085d1bb.jpg"
+      ],
+      "width": 2063
+    },
+    {
+      "bundle_path": "images/da/dab674e847980d634272c1ea7a3ab0a65ae52d5fd59914863f57475d8ea8c718.jpg",
+      "bytes": 79112,
+      "categories": [
+        "vision_diagrams"
+      ],
+      "format": "JPEG",
+      "height": 1440,
+      "record_ids": [
+        "ai2_pixmo_docs.diagrams.train.000004211"
+      ],
+      "sha256": "dab674e847980d634272c1ea7a3ab0a65ae52d5fd59914863f57475d8ea8c718",
+      "source_references": [
+        "data/tinylora_preservation_snapshots/v1/pixmo_docs_images/dab674e847980d634272c1ea7a3ab0a65ae52d5fd59914863f57475d8ea8c718.jpg"
+      ],
+      "width": 808
+    },
+    {
+      "bundle_path": "images/db/dbc50510a52c4146880014cf351b498e09abc240ab724f7bb941eac0bed3d575.jpg",
+      "bytes": 141281,
+      "categories": [
+        "vision_tables"
+      ],
+      "format": "JPEG",
+      "height": 1000,
+      "record_ids": [
+        "ai2_pixmo_docs.tables.train.000011694"
+      ],
+      "sha256": "dbc50510a52c4146880014cf351b498e09abc240ab724f7bb941eac0bed3d575",
+      "source_references": [
+        "data/tinylora_preservation_snapshots/v1/pixmo_docs_images/dbc50510a52c4146880014cf351b498e09abc240ab724f7bb941eac0bed3d575.jpg"
+      ],
+      "width": 1800
+    },
+    {
+      "bundle_path": "images/dd/dd0406db24eb1921138b287130f27c9bf5fea745774bc7fdcd9c3227a4fb0c85.jpg",
+      "bytes": 120989,
+      "categories": [
+        "vision_diagrams"
+      ],
+      "format": "JPEG",
+      "height": 1440,
+      "record_ids": [
+        "ai2_pixmo_docs.diagrams.train.000000009"
+      ],
+      "sha256": "dd0406db24eb1921138b287130f27c9bf5fea745774bc7fdcd9c3227a4fb0c85",
+      "source_references": [
+        "data/tinylora_preservation_snapshots/v1/pixmo_docs_images/dd0406db24eb1921138b287130f27c9bf5fea745774bc7fdcd9c3227a4fb0c85.jpg"
+      ],
+      "width": 963
+    },
+    {
+      "bundle_path": "images/dd/dd959ec73432ca46a4f84bbe7ec15cfe556c4dd65a37113d2ddf2496181e8f23.jpg",
+      "bytes": 100665,
+      "categories": [
+        "vision_diagrams"
+      ],
+      "format": "JPEG",
+      "height": 852,
+      "record_ids": [
+        "ai2_pixmo_docs.diagrams.train.000016483"
+      ],
+      "sha256": "dd959ec73432ca46a4f84bbe7ec15cfe556c4dd65a37113d2ddf2496181e8f23",
+      "source_references": [
+        "data/tinylora_preservation_snapshots/v1/pixmo_docs_images/dd959ec73432ca46a4f84bbe7ec15cfe556c4dd65a37113d2ddf2496181e8f23.jpg"
+      ],
+      "width": 2776
+    },
+    {
+      "bundle_path": "images/de/de4c3599b24af25fa3f8a05efb9b7e52ea6f6d30a4c896b0ae6bdcd8233c7741.jpg",
+      "bytes": 197224,
+      "categories": [
+        "vision_other"
+      ],
+      "format": "JPEG",
+      "height": 1974,
+      "record_ids": [
+        "ai2_pixmo_docs.other.train.000035626"
+      ],
+      "sha256": "de4c3599b24af25fa3f8a05efb9b7e52ea6f6d30a4c896b0ae6bdcd8233c7741",
+      "source_references": [
+        "data/tinylora_preservation_snapshots/v1/pixmo_docs_images/de4c3599b24af25fa3f8a05efb9b7e52ea6f6d30a4c896b0ae6bdcd8233c7741.jpg"
+      ],
+      "width": 1060
+    },
+    {
+      "bundle_path": "images/e0/e01f1a08d2e54bd400f0e76aa7ba6fe913c25df2249a61e765f0cd2fcadccf05.jpg",
+      "bytes": 272417,
+      "categories": [
+        "vision_other"
+      ],
+      "format": "JPEG",
+      "height": 1544,
+      "record_ids": [
+        "ai2_pixmo_docs.other.train.000035688"
+      ],
+      "sha256": "e01f1a08d2e54bd400f0e76aa7ba6fe913c25df2249a61e765f0cd2fcadccf05",
+      "source_references": [
+        "data/tinylora_preservation_snapshots/v1/pixmo_docs_images/e01f1a08d2e54bd400f0e76aa7ba6fe913c25df2249a61e765f0cd2fcadccf05.jpg"
+      ],
+      "width": 1654
+    },
+    {
+      "bundle_path": "images/e0/e098629e8da4d32a670b8e716e50fbf3fb199da5f3f571140030f284a58f187e.jpg",
+      "bytes": 77942,
+      "categories": [
+        "vision_other"
+      ],
+      "format": "JPEG",
+      "height": 720,
+      "record_ids": [
+        "ai2_pixmo_docs.other.train.000035631"
+      ],
+      "sha256": "e098629e8da4d32a670b8e716e50fbf3fb199da5f3f571140030f284a58f187e",
+      "source_references": [
+        "data/tinylora_preservation_snapshots/v1/pixmo_docs_images/e098629e8da4d32a670b8e716e50fbf3fb199da5f3f571140030f284a58f187e.jpg"
+      ],
+      "width": 1280
+    },
+    {
+      "bundle_path": "images/e0/e0c608d19ee4ccff31f0607709302626906fdaf0225791d7ac66394940a373a0.jpg",
+      "bytes": 143645,
+      "categories": [
+        "vision_charts"
+      ],
+      "format": "JPEG",
+      "height": 1600,
+      "record_ids": [
+        "ai2_pixmo_docs.charts.train.000087627"
+      ],
+      "sha256": "e0c608d19ee4ccff31f0607709302626906fdaf0225791d7ac66394940a373a0",
+      "source_references": [
+        "data/tinylora_preservation_snapshots/v1/pixmo_docs_images/e0c608d19ee4ccff31f0607709302626906fdaf0225791d7ac66394940a373a0.jpg"
+      ],
+      "width": 2000
+    },
+    {
+      "bundle_path": "images/e1/e1ec0f30e54458317febe3879ec4b2bbd6b8e0d6fa54123d8f17f0740cb6bbb3.jpg",
+      "bytes": 74271,
+      "categories": [
+        "vision_tables"
+      ],
+      "format": "JPEG",
+      "height": 352,
+      "record_ids": [
+        "ai2_pixmo_docs.tables.train.000046508"
+      ],
+      "sha256": "e1ec0f30e54458317febe3879ec4b2bbd6b8e0d6fa54123d8f17f0740cb6bbb3",
+      "source_references": [
+        "data/tinylora_preservation_snapshots/v1/pixmo_docs_images/e1ec0f30e54458317febe3879ec4b2bbd6b8e0d6fa54123d8f17f0740cb6bbb3.jpg"
+      ],
+      "width": 1440
+    },
+    {
+      "bundle_path": "images/e2/e24fda96e61a56a6fe0dd93ea1310ec85c4af11cb7560d902aa63c3642028157.jpg",
+      "bytes": 91772,
+      "categories": [
+        "vision_charts"
+      ],
+      "format": "JPEG",
+      "height": 1200,
+      "record_ids": [
+        "ai2_pixmo_docs.charts.train.000000004"
+      ],
+      "sha256": "e24fda96e61a56a6fe0dd93ea1310ec85c4af11cb7560d902aa63c3642028157",
+      "source_references": [
+        "data/tinylora_preservation_snapshots/v1/pixmo_docs_images/e24fda96e61a56a6fe0dd93ea1310ec85c4af11cb7560d902aa63c3642028157.jpg"
+      ],
+      "width": 1800
+    },
+    {
+      "bundle_path": "images/e2/e2bba3e00529746cde8a57cbef0bf76d60d1f09312e6de89832e87811d5693a3.jpg",
+      "bytes": 81997,
+      "categories": [
+        "vision_diagrams"
+      ],
+      "format": "JPEG",
+      "height": 890,
+      "record_ids": [
+        "ai2_pixmo_docs.diagrams.train.000008279"
+      ],
+      "sha256": "e2bba3e00529746cde8a57cbef0bf76d60d1f09312e6de89832e87811d5693a3",
+      "source_references": [
+        "data/tinylora_preservation_snapshots/v1/pixmo_docs_images/e2bba3e00529746cde8a57cbef0bf76d60d1f09312e6de89832e87811d5693a3.jpg"
+      ],
+      "width": 1314
+    },
+    {
+      "bundle_path": "images/e6/e6b4f108d2f976c7269b0543e1c6198d5a7cc5afa872258fdf09c2720fc93add.jpg",
+      "bytes": 153628,
+      "categories": [
+        "vision_diagrams"
+      ],
+      "format": "JPEG",
+      "height": 2137,
+      "record_ids": [
+        "ai2_pixmo_docs.diagrams.train.000012422"
+      ],
+      "sha256": "e6b4f108d2f976c7269b0543e1c6198d5a7cc5afa872258fdf09c2720fc93add",
+      "source_references": [
+        "data/tinylora_preservation_snapshots/v1/pixmo_docs_images/e6b4f108d2f976c7269b0543e1c6198d5a7cc5afa872258fdf09c2720fc93add.jpg"
+      ],
+      "width": 834
+    },
+    {
+      "bundle_path": "images/e9/e976237afd31f168d43809f45160a7a97f7475f4e948e76c48225eca03df87b3.jpg",
+      "bytes": 286959,
+      "categories": [
+        "vision_charts"
+      ],
+      "format": "JPEG",
+      "height": 1440,
+      "record_ids": [
+        "ai2_pixmo_docs.charts.train.000058425"
+      ],
+      "sha256": "e976237afd31f168d43809f45160a7a97f7475f4e948e76c48225eca03df87b3",
+      "source_references": [
+        "data/tinylora_preservation_snapshots/v1/pixmo_docs_images/e976237afd31f168d43809f45160a7a97f7475f4e948e76c48225eca03df87b3.jpg"
+      ],
+      "width": 2532
+    },
+    {
+      "bundle_path": "images/e9/e9bf39e13dfa11cfd2f24cf98ca1020c46e9596c503062d9d45475c1b8508361.jpg",
+      "bytes": 137413,
+      "categories": [
+        "vision_diagrams"
+      ],
+      "format": "JPEG",
+      "height": 978,
+      "record_ids": [
+        "ai2_pixmo_docs.diagrams.train.000008291"
+      ],
+      "sha256": "e9bf39e13dfa11cfd2f24cf98ca1020c46e9596c503062d9d45475c1b8508361",
+      "source_references": [
+        "data/tinylora_preservation_snapshots/v1/pixmo_docs_images/e9bf39e13dfa11cfd2f24cf98ca1020c46e9596c503062d9d45475c1b8508361.jpg"
+      ],
+      "width": 2352
+    },
+    {
+      "bundle_path": "images/ea/eab8be6192dd072f0c216fa5edc03235fe9353a95b6ac88ef174827a6097d4e0.jpg",
+      "bytes": 32043,
+      "categories": [
+        "vision_tables"
+      ],
+      "format": "JPEG",
+      "height": 386,
+      "record_ids": [
+        "ai2_pixmo_docs.tables.train.000046496"
+      ],
+      "sha256": "eab8be6192dd072f0c216fa5edc03235fe9353a95b6ac88ef174827a6097d4e0",
+      "source_references": [
+        "data/tinylora_preservation_snapshots/v1/pixmo_docs_images/eab8be6192dd072f0c216fa5edc03235fe9353a95b6ac88ef174827a6097d4e0.jpg"
+      ],
+      "width": 808
+    },
+    {
+      "bundle_path": "images/ed/ed42a2213df93f32bd0926d1b6209549e8a880310020488f3fe4abe777bc914f.jpg",
+      "bytes": 71915,
+      "categories": [
+        "vision_diagrams"
+      ],
+      "format": "JPEG",
+      "height": 584,
+      "record_ids": [
+        "ai2_pixmo_docs.diagrams.train.000008233"
+      ],
+      "sha256": "ed42a2213df93f32bd0926d1b6209549e8a880310020488f3fe4abe777bc914f",
+      "source_references": [
+        "data/tinylora_preservation_snapshots/v1/pixmo_docs_images/ed42a2213df93f32bd0926d1b6209549e8a880310020488f3fe4abe777bc914f.jpg"
+      ],
+      "width": 1556
+    },
+    {
+      "bundle_path": "images/ed/ed914a4a4f2c1d4e1534129212e9f9977188a334654082ac5355df9a0f0311a0.jpg",
+      "bytes": 286271,
+      "categories": [
+        "vision_other"
+      ],
+      "format": "JPEG",
+      "height": 2146,
+      "record_ids": [
+        "ai2_pixmo_docs.other.train.000017807"
+      ],
+      "sha256": "ed914a4a4f2c1d4e1534129212e9f9977188a334654082ac5355df9a0f0311a0",
+      "source_references": [
+        "data/tinylora_preservation_snapshots/v1/pixmo_docs_images/ed914a4a4f2c1d4e1534129212e9f9977188a334654082ac5355df9a0f0311a0.jpg"
+      ],
+      "width": 1377
+    },
+    {
+      "bundle_path": "images/ef/ef6e15b1690b21e2e218559637fc5f0682a2aede6318031b99cdf2e273622032.jpg",
+      "bytes": 158470,
+      "categories": [
+        "vision_other"
+      ],
+      "format": "JPEG",
+      "height": 1762,
+      "record_ids": [
+        "ai2_pixmo_docs.other.train.000017826"
+      ],
+      "sha256": "ef6e15b1690b21e2e218559637fc5f0682a2aede6318031b99cdf2e273622032",
+      "source_references": [
+        "data/tinylora_preservation_snapshots/v1/pixmo_docs_images/ef6e15b1690b21e2e218559637fc5f0682a2aede6318031b99cdf2e273622032.jpg"
+      ],
+      "width": 911
+    },
+    {
+      "bundle_path": "images/f2/f2b7c77a595d880ad63388092235168c4f0506305a706a3add7ef5a4f6d8c242.jpg",
+      "bytes": 103331,
+      "categories": [
+        "vision_other"
+      ],
+      "format": "JPEG",
+      "height": 1565,
+      "record_ids": [
+        "ai2_pixmo_docs.other.train.000017820"
+      ],
+      "sha256": "f2b7c77a595d880ad63388092235168c4f0506305a706a3add7ef5a4f6d8c242",
+      "source_references": [
+        "data/tinylora_preservation_snapshots/v1/pixmo_docs_images/f2b7c77a595d880ad63388092235168c4f0506305a706a3add7ef5a4f6d8c242.jpg"
+      ],
+      "width": 908
+    },
+    {
+      "bundle_path": "images/f4/f4594af2217ed14e30c4d51df3cd4b1527525c4341a9c0054584a59938477892.jpg",
+      "bytes": 152728,
+      "categories": [
+        "vision_charts"
+      ],
+      "format": "JPEG",
+      "height": 1400,
+      "record_ids": [
+        "ai2_pixmo_docs.charts.train.000116736"
+      ],
+      "sha256": "f4594af2217ed14e30c4d51df3cd4b1527525c4341a9c0054584a59938477892",
+      "source_references": [
+        "data/tinylora_preservation_snapshots/v1/pixmo_docs_images/f4594af2217ed14e30c4d51df3cd4b1527525c4341a9c0054584a59938477892.jpg"
+      ],
+      "width": 2400
+    },
+    {
+      "bundle_path": "images/f5/f556f265c5010dabddf2c581acd603c7f61cf48657a7a0bdfa01ad43e40650a3.jpg",
+      "bytes": 106262,
+      "categories": [
+        "vision_tables"
+      ],
+      "format": "JPEG",
+      "height": 1057,
+      "record_ids": [
+        "ai2_pixmo_docs.tables.train.000000091"
+      ],
+      "sha256": "f556f265c5010dabddf2c581acd603c7f61cf48657a7a0bdfa01ad43e40650a3",
+      "source_references": [
+        "data/tinylora_preservation_snapshots/v1/pixmo_docs_images/f556f265c5010dabddf2c581acd603c7f61cf48657a7a0bdfa01ad43e40650a3.jpg"
+      ],
+      "width": 1280
+    },
+    {
+      "bundle_path": "images/f6/f63dff68e497c070e058b50a144851fa4367583536e8dd0af5b98d5b7d95d5c1.jpg",
+      "bytes": 175691,
+      "categories": [
+        "vision_other"
+      ],
+      "format": "JPEG",
+      "height": 1524,
+      "record_ids": [
+        "ai2_pixmo_docs.other.train.000000005"
+      ],
+      "sha256": "f63dff68e497c070e058b50a144851fa4367583536e8dd0af5b98d5b7d95d5c1",
+      "source_references": [
+        "data/tinylora_preservation_snapshots/v1/pixmo_docs_images/f63dff68e497c070e058b50a144851fa4367583536e8dd0af5b98d5b7d95d5c1.jpg"
+      ],
+      "width": 1122
+    },
+    {
+      "bundle_path": "images/f7/f76893089f58bc8849bd81bc87a79aa25d18577bdb747725279231195fa56f4e.jpg",
+      "bytes": 51744,
+      "categories": [
+        "vision_diagrams"
+      ],
+      "format": "JPEG",
+      "height": 812,
+      "record_ids": [
+        "ai2_pixmo_docs.diagrams.train.000000086"
+      ],
+      "sha256": "f76893089f58bc8849bd81bc87a79aa25d18577bdb747725279231195fa56f4e",
+      "source_references": [
+        "data/tinylora_preservation_snapshots/v1/pixmo_docs_images/f76893089f58bc8849bd81bc87a79aa25d18577bdb747725279231195fa56f4e.jpg"
+      ],
+      "width": 530
+    },
+    {
+      "bundle_path": "images/f7/f776eba194f16bf03aea3d5bc460e90167c5765dcbbab3caa8555e54749c6412.jpg",
+      "bytes": 129135,
+      "categories": [
+        "vision_tables"
+      ],
+      "format": "JPEG",
+      "height": 1032,
+      "record_ids": [
+        "ai2_pixmo_docs.tables.train.000034874"
+      ],
+      "sha256": "f776eba194f16bf03aea3d5bc460e90167c5765dcbbab3caa8555e54749c6412",
+      "source_references": [
+        "data/tinylora_preservation_snapshots/v1/pixmo_docs_images/f776eba194f16bf03aea3d5bc460e90167c5765dcbbab3caa8555e54749c6412.jpg"
+      ],
+      "width": 1302
+    },
+    {
+      "bundle_path": "images/f9/f99732f4618a8f1e47566391af9af11ef52106018366f592d0e5dada67c57f05.jpg",
+      "bytes": 197059,
+      "categories": [
+        "vision_diagrams"
+      ],
+      "format": "JPEG",
+      "height": 2779,
+      "record_ids": [
+        "ai2_pixmo_docs.diagrams.train.000012396"
+      ],
+      "sha256": "f99732f4618a8f1e47566391af9af11ef52106018366f592d0e5dada67c57f05",
+      "source_references": [
+        "data/tinylora_preservation_snapshots/v1/pixmo_docs_images/f99732f4618a8f1e47566391af9af11ef52106018366f592d0e5dada67c57f05.jpg"
+      ],
+      "width": 1231
+    },
+    {
+      "bundle_path": "images/fb/fb959922db3f5cae81edda4145698341891ae005e9be88ac88e22164ae4931ec.jpg",
+      "bytes": 267625,
+      "categories": [
+        "vision_other"
+      ],
+      "format": "JPEG",
+      "height": 2024,
+      "record_ids": [
+        "ai2_pixmo_docs.other.train.000017806"
+      ],
+      "sha256": "fb959922db3f5cae81edda4145698341891ae005e9be88ac88e22164ae4931ec",
+      "source_references": [
+        "data/tinylora_preservation_snapshots/v1/pixmo_docs_images/fb959922db3f5cae81edda4145698341891ae005e9be88ac88e22164ae4931ec.jpg"
+      ],
+      "width": 1379
+    },
+    {
+      "bundle_path": "images/fc/fc2b9abf8c1e83a3a4e8887fbab48d444b73296fbf7ffe2b1f7469e8065d6342.jpg",
+      "bytes": 114616,
+      "categories": [
+        "vision_diagrams"
+      ],
+      "format": "JPEG",
+      "height": 706,
+      "record_ids": [
+        "ai2_pixmo_docs.diagrams.train.000004117"
+      ],
+      "sha256": "fc2b9abf8c1e83a3a4e8887fbab48d444b73296fbf7ffe2b1f7469e8065d6342",
+      "source_references": [
+        "data/tinylora_preservation_snapshots/v1/pixmo_docs_images/fc2b9abf8c1e83a3a4e8887fbab48d444b73296fbf7ffe2b1f7469e8065d6342.jpg"
+      ],
+      "width": 1568
+    },
+    {
+      "bundle_path": "images/fd/fdbaf9a32afc03fbb260dbdc7525d58ad023c6a9b0bcba2d59ee7f47643cf4f0.jpg",
+      "bytes": 170314,
+      "categories": [
+        "vision_tables"
+      ],
+      "format": "JPEG",
+      "height": 920,
+      "record_ids": [
+        "ai2_pixmo_docs.tables.train.000011670"
+      ],
+      "sha256": "fdbaf9a32afc03fbb260dbdc7525d58ad023c6a9b0bcba2d59ee7f47643cf4f0",
+      "source_references": [
+        "data/tinylora_preservation_snapshots/v1/pixmo_docs_images/fdbaf9a32afc03fbb260dbdc7525d58ad023c6a9b0bcba2d59ee7f47643cf4f0.jpg"
+      ],
+      "width": 2400
+    },
+    {
+      "bundle_path": "images/ff/ff5bc246871a133bf147b559c9abd430768a8c6982293ed098371da05963250f.jpg",
+      "bytes": 69801,
+      "categories": [
+        "vision_tables"
+      ],
+      "format": "JPEG",
+      "height": 452,
+      "record_ids": [
+        "ai2_pixmo_docs.tables.train.000023240"
+      ],
+      "sha256": "ff5bc246871a133bf147b559c9abd430768a8c6982293ed098371da05963250f",
+      "source_references": [
+        "data/tinylora_preservation_snapshots/v1/pixmo_docs_images/ff5bc246871a133bf147b559c9abd430768a8c6982293ed098371da05963250f.jpg"
+      ],
+      "width": 972
+    },
+    {
+      "bundle_path": "images/ff/ffecb726f4e1457cf5b6faedec9e9f8cc5469d97ed7cb5598885057887cf8b23.jpg",
+      "bytes": 75561,
+      "categories": [
+        "vision_diagrams"
+      ],
+      "format": "JPEG",
+      "height": 1440,
+      "record_ids": [
+        "ai2_pixmo_docs.diagrams.train.000000015"
+      ],
+      "sha256": "ffecb726f4e1457cf5b6faedec9e9f8cc5469d97ed7cb5598885057887cf8b23",
+      "source_references": [
+        "data/tinylora_preservation_snapshots/v1/pixmo_docs_images/ffecb726f4e1457cf5b6faedec9e9f8cc5469d97ed7cb5598885057887cf8b23.jpg"
+      ],
+      "width": 979
+    },
+    {
+      "bundle_path": "images/ff/ffed1b23dd3f543bb78db5f739bdc18254ea082f5954555a423ea22b3a13f591.jpg",
+      "bytes": 160827,
+      "categories": [
+        "vision_diagrams"
+      ],
+      "format": "JPEG",
+      "height": 2959,
+      "record_ids": [
+        "ai2_pixmo_docs.diagrams.train.000012394"
+      ],
+      "sha256": "ffed1b23dd3f543bb78db5f739bdc18254ea082f5954555a423ea22b3a13f591",
+      "source_references": [
+        "data/tinylora_preservation_snapshots/v1/pixmo_docs_images/ffed1b23dd3f543bb78db5f739bdc18254ea082f5954555a423ea22b3a13f591.jpg"
+      ],
+      "width": 852
+    }
+  ],
+  "bundled_corpora": [
+    {
+      "path": "corpora/preservation_development_vision.jsonl",
+      "records": 100,
+      "sha256": "8cacec798cad64576b8ffec4205b5e64e8761c66f7ce6474dc615e80b76bb9c5"
+    },
+    {
+      "path": "corpora/preservation_train.jsonl",
+      "records": 1000,
+      "sha256": "2a2aff1a8e1b96b7a3ad0313b9a7ab4ca11650563b7c3ee4c566582a56bf364e"
+    }
+  ],
+  "categories": {
+    "vision_charts": {
+      "bytes": 6752915,
+      "records": 50,
+      "unique_images": 50
+    },
+    "vision_diagrams": {
+      "bytes": 5609945,
+      "records": 50,
+      "unique_images": 50
+    },
+    "vision_other": {
+      "bytes": 9797571,
+      "records": 50,
+      "unique_images": 50
+    },
+    "vision_tables": {
+      "bytes": 6464031,
+      "records": 50,
+      "unique_images": 50
+    }
+  },
+  "content_sha256": "6938f0269264cb47cb753ef421a511ca81973d4a9d6dee6f83f6f029220c5c97",
+  "format": "tinylora_step5_multimodal_assets_v1",
+  "smoke_corpus": {
+    "path": "smoke/one_per_category.jsonl",
+    "records": 4,
+    "sha256": "1b22b1bfdeb800cca5a9d59ec17e627e043d7fceeafa1636b5f468d4928a2afc"
+  },
+  "smoke_selection": {
+    "vision_charts": {
+      "bundle_path": "images/e2/e24fda96e61a56a6fe0dd93ea1310ec85c4af11cb7560d902aa63c3642028157.jpg",
+      "image_sha256": "e24fda96e61a56a6fe0dd93ea1310ec85c4af11cb7560d902aa63c3642028157",
+      "record_id": "ai2_pixmo_docs.charts.train.000000004"
+    },
+    "vision_diagrams": {
+      "bundle_path": "images/dd/dd0406db24eb1921138b287130f27c9bf5fea745774bc7fdcd9c3227a4fb0c85.jpg",
+      "image_sha256": "dd0406db24eb1921138b287130f27c9bf5fea745774bc7fdcd9c3227a4fb0c85",
+      "record_id": "ai2_pixmo_docs.diagrams.train.000000009"
+    },
+    "vision_other": {
+      "bundle_path": "images/f6/f63dff68e497c070e058b50a144851fa4367583536e8dd0af5b98d5b7d95d5c1.jpg",
+      "image_sha256": "f63dff68e497c070e058b50a144851fa4367583536e8dd0af5b98d5b7d95d5c1",
+      "record_id": "ai2_pixmo_docs.other.train.000000005"
+    },
+    "vision_tables": {
+      "bundle_path": "images/98/9855405c1f1e34cb839533211d6ded77b5ffd0d82011924bd2d865852fca6a4a.jpg",
+      "image_sha256": "9855405c1f1e34cb839533211d6ded77b5ffd0d82011924bd2d865852fca6a4a",
+      "record_id": "ai2_pixmo_docs.tables.train.000000003"
+    }
+  },
+  "source_corpora": [
+    {
+      "path": "corpora/tinylora_deception_action_v1/step5_v1/preservation_development_vision.jsonl",
+      "records": 100,
+      "sha256": "d2960ea248991db80b7594ab899c26301173e2ef7f7594c9c2c3346dd339df9d"
+    },
+    {
+      "path": "corpora/tinylora_deception_action_v1/step5_v1/preservation_train.jsonl",
+      "records": 1000,
+      "sha256": "b8e32caa26fc7d1c2b8b798eda7cf067af6f958a9c8952bd1e2dc8a75f1e88ea"
+    }
+  ],
+  "totals": {
+    "bytes": 28624462,
+    "image_references": 200,
+    "unique_images": 200
+  }
+}
