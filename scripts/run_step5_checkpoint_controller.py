@@ -44,6 +44,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--poll-seconds", type=float, default=1.0)
     parser.add_argument("--idle-timeout-seconds", type=int, default=180)
     parser.add_argument("--ready-file", type=Path)
+    parser.add_argument("--progress-file", type=Path, required=True)
     return parser.parse_args()
 
 
@@ -66,6 +67,29 @@ def write_ready_file(path: Path, payload: dict[str, Any]) -> None:
         os.link(temporary, path, follow_symlinks=False)
     except FileExistsError as error:
         raise FileExistsError("checkpoint controller ready file already exists") from error
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def write_progress_file(path: Path, payload: dict[str, Any]) -> None:
+    if path.parent.is_symlink() or not path.parent.is_dir():
+        raise ValueError("checkpoint controller progress directory must already exist")
+    if path.parent.stat().st_mode & 0o077:
+        raise ValueError("checkpoint controller progress directory must be mode 0700")
+    if path.is_symlink() or (path.exists() and not path.is_file()):
+        raise ValueError("checkpoint controller progress path must be a regular file")
+    temporary = path.parent / f".{path.name}.{secrets.token_hex(16)}.tmp"
+    descriptor = os.open(
+        temporary,
+        os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+        0o600,
+    )
+    try:
+        with os.fdopen(descriptor, "w") as stream:
+            stream.write(json.dumps(payload, sort_keys=True) + "\n")
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, path)
     finally:
         temporary.unlink(missing_ok=True)
 
@@ -326,6 +350,15 @@ def main() -> int:
         raise RuntimeError("checkpoint bucket versioning must be enabled before upload")
     exchange = SshExchange(args)
     exchange.preflight()
+    progress_sequence = 0
+    write_progress_file(
+        args.progress_file,
+        {
+            "format": "tinylora_step5_checkpoint_progress_v1",
+            "sequence": progress_sequence,
+            "generation_id": None,
+        },
+    )
     if args.ready_file is not None:
         write_ready_file(
             args.ready_file,
@@ -347,8 +380,19 @@ def main() -> int:
         progressed = False
         for generation_id in exchange.list_requests():
             if generation_id not in handled:
-                progressed |= process_request(exchange, client, args, generation_id)
+                completed = process_request(exchange, client, args, generation_id)
+                progressed |= completed
                 handled.add(generation_id)
+                if completed:
+                    progress_sequence += 1
+                    write_progress_file(
+                        args.progress_file,
+                        {
+                            "format": "tinylora_step5_checkpoint_progress_v1",
+                            "sequence": progress_sequence,
+                            "generation_id": generation_id,
+                        },
+                    )
         if progressed:
             idle_deadline = time.monotonic() + args.idle_timeout_seconds
         time.sleep(args.poll_seconds)

@@ -12,6 +12,7 @@ from botocore.config import Config
 from intelligent_liars.step5_artifact_presigner import (
     build_receipt,
     canonical_bytes,
+    effective_expiry_seconds,
     sha256_bytes,
     validate_receipt,
     write_private_outputs,
@@ -84,6 +85,28 @@ def test_real_botocore_put_shape_is_fully_bound_and_validates():
     assert verified["sigv4"]["signed_headers"] == ["host", "if-none-match"]
     assert "test-session-token" not in json.dumps(receipt)
     assert "AKIA" not in json.dumps(receipt)
+
+
+def test_temporary_credential_expiry_shortens_or_rejects_url_lifetime():
+    current = datetime.now(timezone.utc)
+    assert effective_expiry_seconds(
+        21600,
+        current=current,
+        credential_expiry=current + timedelta(hours=2),
+    ) == 6900
+    with pytest.raises(ValueError, match="expire too soon"):
+        effective_expiry_seconds(
+            21600,
+            current=current,
+            credential_expiry=current + timedelta(minutes=5),
+        )
+    with pytest.raises(ValueError, match="expiry is unavailable"):
+        effective_expiry_seconds(
+            21600,
+            current=current,
+            credential_expiry=None,
+            credential_is_temporary=True,
+        )
 
 
 @pytest.mark.parametrize(

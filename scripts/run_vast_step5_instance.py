@@ -29,14 +29,20 @@ import time
 import urllib.parse
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
-from typing import Any
+from typing import Any, Callable
 
 from intelligent_liars.step5_artifact_store import (
     ArtifactContractError,
     LIFECYCLE_ARTIFACT_MANIFEST_FORMAT,
     validate_lifecycle_artifact_manifest,
 )
-from intelligent_liars.step5_artifact_presigner import parse_utc, validate_receipt
+from intelligent_liars.step5_artifact_presigner import (
+    canonical_bytes,
+    create_presigned_put_authorization,
+    parse_utc,
+    sha256_bytes,
+    validate_receipt,
+)
 
 
 PROJECT_LABEL_PREFIX = "codex-vast-tinylora-step5"
@@ -46,6 +52,8 @@ HOST_GATE_URL_REMOTE_PATH = "/run/secrets/step5-host-gate-url"
 HARD_MAX_WORKERS = 3
 ARTIFACT_APPROVAL_MAX_AGE_SECONDS = 3600
 ARTIFACT_MINIMUM_REMAINING_SECONDS = 900
+ARTIFACT_REFRESH_BEFORE_EXPIRY_SECONDS = 3600
+ARTIFACT_REFRESH_EXPIRY_SECONDS = 21600
 SEALED_AUDIT_SHA256 = "40e2756176387514fc265bdf6225e73b356d7fe57b641405e6c4d2ecbe498e91"
 HOST_LOSS_STATES = frozenset({"dead", "error", "failed", "offline", "unavailable"})
 STOPPED_STATES = frozenset({"exited", "stopped"})
@@ -143,6 +151,8 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--approved-hourly-price", type=float)
     parser.add_argument("--approved-max-cost", type=float)
+    parser.add_argument("--uncapped-cost-approved", action="store_true")
+    parser.add_argument("--stall-timeout-seconds", type=int)
     parser.add_argument("--execute", action="store_true")
     parser.add_argument("--confirmed-cost-approval", action="store_true")
     return parser.parse_args()
@@ -352,8 +362,8 @@ def poll_created_instance_id(
     )
 
 
-def show_instances(vastai: str) -> list[dict[str, Any]]:
-    result = run([vastai, "show", "instances", "--raw"])
+def show_instances(vastai: str, *, timeout: float | None = None) -> list[dict[str, Any]]:
+    result = run([vastai, "show", "instances", "--raw"], timeout=timeout)
     payload = parse_json_payload(result.stdout)
     if not isinstance(payload, list) or not all(isinstance(item, dict) for item in payload):
         raise ValueError("Vast instance inventory is not a list of objects")
@@ -362,10 +372,17 @@ def show_instances(vastai: str) -> list[dict[str, Any]]:
 
 def hourly_price(record: dict[str, Any]) -> float:
     for key in ("dph_total", "dph_base", "cost_per_hour", "hourly_price"):
-        if record.get(key) is not None:
-            value = float(record[key])
-            if math.isfinite(value) and value > 0:
-                return value
+        raw = record.get(key)
+        if raw is not None:
+            if isinstance(raw, bool) or not isinstance(raw, (int, float, str)):
+                raise ValueError(f"Vast {key} price has an invalid type")
+            try:
+                value = float(raw)
+            except ValueError as error:
+                raise ValueError(f"Vast {key} price is not numeric") from error
+            if not (math.isfinite(value) and value > 0):
+                raise ValueError(f"Vast {key} price is not finite and positive")
+            return value
     raise ValueError("Vast record lacks a finite positive hourly price")
 
 
@@ -389,11 +406,37 @@ def enforce_price(actual: float, approved_hourly_price: float) -> None:
         )
 
 
-def remaining_cost_seconds(deadline: float) -> float:
+def remaining_cost_seconds(deadline: float | None) -> float | None:
+    if deadline is None:
+        return None
     remaining = deadline - time.monotonic()
     if remaining <= 0:
         raise TimeoutError("Approved maximum-cost runtime has been exhausted")
     return remaining
+
+
+def bounded_wait_seconds(requested: int, deadline: float | None) -> int:
+    remaining = remaining_cost_seconds(deadline)
+    return requested if remaining is None else min(requested, int(remaining))
+
+
+def approved_lifecycle_deadline(
+    args: argparse.Namespace,
+    *,
+    actual_hourly_price: float,
+    started_monotonic: float,
+    artifact_remaining_seconds: float,
+) -> tuple[float | None, float | None]:
+    """Return no financial deadline only for explicit uncapped approval."""
+    if args.uncapped_cost_approved:
+        return None, None
+    assert args.approved_max_cost is not None
+    maximum_runtime_seconds = args.approved_max_cost / actual_hourly_price * 3600.0
+    deadline = min(
+        started_monotonic + maximum_runtime_seconds,
+        time.monotonic() + artifact_remaining_seconds,
+    )
+    return deadline, maximum_runtime_seconds
 
 
 def find_instance(instances: list[dict[str, Any]], target_id: str) -> dict[str, Any] | None:
@@ -964,13 +1007,32 @@ def require_execute_contract(args: argparse.Namespace) -> None:
         return
     if not args.confirmed_cost_approval:
         raise ValueError("Execution requires confirmed cost approval")
-    if args.approved_hourly_price is None or args.approved_max_cost is None:
-        raise ValueError("Execution requires approved hourly price and maximum cost")
-    if not all(
-        math.isfinite(value) and value > 0
-        for value in (args.approved_hourly_price, args.approved_max_cost)
+    if isinstance(args.approved_hourly_price, bool) or args.approved_hourly_price is None or not (
+        math.isfinite(args.approved_hourly_price) and args.approved_hourly_price > 0
     ):
-        raise ValueError("Approved hourly price and maximum cost must be finite and positive")
+        raise ValueError("Execution requires a finite positive approved hourly price")
+    uncapped = bool(getattr(args, "uncapped_cost_approved", False))
+    maximum_cost = getattr(args, "approved_max_cost", None)
+    if uncapped == (maximum_cost is not None):
+        raise ValueError(
+            "Execution requires exactly one of approved maximum cost or explicit uncapped-cost approval"
+        )
+    if maximum_cost is not None and (
+        isinstance(maximum_cost, bool)
+        or not (
+        math.isfinite(maximum_cost) and maximum_cost > 0
+        )
+    ):
+        raise ValueError("Approved maximum cost must be finite and positive")
+    stall_timeout = getattr(args, "stall_timeout_seconds", None)
+    if (
+        not isinstance(stall_timeout, int)
+        or isinstance(stall_timeout, bool)
+        or stall_timeout < 300
+    ):
+        raise ValueError(
+            "Execution requires a non-financial stall timeout of at least 300 seconds"
+        )
     if bool(args.offer_id) == bool(args.resume_instance_id):
         raise ValueError("Execution requires exactly one of offer-id or resume-instance-id")
     if "@sha256:" not in args.image:
@@ -1114,6 +1176,7 @@ def checkpoint_controller_command(
     port: str,
     known_hosts: Path,
     ready_file: Path,
+    progress_file: Path | None = None,
     idle_timeout_seconds: int,
     private_key: Path | None = None,
     public_key: Path | None = None,
@@ -1148,6 +1211,8 @@ def checkpoint_controller_command(
         str(idle_timeout_seconds),
         "--ready-file",
         str(ready_file),
+        "--progress-file",
+        str(progress_file or ready_file.with_name("progress.json")),
     ]
 
 
@@ -1190,6 +1255,7 @@ def start_checkpoint_controller(
         ).resolve()
         os.chmod(ready_dir, 0o700)
         ready_file = ready_dir / "ready.json"
+        progress_file = ready_dir / "progress.json"
         log_handle = log_path.open("ab")
         command = checkpoint_controller_command(
             args,
@@ -1197,6 +1263,7 @@ def start_checkpoint_controller(
             port=port,
             known_hosts=known_hosts,
             ready_file=ready_file,
+            progress_file=progress_file,
             idle_timeout_seconds=idle_timeout_seconds,
             private_key=private_snapshot,
             public_key=public_snapshot,
@@ -1235,11 +1302,20 @@ def start_checkpoint_controller(
                     raise RuntimeError("checkpoint controller readiness binding differs")
                 if not isinstance(payload.get("ready_at"), str):
                     raise RuntimeError("checkpoint controller readiness timestamp is missing")
+                progress_content, progress_mode = read_file_without_symlinks(progress_file)
+                progress = parse_json_payload(progress_content.decode("utf-8"))
+                if progress_mode != 0o600 or progress != {
+                    "format": "tinylora_step5_checkpoint_progress_v1",
+                    "sequence": 0,
+                    "generation_id": None,
+                }:
+                    raise RuntimeError("checkpoint controller progress contract differs")
                 return {
                     "process": process,
                     "log_handle": log_handle,
                     "log_path": log_path,
                     "ready_file": ready_file,
+                    "progress_file": progress_file,
                     "ready": payload,
                     "started_at": now(),
                     "command_sha256": hashlib.sha256(
@@ -1262,6 +1338,7 @@ def start_checkpoint_controller(
             log_handle.close()
         if ready_dir is not None:
             (ready_dir / "ready.json").unlink(missing_ok=True)
+            (ready_dir / "progress.json").unlink(missing_ok=True)
             ready_dir.rmdir()
         for snapshot in snapshots:
             snapshot.unlink(missing_ok=True)
@@ -1282,6 +1359,8 @@ def stop_checkpoint_controller(state: dict[str, Any]) -> dict[str, Any]:
     state["log_handle"].close()
     ready_file: Path = state["ready_file"]
     ready_file.unlink(missing_ok=True)
+    progress_file: Path = state["progress_file"]
+    progress_file.unlink(missing_ok=True)
     state["ready_dir"].rmdir()
     for snapshot in state["snapshots"]:
         snapshot.unlink(missing_ok=True)
@@ -1299,6 +1378,38 @@ def stop_checkpoint_controller(state: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def checkpoint_progress_sequence(sidecar: dict[str, Any]) -> int:
+    content, mode = read_file_without_symlinks(Path(sidecar["progress_file"]))
+    if mode != 0o600:
+        raise RuntimeError("checkpoint progress file mode differs")
+    payload = parse_json_payload(content.decode("utf-8"))
+    if not isinstance(payload, dict) or set(payload) != {
+        "format",
+        "sequence",
+        "generation_id",
+    }:
+        raise RuntimeError("checkpoint progress fields differ")
+    sequence = payload.get("sequence")
+    generation_id = payload.get("generation_id")
+    if (
+        payload.get("format") != "tinylora_step5_checkpoint_progress_v1"
+        or not isinstance(sequence, int)
+        or isinstance(sequence, bool)
+        or sequence < 0
+        or (sequence == 0 and generation_id is not None)
+        or (
+            sequence > 0
+            and (
+                not isinstance(generation_id, str)
+                or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}", generation_id)
+                is None
+            )
+        )
+    ):
+        raise RuntimeError("checkpoint progress value differs")
+    return sequence
+
+
 def remote_run_with_checkpoint_controller(
     host: str,
     port: str,
@@ -1306,28 +1417,60 @@ def remote_run_with_checkpoint_controller(
     command: str,
     *,
     sidecar: dict[str, Any],
-    timeout: float,
+    timeout: float | None,
+    stall_timeout_seconds: int,
+    maintenance: Callable[[float], None] | None = None,
 ) -> subprocess.CompletedProcess[str]:
     ssh_command = [*ssh_prefix(host, port, known_hosts), command]
-    deadline = time.monotonic() + timeout
+    deadline = None if timeout is None else time.monotonic() + timeout
     with tempfile.TemporaryFile() as stdout, tempfile.TemporaryFile() as stderr:
         worker = subprocess.Popen(ssh_command, stdout=stdout, stderr=stderr)
         sidecar_failed = False
-        while worker.poll() is None:
-            if sidecar["process"].poll() is not None:
-                sidecar_failed = True
+        progress_sequence = checkpoint_progress_sequence(sidecar)
+        last_activity = time.monotonic()
+        next_maintenance = time.monotonic()
+        try:
+            while worker.poll() is None:
+                if sidecar["process"].poll() is not None:
+                    sidecar_failed = True
+                    worker.terminate()
+                    try:
+                        worker.wait(timeout=10)
+                    except subprocess.TimeoutExpired:
+                        worker.kill()
+                        worker.wait(timeout=5)
+                    break
+                current = time.monotonic()
+                current_sequence = checkpoint_progress_sequence(sidecar)
+                if current_sequence < progress_sequence:
+                    raise RuntimeError("checkpoint progress sequence moved backwards")
+                if current_sequence > progress_sequence:
+                    progress_sequence = current_sequence
+                    last_activity = current
+                stall_remaining = stall_timeout_seconds - (current - last_activity)
+                if stall_remaining <= 0:
+                    worker.kill()
+                    worker.wait(timeout=5)
+                    raise TimeoutError(
+                        "Step 5 workload exceeded the no-progress stall timeout"
+                    )
+                if maintenance is not None and current >= next_maintenance:
+                    maintenance(stall_remaining)
+                    next_maintenance = current + 30
+                if deadline is not None and current >= deadline:
+                    worker.kill()
+                    worker.wait(timeout=5)
+                    raise subprocess.TimeoutExpired(ssh_command, timeout)
+                time.sleep(0.2)
+        except BaseException:
+            if worker.poll() is None:
                 worker.terminate()
                 try:
                     worker.wait(timeout=10)
                 except subprocess.TimeoutExpired:
                     worker.kill()
                     worker.wait(timeout=5)
-                break
-            if time.monotonic() >= deadline:
-                worker.kill()
-                worker.wait(timeout=5)
-                raise subprocess.TimeoutExpired(ssh_command, timeout)
-            time.sleep(0.2)
+            raise
         stdout.seek(0)
         stderr.seek(0)
         output = stdout.read().decode("utf-8", errors="replace")
@@ -1558,6 +1701,7 @@ def revalidate_artifact_put_freshness(
     url_content: bytes,
     *,
     current: datetime,
+    require_recent_approval: bool = True,
 ) -> dict[str, Any]:
     verified = validate_receipt(
         receipt,
@@ -1566,7 +1710,9 @@ def revalidate_artifact_put_freshness(
         expected_durable_uri=args.expected_durable_uri,
         expected_approved_at=args.approved_at,
         now=current,
-        max_approval_age_seconds=ARTIFACT_APPROVAL_MAX_AGE_SECONDS,
+        max_approval_age_seconds=(
+            ARTIFACT_APPROVAL_MAX_AGE_SECONDS if require_recent_approval else None
+        ),
     )
     remaining = (
         parse_utc(verified["expires_at"], label="expires_at") - current
@@ -1574,6 +1720,63 @@ def revalidate_artifact_put_freshness(
     if remaining <= ARTIFACT_MINIMUM_REMAINING_SECONDS:
         raise ValueError("artifact PUT URL has less than 15 minutes remaining")
     return verified
+
+
+def refresh_artifact_put_authorization_if_needed(
+    args: argparse.Namespace,
+    receipt: dict[str, Any],
+    url_content: bytes,
+    *,
+    current: datetime,
+    force: bool = False,
+    network_timeout_seconds: float | None = None,
+) -> tuple[dict[str, Any], bytes, bool]:
+    """Refresh the same approved PUT destination without imposing a runtime cap."""
+    expiry = parse_utc(str(receipt["expires_at"]), label="expires_at")
+    remaining = (expiry - current).total_seconds()
+    if not force and remaining > ARTIFACT_REFRESH_BEFORE_EXPIRY_SECONDS:
+        revalidate_artifact_put_freshness(
+            args,
+            receipt,
+            url_content,
+            current=current,
+            require_recent_approval=False,
+        )
+        return receipt, url_content, False
+    endpoint = receipt["endpoint"]
+    refreshed_url, refreshed = create_presigned_put_authorization(
+        bucket=str(endpoint["bucket"]),
+        key=str(endpoint["key"]),
+        region=str(endpoint["region"]),
+        account_id=str(receipt["account_id"]),
+        approved_at=str(receipt["approved_at"]),
+        expiry_seconds=ARTIFACT_REFRESH_EXPIRY_SECONDS,
+        generated_at=current,
+        network_timeout_seconds=network_timeout_seconds,
+    )
+    immutable_fields = (
+        "account_id",
+        "approved_at",
+        "durable_uri",
+        "method",
+        "required_headers",
+    )
+    if any(refreshed[field] != receipt[field] for field in immutable_fields) or any(
+        refreshed["endpoint"][field] != receipt["endpoint"][field]
+        for field in ("bucket", "key", "region", "host", "path")
+    ):
+        raise ValueError("refreshed artifact PUT authorization changed immutable binding")
+    refreshed_bytes = canonical_bytes(refreshed)
+    validate_receipt(
+        refreshed,
+        url_bytes=refreshed_url,
+        expected_receipt_sha256=sha256_bytes(refreshed_bytes),
+        expected_durable_uri=args.expected_durable_uri,
+        expected_approved_at=args.approved_at,
+        now=current,
+        max_approval_age_seconds=None,
+    )
+    return refreshed, refreshed_url, True
 
 
 def validate_distinct_url_sources(args: argparse.Namespace) -> None:
@@ -1668,7 +1871,7 @@ def restart_stopped_instance(
     target_id: str,
     artifact_put_receipt: dict[str, Any],
     artifact_put_url_bytes: bytes,
-    cost_deadline: float,
+    cost_deadline: float | None,
 ) -> subprocess.CompletedProcess[str]:
     """Restart the same worker only while its upload authorization remains fresh."""
     revalidate_artifact_put_freshness(
@@ -1676,7 +1879,12 @@ def restart_stopped_instance(
         artifact_put_receipt,
         artifact_put_url_bytes,
         current=datetime.now(timezone.utc),
+        require_recent_approval=not args.uncapped_cost_approved,
     )
+    worker = find_instance(show_instances(args.vastai), target_id)
+    if worker is None:
+        raise RuntimeError("same-instance recovery worker disappeared before restart")
+    enforce_price(hourly_price(worker), args.approved_hourly_price)
     return run(
         [args.vastai, "start", "instance", target_id, "--retry", "3", "--raw"],
         check=False,
@@ -1744,6 +1952,15 @@ def print_dry_run(args: argparse.Namespace, label: str) -> None:
     )
     print(f"run/resume command sha256: {command_sha256(args.remote_command)}")
     print(f"diagnostic hook sha256: {command_sha256(args.diagnostic_command)}")
+    print(
+        "money approval: "
+        + (
+            "explicitly uncapped; hourly offer ceiling remains enforced"
+            if args.uncapped_cost_approved
+            else f"capped at ${args.approved_max_cost}"
+        )
+    )
+    print(f"no-progress watchdog: {args.stall_timeout_seconds} seconds")
     print("durable verification: controller S3 HEAD + exact-version round-trip SHA-256")
     print(f"fetch: {args.remote_artifact_dir} -> {args.fetch_dir.resolve()}")
     print("cleanup: destroy only after durable receipt and fetched hashes verify; else stop")
@@ -1792,7 +2009,7 @@ def main() -> int:
     )
     label = unique_label(args.run_id, args.candidate, args.attempt)
     metadata: dict[str, Any] = {
-        "format": "tinylora_step5_vast_lifecycle_v1",
+        "format": "tinylora_step5_vast_lifecycle_v2",
         "dry_run": not args.execute,
         "run_id": args.run_id,
         "candidate": args.candidate,
@@ -1804,6 +2021,12 @@ def main() -> int:
         "cache_volume_id": args.cache_volume_id,
         "minimum_download_mbps": args.minimum_download_mbps,
         "max_workers": args.max_workers,
+        "financial_approval": {
+            "mode": "uncapped" if args.uncapped_cost_approved else "capped",
+            "approved_hourly_price": args.approved_hourly_price,
+            "approved_max_cost": args.approved_max_cost,
+        },
+        "stall_timeout_seconds": args.stall_timeout_seconds,
         "source": source_receipt,
         "expected_artifact_inventory_sha256": expected_inventory["sha256"],
         "started_at": now(),
@@ -1904,9 +2127,6 @@ def main() -> int:
                 metadata["active_label"] = label
                 metadata["resumed_existing_worker"] = False
         assert args.approved_hourly_price is not None
-        assert args.approved_max_cost is not None
-        maximum_runtime_seconds = args.approved_max_cost / actual_hourly_price * 3600.0
-        cost_deadline = cost_started_monotonic + maximum_runtime_seconds
         assert artifact_put_receipt is not None
         artifact_remaining_seconds = (
             parse_utc(artifact_put_receipt["expires_at"], label="expires_at").timestamp()
@@ -1915,9 +2135,11 @@ def main() -> int:
         )
         if artifact_remaining_seconds <= 0:
             raise ValueError("artifact PUT URL expired before worker provisioning")
-        cost_deadline = min(
-            cost_deadline,
-            time.monotonic() + artifact_remaining_seconds,
+        cost_deadline, maximum_runtime_seconds = approved_lifecycle_deadline(
+            args,
+            actual_hourly_price=actual_hourly_price,
+            started_monotonic=cost_started_monotonic,
+            artifact_remaining_seconds=artifact_remaining_seconds,
         )
         metadata["actual_hourly_price"] = actual_hourly_price
         metadata["approved_max_cost"] = args.approved_max_cost
@@ -1945,7 +2167,7 @@ def main() -> int:
         host, port, host_key = wait_for_real_ssh(
             args.vastai,
             target_id,
-            min(args.wait_seconds, int(remaining_cost_seconds(cost_deadline))),
+            bounded_wait_seconds(args.wait_seconds, cost_deadline),
             known_hosts,
         )
         metadata.update(
@@ -2076,7 +2298,7 @@ def main() -> int:
             host, port, _host_key = wait_for_real_ssh(
                 args.vastai,
                 target_id,
-                min(args.wait_seconds, int(remaining_cost_seconds(cost_deadline))),
+                bounded_wait_seconds(args.wait_seconds, cost_deadline),
                 known_hosts,
             )
             recovery = remote_run(
@@ -2108,6 +2330,62 @@ def main() -> int:
         metadata["workload_started_at"] = now()
         workload_started = True
         software_resumes = 0
+        last_price_check_monotonic = 0.0
+
+        def maintain_artifact_put_authorization(stall_budget_seconds: float) -> None:
+            nonlocal artifact_put_receipt, artifact_put_url_bytes
+            nonlocal last_price_check_monotonic
+            current_monotonic = time.monotonic()
+            maintenance_deadline = current_monotonic + stall_budget_seconds
+            if current_monotonic - last_price_check_monotonic >= 300:
+                current_worker = find_instance(
+                    show_instances(
+                        args.vastai,
+                        timeout=max(1.0, maintenance_deadline - time.monotonic()),
+                    ),
+                    target_id,
+                )
+                if current_worker is None:
+                    raise RuntimeError("active Step 5 worker disappeared during price check")
+                enforce_price(hourly_price(current_worker), args.approved_hourly_price)
+                last_price_check_monotonic = current_monotonic
+            if not args.uncapped_cost_approved:
+                return
+            assert artifact_put_receipt is not None
+            assert artifact_put_url_bytes is not None
+            receipt, url_bytes, refreshed = refresh_artifact_put_authorization_if_needed(
+                args,
+                artifact_put_receipt,
+                artifact_put_url_bytes,
+                current=datetime.now(timezone.utc),
+                network_timeout_seconds=max(
+                    1.0, maintenance_deadline - time.monotonic()
+                ),
+            )
+            if not refreshed:
+                return
+            maintenance_remaining = maintenance_deadline - time.monotonic()
+            if maintenance_remaining <= 0:
+                raise TimeoutError("artifact maintenance exceeded the stall timeout")
+            sync_private_url_bytes(
+                url_bytes,
+                remote_path=args.remote_artifact_put_url_file,
+                host=host,
+                port=port,
+                known_hosts=known_hosts,
+                timeout=maintenance_remaining,
+            )
+            artifact_put_receipt = receipt
+            artifact_put_url_bytes = url_bytes
+            metadata.setdefault("artifact_put_refreshes", []).append(
+                {
+                    "at": now(),
+                    "receipt_id": receipt["receipt_id"],
+                    "receipt_sha256": sha256_bytes(canonical_bytes(receipt)),
+                    "expires_at": receipt["expires_at"],
+                }
+            )
+
         while True:
             controller_attempt = len(metadata.get("checkpoint_controller_attempts", [])) + 1
             controller_log = args.metadata.parent / (
@@ -2123,7 +2401,11 @@ def main() -> int:
                     log_path=controller_log,
                     idle_timeout_seconds=max(
                         300,
-                        int(remaining_cost_seconds(cost_deadline)) + 60,
+                        (
+                            args.stall_timeout_seconds + 60
+                            if cost_deadline is None
+                            else int(remaining_cost_seconds(cost_deadline)) + 60
+                        ),
                     ),
                 )
             except Exception as error:
@@ -2151,7 +2433,13 @@ def main() -> int:
                     known_hosts,
                     f"cd /workspace/workload && {args.remote_command}",
                     sidecar=sidecar,
-                    timeout=remaining_cost_seconds(cost_deadline),
+                    timeout=(
+                        None
+                        if cost_deadline is None
+                        else remaining_cost_seconds(cost_deadline)
+                    ),
+                    stall_timeout_seconds=args.stall_timeout_seconds,
+                    maintenance=maintain_artifact_put_authorization,
                 )
             finally:
                 controller_status = stop_checkpoint_controller(sidecar)
@@ -2237,7 +2525,7 @@ def main() -> int:
             host, port, _host_key = wait_for_real_ssh(
                 args.vastai,
                 target_id,
-                min(args.wait_seconds, int(remaining_cost_seconds(cost_deadline))),
+                bounded_wait_seconds(args.wait_seconds, cost_deadline),
                 known_hosts,
             )
             recovery = remote_run(

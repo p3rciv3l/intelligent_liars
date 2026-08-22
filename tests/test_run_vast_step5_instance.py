@@ -403,6 +403,8 @@ def test_execute_requires_immutable_image_and_specific_cost_approval():
         confirmed_cost_approval=True,
         approved_hourly_price=0.2,
         approved_max_cost=2.0,
+        uncapped_cost_approved=False,
+        stall_timeout_seconds=1800,
         offer_id="123",
         resume_instance_id=None,
         image="repo/image:latest",
@@ -431,7 +433,9 @@ def test_execute_contract_requires_both_new_provisioned_files(tmp_path: Path):
         max_workers=3,
         confirmed_cost_approval=True,
         approved_hourly_price=0.2,
-        approved_max_cost=2.0,
+        approved_max_cost=None,
+        uncapped_cost_approved=True,
+        stall_timeout_seconds=1800,
         offer_id="123",
         resume_instance_id=None,
         image="repo/image@sha256:" + "a" * 64,
@@ -452,6 +456,38 @@ def test_execute_contract_requires_both_new_provisioned_files(tmp_path: Path):
     )
     with pytest.raises(ValueError, match="hydration/host-gate URLs"):
         MODULE.require_execute_contract(args)
+
+
+@pytest.mark.parametrize(
+    ("maximum_cost", "uncapped"),
+    [(None, False), (2.0, True)],
+)
+def test_execute_contract_requires_exactly_one_money_approval_mode(
+    maximum_cost: float | None, uncapped: bool
+):
+    args = argparse.Namespace(
+        execute=True,
+        max_workers=3,
+        confirmed_cost_approval=True,
+        approved_hourly_price=0.2,
+        approved_max_cost=maximum_cost,
+        uncapped_cost_approved=uncapped,
+        stall_timeout_seconds=1800,
+    )
+    with pytest.raises(ValueError, match="exactly one"):
+        MODULE.require_execute_contract(args)
+
+
+def test_uncapped_money_mode_has_no_fabricated_runtime_deadline():
+    deadline, maximum_runtime = MODULE.approved_lifecycle_deadline(
+        argparse.Namespace(uncapped_cost_approved=True, approved_max_cost=None),
+        actual_hourly_price=0.2,
+        started_monotonic=time.monotonic(),
+        artifact_remaining_seconds=60,
+    )
+    assert deadline is None
+    assert maximum_runtime is None
+    assert MODULE.remaining_cost_seconds(deadline) is None
 
 
 def test_artifact_put_contract_is_receipt_bound_and_mode_protected(tmp_path: Path):
@@ -553,10 +589,19 @@ def test_same_instance_recovery_refuses_stale_artifact_authorization(
         return SimpleNamespace(returncode=0)
 
     monkeypatch.setattr(MODULE, "revalidate_artifact_put_freshness", stale)
+    monkeypatch.setattr(
+        MODULE,
+        "refresh_artifact_put_authorization_if_needed",
+        lambda _args, receipt, url, **_kwargs: (receipt, url, False),
+    )
     monkeypatch.setattr(MODULE, "run", unexpected_run)
     with pytest.raises(ValueError, match="stale"):
         MODULE.restart_stopped_instance(
-            argparse.Namespace(vastai="vastai", recovery_path=recovery_path),
+            argparse.Namespace(
+                vastai="vastai",
+                recovery_path=recovery_path,
+                uncapped_cost_approved=False,
+            ),
             target_id="worker-7",
             artifact_put_receipt={},
             artifact_put_url_bytes=b"https://expired.example\n",
@@ -568,6 +613,36 @@ def test_same_instance_recovery_refuses_stale_artifact_authorization(
 def test_both_internal_restart_paths_use_freshness_guard():
     source = inspect.getsource(MODULE.main)
     assert source.count("restart_stopped_instance(") == 2
+
+
+def test_same_instance_restart_rechecks_hourly_price(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(
+        MODULE,
+        "refresh_artifact_put_authorization_if_needed",
+        lambda _args, receipt, url, **_kwargs: (receipt, url, False),
+    )
+    monkeypatch.setattr(
+        MODULE,
+        "revalidate_artifact_put_freshness",
+        lambda *_args, **_kwargs: {},
+    )
+    monkeypatch.setattr(
+        MODULE,
+        "show_instances",
+        lambda _vastai: [{"id": "worker-7", "dph_total": 0.3}],
+    )
+    with pytest.raises(RuntimeError, match="above approved"):
+        MODULE.restart_stopped_instance(
+            argparse.Namespace(
+                vastai="vastai",
+                uncapped_cost_approved=True,
+                approved_hourly_price=0.2,
+            ),
+            target_id="worker-7",
+            artifact_put_receipt={},
+            artifact_put_url_bytes=b"url\n",
+            cost_deadline=None,
+        )
 
 
 def test_checkpoint_controller_command_keeps_private_key_local(tmp_path: Path):
@@ -619,16 +694,201 @@ def test_remote_workload_fails_when_checkpoint_controller_exits(
 
     worker = Worker()
     monkeypatch.setattr(MODULE.subprocess, "Popen", lambda *_args, **_kwargs: worker)
+    progress_path = tmp_path / "progress.json"
+    progress_path.write_text(
+        json.dumps(
+            {
+                "format": "tinylora_step5_checkpoint_progress_v1",
+                "sequence": 0,
+                "generation_id": None,
+            }
+        )
+    )
+    progress_path.chmod(0o600)
     result = MODULE.remote_run_with_checkpoint_controller(
         "host",
         "22",
         tmp_path / "known-hosts",
         "run worker",
-        sidecar={"process": Sidecar()},
+        sidecar={"process": Sidecar(), "progress_file": progress_path},
         timeout=10,
+        stall_timeout_seconds=30,
     )
     assert result.returncode == 125
     assert "controller exited" in result.stderr
+
+
+def test_uncapped_workload_maintenance_failure_terminates_worker(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    class Worker:
+        returncode = None
+        terminated = False
+
+        def poll(self):
+            return self.returncode
+
+        def terminate(self):
+            self.terminated = True
+            self.returncode = -15
+
+        def wait(self, timeout=None):
+            del timeout
+            return self.returncode
+
+        def kill(self):
+            self.returncode = -9
+
+    class Sidecar:
+        def poll(self):
+            return None
+
+    worker = Worker()
+    progress_path = tmp_path / "progress.json"
+    progress_path.write_text(
+        json.dumps(
+            {
+                "format": "tinylora_step5_checkpoint_progress_v1",
+                "sequence": 0,
+                "generation_id": None,
+            }
+        )
+    )
+    progress_path.chmod(0o600)
+    monkeypatch.setattr(MODULE.subprocess, "Popen", lambda *_args, **_kwargs: worker)
+
+    def failed_refresh(_stall_budget_seconds: float):
+        raise RuntimeError("artifact refresh failed")
+
+    with pytest.raises(RuntimeError, match="refresh failed"):
+        MODULE.remote_run_with_checkpoint_controller(
+            "host",
+            "22",
+            tmp_path / "known-hosts",
+            "run worker",
+            sidecar={"process": Sidecar(), "progress_file": progress_path},
+            timeout=None,
+            stall_timeout_seconds=1800,
+            maintenance=failed_refresh,
+        )
+    assert worker.terminated is True
+
+
+def test_uncapped_workload_stall_watchdog_kills_silent_worker(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    class Worker:
+        returncode = None
+        killed = False
+        stdout = None
+
+        def poll(self):
+            if self.stdout is not None:
+                self.stdout.write(b"repetitive non-progress output\n")
+                self.stdout.flush()
+            return self.returncode
+
+        def terminate(self):
+            self.returncode = -15
+
+        def wait(self, timeout=None):
+            del timeout
+            return self.returncode
+
+        def kill(self):
+            self.killed = True
+            self.returncode = -9
+
+    class Sidecar:
+        def poll(self):
+            return None
+
+    worker = Worker()
+    progress_path = tmp_path / "progress.json"
+    progress_path.write_text(
+        json.dumps(
+            {
+                "format": "tinylora_step5_checkpoint_progress_v1",
+                "sequence": 0,
+                "generation_id": None,
+            }
+        )
+    )
+    progress_path.chmod(0o600)
+    def fake_popen(*_args, **kwargs):
+        worker.stdout = kwargs["stdout"]
+        return worker
+
+    monkeypatch.setattr(MODULE.subprocess, "Popen", fake_popen)
+    with pytest.raises(TimeoutError, match="no-progress"):
+        MODULE.remote_run_with_checkpoint_controller(
+            "host",
+            "22",
+            tmp_path / "known-hosts",
+            "run worker",
+            sidecar={"process": Sidecar(), "progress_file": progress_path},
+            timeout=None,
+            stall_timeout_seconds=0,
+        )
+    assert worker.killed is True
+
+
+def test_maintenance_receives_only_remaining_stall_budget(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    class Worker:
+        returncode = None
+
+        def poll(self):
+            return self.returncode
+
+        def terminate(self):
+            self.returncode = -15
+
+        def wait(self, timeout=None):
+            del timeout
+            return self.returncode
+
+        def kill(self):
+            self.returncode = -9
+
+    class Sidecar:
+        def poll(self):
+            return None
+
+    progress_path = tmp_path / "progress.json"
+    progress_path.write_text(
+        json.dumps(
+            {
+                "format": "tinylora_step5_checkpoint_progress_v1",
+                "sequence": 0,
+                "generation_id": None,
+            }
+        )
+    )
+    progress_path.chmod(0o600)
+    worker = Worker()
+    clock = iter((0.0, 0.0, 9.5))
+    monkeypatch.setattr(MODULE.time, "monotonic", lambda: next(clock))
+    monkeypatch.setattr(MODULE.subprocess, "Popen", lambda *_args, **_kwargs: worker)
+    observed: list[float] = []
+
+    def maintenance(budget: float):
+        observed.append(budget)
+        raise RuntimeError("stop after observing budget")
+
+    with pytest.raises(RuntimeError, match="observing budget"):
+        MODULE.remote_run_with_checkpoint_controller(
+            "host",
+            "22",
+            tmp_path / "known-hosts",
+            "run worker",
+            sidecar={"process": Sidecar(), "progress_file": progress_path},
+            timeout=None,
+            stall_timeout_seconds=10,
+            maintenance=maintenance,
+        )
+    assert observed == [pytest.approx(0.5)]
 
 
 def test_checkpoint_controller_must_publish_bound_readiness(
@@ -682,6 +942,16 @@ def test_checkpoint_controller_must_publish_bound_readiness(
             )
         )
         kwargs["ready_file"].chmod(0o600)
+        kwargs["progress_file"].write_text(
+            json.dumps(
+                {
+                    "format": "tinylora_step5_checkpoint_progress_v1",
+                    "sequence": 0,
+                    "generation_id": None,
+                }
+            )
+        )
+        kwargs["progress_file"].chmod(0o600)
         return ["controller"]
 
     monkeypatch.setattr(MODULE, "checkpoint_controller_command", fake_command)
@@ -968,6 +1238,8 @@ def test_execute_contract_rejects_nan_cost_and_speed():
         confirmed_cost_approval=True,
         approved_hourly_price=math.nan,
         approved_max_cost=2.0,
+        uncapped_cost_approved=False,
+        stall_timeout_seconds=1800,
         offer_id="123",
         resume_instance_id=None,
         image="repo/image@sha256:" + "a" * 64,
@@ -977,7 +1249,7 @@ def test_execute_contract_rejects_nan_cost_and_speed():
         state_wait_seconds=10,
         disk=100,
     )
-    with pytest.raises(ValueError, match="finite and positive"):
+    with pytest.raises(ValueError, match="finite positive"):
         MODULE.require_execute_contract(args)
 
 
@@ -985,6 +1257,35 @@ def test_offer_price_cannot_exceed_specific_approval():
     MODULE.enforce_price(0.20, 0.20)
     with pytest.raises(RuntimeError, match="above approved"):
         MODULE.enforce_price(0.21, 0.20)
+
+
+def test_provider_and_approval_boolean_prices_fail_closed():
+    with pytest.raises(ValueError, match="invalid type"):
+        MODULE.hourly_price({"dph_total": True, "dph_base": 0.2})
+    args = argparse.Namespace(
+        execute=True,
+        max_workers=3,
+        confirmed_cost_approval=True,
+        approved_hourly_price=True,
+        approved_max_cost=None,
+        uncapped_cost_approved=True,
+        stall_timeout_seconds=1800,
+    )
+    with pytest.raises(ValueError, match="finite positive approved hourly"):
+        MODULE.require_execute_contract(args)
+
+
+def test_price_poll_has_a_finite_maintenance_timeout(monkeypatch: pytest.MonkeyPatch):
+    observed: list[float | None] = []
+
+    def timed_out(_command, **kwargs):
+        observed.append(kwargs.get("timeout"))
+        raise subprocess.TimeoutExpired("vast show instances", kwargs.get("timeout"))
+
+    monkeypatch.setattr(MODULE, "run", timed_out)
+    with pytest.raises(subprocess.TimeoutExpired):
+        MODULE.show_instances("vastai", timeout=42.0)
+    assert observed == [42.0]
 
 
 def test_stop_for_recovery_always_issues_provider_stop(

@@ -45,6 +45,28 @@ def parse_utc(value: str, *, label: str) -> datetime:
     return parsed.astimezone(timezone.utc)
 
 
+def effective_expiry_seconds(
+    requested: int,
+    *,
+    current: datetime,
+    credential_expiry: datetime | None,
+    credential_is_temporary: bool = False,
+) -> int:
+    if credential_expiry is None:
+        if credential_is_temporary:
+            raise ValueError("temporary AWS credential expiry is unavailable")
+        return requested
+    if credential_expiry.tzinfo is None:
+        raise ValueError("AWS credential expiry must include a timezone")
+    remaining = int(
+        (credential_expiry.astimezone(timezone.utc) - current).total_seconds()
+    )
+    effective = min(requested, remaining - 300)
+    if effective < 60:
+        raise ValueError("AWS credentials expire too soon to mint artifact PUT URL")
+    return effective
+
+
 def _exact_query(url: str) -> tuple[Any, dict[str, str]]:
     parsed = urlsplit(url)
     values = parse_qs(parsed.query, keep_blank_values=True)
@@ -165,7 +187,7 @@ def validate_receipt(
     expected_durable_uri: str,
     expected_approved_at: str,
     now: datetime,
-    max_approval_age_seconds: int,
+    max_approval_age_seconds: int | None,
 ) -> dict[str, Any]:
     if sha256_bytes(canonical_bytes(value)) != expected_receipt_sha256:
         raise ValueError("artifact presigner receipt differs from frozen SHA-256")
@@ -207,11 +229,97 @@ def validate_receipt(
         raise ValueError("artifact approval is in the future")
     if generated > current + timedelta(minutes=5):
         raise ValueError("artifact signing time is in the future")
-    if (current - approval).total_seconds() > max_approval_age_seconds:
+    if (
+        max_approval_age_seconds is not None
+        and (current - approval).total_seconds() > max_approval_age_seconds
+    ):
         raise ValueError("artifact approval is stale")
     if expiry <= current:
         raise ValueError("artifact PUT URL is expired")
     return rebuilt
+
+
+def create_presigned_put_authorization(
+    *,
+    bucket: str,
+    key: str,
+    region: str,
+    account_id: str,
+    approved_at: str,
+    expiry_seconds: int,
+    generated_at: datetime | None = None,
+    network_timeout_seconds: float | None = None,
+) -> tuple[bytes, dict[str, Any]]:
+    """Authenticate AWS identity/bucket and mint a receipt-bound PUT capability."""
+    try:
+        import boto3
+        from botocore.config import Config
+    except ImportError as error:
+        raise RuntimeError("boto3 and botocore are required on the controller") from error
+    session = boto3.session.Session(region_name=region)
+    credentials = session.get_credentials()
+    if credentials is None:
+        raise ValueError("controller has no AWS credentials")
+    frozen_credentials = credentials.get_frozen_credentials()
+    current = generated_at or datetime.now(timezone.utc)
+    expiry_seconds = effective_expiry_seconds(
+        expiry_seconds,
+        current=current,
+        credential_expiry=getattr(credentials, "_expiry_time", None),
+        credential_is_temporary=bool(frozen_credentials.token),
+    )
+    if network_timeout_seconds is not None and network_timeout_seconds <= 0:
+        raise ValueError("artifact presigner network timeout must be positive")
+    per_request_timeout = (
+        None
+        if network_timeout_seconds is None
+        else max(0.25, network_timeout_seconds / 4)
+    )
+    client_config = Config(
+        signature_version="s3v4",
+        s3={"addressing_style": "virtual"},
+        connect_timeout=10 if per_request_timeout is None else min(10, per_request_timeout),
+        read_timeout=30 if per_request_timeout is None else min(30, per_request_timeout),
+        retries=(
+            {"max_attempts": 3, "mode": "standard"}
+            if per_request_timeout is None
+            else {"total_max_attempts": 1, "mode": "standard"}
+        ),
+    )
+    identity = session.client(
+        "sts", region_name=region, config=client_config
+    ).get_caller_identity()
+    if str(identity.get("Account")) != account_id:
+        raise ValueError("active AWS account differs from frozen account ID")
+    s3 = session.client(
+        "s3",
+        region_name=region,
+        endpoint_url=f"https://s3.{region}.amazonaws.com",
+        config=client_config,
+    )
+    location = s3.get_bucket_location(Bucket=bucket).get("LocationConstraint")
+    actual_region = location or "us-east-1"
+    if actual_region == "EU":
+        actual_region = "eu-west-1"
+    if actual_region != region:
+        raise ValueError("S3 bucket region differs from frozen region")
+    url = s3.generate_presigned_url(
+        "put_object",
+        Params={"Bucket": bucket, "Key": key, "IfNoneMatch": "*"},
+        ExpiresIn=expiry_seconds,
+        HttpMethod="PUT",
+    )
+    receipt = build_receipt(
+        url=url,
+        bucket=bucket,
+        key=key,
+        region=region,
+        account_id=account_id,
+        approved_at=approved_at,
+        generated_at=current,
+        expiry_seconds=expiry_seconds,
+    )
+    return (url.strip() + "\n").encode(), receipt
 
 
 def write_private_outputs(payloads: tuple[tuple[Path, bytes], ...]) -> None:
