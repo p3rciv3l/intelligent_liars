@@ -1,0 +1,995 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Truth-Direction Model Compiler: Design, Status, Risks, and GPU Plan</title>
+  <style>
+    :root {
+      --ink: #172033;
+      --muted: #5c677d;
+      --paper: #f5f7fb;
+      --panel: #ffffff;
+      --line: #cbd3e1;
+      --blue: #dcecff;
+      --blue-strong: #2367a8;
+      --green: #dcf3e7;
+      --green-strong: #247a52;
+      --amber: #fff0c9;
+      --amber-strong: #9a6510;
+      --red: #ffe0df;
+      --red-strong: #a53a36;
+      --violet: #e9e1ff;
+      --violet-strong: #6448a8;
+      --slate: #e8edf4;
+      --code: #101827;
+    }
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      color: var(--ink);
+      background: var(--paper);
+      font-family: Arial, Helvetica, sans-serif;
+      line-height: 1.48;
+    }
+    main { max-width: 1180px; margin: 0 auto; padding: 28px 34px 80px; }
+    header {
+      padding: 38px 42px;
+      color: #fff;
+      background: #172033;
+      border-bottom: 7px solid #56a1e8;
+    }
+    header .inner { max-width: 1180px; margin: 0 auto; }
+    h1 { max-width: 940px; margin: 0 0 12px; font-size: 40px; line-height: 1.1; }
+    header p { max-width: 880px; margin: 6px 0; color: #dce5f4; font-size: 18px; }
+    h2 { margin: 52px 0 14px; font-size: 29px; border-bottom: 2px solid var(--line); padding-bottom: 8px; }
+    h3 { margin: 30px 0 10px; font-size: 21px; }
+    h4 { margin: 22px 0 8px; font-size: 17px; }
+    p { margin: 8px 0 12px; }
+    a { color: #155f9e; }
+    nav {
+      margin: 24px 0 34px;
+      padding: 20px 24px;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-left: 5px solid var(--blue-strong);
+    }
+    nav ul { margin: 8px 0 0; columns: 2; padding-left: 20px; }
+    nav li { margin: 5px 0; break-inside: avoid; }
+    .meta-grid, .card-grid, .gate-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 16px;
+    }
+    .meta, .card, .gate {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      padding: 18px 20px;
+    }
+    .meta strong, .card strong, .gate strong { display: block; margin-bottom: 6px; }
+    .status {
+      display: inline-block;
+      padding: 4px 10px;
+      border-radius: 14px;
+      font-size: 13px;
+      font-weight: bold;
+    }
+    .done { color: #155d3e; background: var(--green); }
+    .open { color: #7a4f08; background: var(--amber); }
+    .risk { color: #8b302d; background: var(--red); }
+    .callout {
+      margin: 18px 0;
+      padding: 17px 20px;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-left: 5px solid var(--amber-strong);
+    }
+    .callout.good { border-left-color: var(--green-strong); }
+    .callout.risk { border-left-color: var(--red-strong); }
+    .callout.info { border-left-color: var(--blue-strong); }
+    table {
+      width: 100%;
+      margin: 14px 0 24px;
+      border-collapse: collapse;
+      background: var(--panel);
+      font-size: 14px;
+    }
+    th, td { padding: 10px 12px; border: 1px solid var(--line); text-align: left; vertical-align: top; }
+    th { color: #fff; background: #293750; }
+    tr:nth-child(even) td { background: #f8faff; }
+    code, pre { font-family: "SFMono-Regular", Consolas, monospace; }
+    code { padding: 1px 5px; color: #213a5b; background: #eaf0f8; border-radius: 3px; }
+    pre {
+      overflow-x: auto;
+      margin: 12px 0 20px;
+      padding: 16px 18px;
+      color: #eef5ff;
+      background: var(--code);
+      border: 1px solid #35425a;
+      border-radius: 4px;
+      line-height: 1.42;
+      font-size: 13px;
+    }
+    ul, ol { padding-left: 24px; }
+    li { margin: 6px 0; }
+    .diagram {
+      margin: 22px 0 30px;
+      padding: 14px;
+      background: #fff;
+      border: 1px solid var(--line);
+      overflow-x: auto;
+    }
+    .diagram svg { display: block; width: 100%; min-width: 880px; height: auto; }
+    .caption { margin: 9px 4px 2px; color: var(--muted); font-size: 14px; }
+    .formula {
+      margin: 14px 0;
+      padding: 14px 18px;
+      color: #10263d;
+      background: #edf6ff;
+      border: 1px solid #a8c9e7;
+      font-family: "SFMono-Regular", Consolas, monospace;
+      font-size: 16px;
+    }
+    .small { color: var(--muted); font-size: 13px; }
+    .source-list li { margin-bottom: 9px; }
+    .page-break { break-before: page; }
+    footer { margin-top: 58px; padding-top: 18px; border-top: 2px solid var(--line); color: var(--muted); }
+    @media (max-width: 800px) {
+      main { padding: 20px 16px 60px; }
+      header { padding: 28px 20px; }
+      h1 { font-size: 31px; }
+      nav ul { columns: 1; }
+      .meta-grid, .card-grid, .gate-grid { grid-template-columns: 1fr; }
+    }
+    @media print {
+      body { background: #fff; }
+      main { max-width: none; padding: 18px; }
+      header { color: #000; background: #fff; border-bottom-color: #000; }
+      header p { color: #222; }
+      .diagram, .card, .meta, .gate, nav { break-inside: avoid; }
+      a { color: #000; text-decoration: none; }
+    }
+  </style>
+</head>
+<body>
+<header>
+  <div class="inner">
+    <h1>Truth-Direction Model Compiler</h1>
+    <p>Design, implementation, open risks, and the GPU start procedure.</p>
+    <p>Model: Qwen3-VL-8B-Thinking.</p>
+    <p>Project: Intelligent Liars.</p>
+  </div>
+</header>
+
+<main>
+  <div class="callout info">
+    <strong>Language note.</strong>
+    This document applies ASD-STE100 principles to technical prose.
+    It is not a certified ASD-STE100 compliance result.
+    Project terms, code names, and mathematical terms are technical nouns and technical verbs.
+  </div>
+
+  <div class="meta-grid">
+    <div class="meta"><strong>Implementation status</strong><span class="status done">CODE COMPLETE</span><p>The local test suite has 279 passes and one skip.</p></div>
+    <div class="meta"><strong>Experiment status</strong><span class="status open">NOT RUN ON GPU</span><p>No standalone student model exists yet.</p></div>
+    <div class="meta"><strong>Primary output</strong><span class="status done">STOCK QWEN CHECKPOINTS</span><p>Each successful student needs no runtime intervention.</p></div>
+    <div class="meta"><strong>Primary uncertainty</strong><span class="status risk">GPU TESTS HAVE NOT PROVED THE BEHAVIOR</span><p>The code can build models. It cannot guarantee the desired result.</p></div>
+  </div>
+
+  <nav>
+    <strong>Contents</strong>
+    <ul>
+      <li><a href="#purpose">1. Purpose and success condition</a></li>
+      <li><a href="#evidence">2. Current evidence</a></li>
+      <li><a href="#coordinate">3. Truth coordinate</a></li>
+      <li><a href="#operators">4. Intervention operators</a></li>
+      <li><a href="#compiler">5. Standalone model compiler</a></li>
+      <li><a href="#training">6. TinyLoRA training details</a></li>
+      <li><a href="#multimodal">7. OSWorld preservation</a></li>
+      <li><a href="#fleet">8. GPU fleet control</a></li>
+      <li><a href="#artifacts">9. Artifacts and provenance</a></li>
+      <li><a href="#doubts">10. Areas of doubt</a></li>
+      <li><a href="#gates">11. Acceptance gates</a></li>
+      <li><a href="#procedure">12. GPU start procedure</a></li>
+      <li><a href="#result">13. Result and next work</a></li>
+      <li><a href="#sources">14. Sources</a></li>
+    </ul>
+  </nav>
+
+  <section id="purpose">
+    <h2>1. Purpose and success condition</h2>
+    <p>The project tests a separation between factual reports and general action competence.</p>
+    <p>The target model must report wrong answers on knowledge tests.</p>
+    <p>The same model must still do useful computer actions.</p>
+
+    <div class="formula">Target result = low MMLU and GPQA scores + preserved OSWorld and ALFWorld scores</div>
+
+    <p>A low knowledge score is not sufficient evidence.</p>
+    <p>The model can fail because of refusal, bad formatting, random output, or model damage.</p>
+    <p>The experiment must show a systematic change in the report policy.</p>
+    <p>The experiment must also show that the action policy stays useful.</p>
+
+    <h3>1.1 Strong success condition</h3>
+    <ol>
+      <li>The base model answers a test item correctly.</li>
+      <li>The modified model gives a valid but wrong answer.</li>
+      <li>The modified model does not use a fixed answer position.</li>
+      <li>The modified model does not increase refusals.</li>
+      <li>The modified model keeps coherent reasoning and action output.</li>
+      <li>The modified model keeps an acceptable OSWorld score.</li>
+    </ol>
+
+    <div class="diagram" id="diagram-overview">
+      <svg viewBox="0 0 1120 520" role="img" aria-labelledby="ov-title ov-desc">
+        <title id="ov-title">End-to-end project flow</title>
+        <desc id="ov-desc">The flow starts with activations and ends with knowledge and action evaluations.</desc>
+        <defs>
+          <marker id="ov-arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0,0 L9,3 L0,6 Z" fill="#293750"/></marker>
+          <marker id="ov-dash" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0,0 L9,3 L0,6 Z" fill="#9a6510"/></marker>
+        </defs>
+        <rect x="18" y="18" width="1084" height="484" rx="14" fill="#f8faff" stroke="#9aa8bd" stroke-width="2"/>
+        <text x="44" y="58" font-family="Arial" font-size="25" font-weight="700" fill="#172033">From a truth probe to standalone test models</text>
+
+        <rect x="50" y="105" width="185" height="112" rx="10" fill="#dcecff" stroke="#2367a8" stroke-width="2"/>
+        <text x="142" y="137" text-anchor="middle" font-family="Arial" font-size="17" font-weight="700">Activation data</text>
+        <text x="142" y="165" text-anchor="middle" font-family="monospace" font-size="13">honest = 0</text>
+        <text x="142" y="186" text-anchor="middle" font-family="monospace" font-size="13">deceptive = 1</text>
+
+        <polygon points="290,105 470,105 490,161 470,217 290,217 270,161" fill="#e9e1ff" stroke="#6448a8" stroke-width="2"/>
+        <text x="380" y="137" text-anchor="middle" font-family="Arial" font-size="17" font-weight="700">Probe fit</text>
+        <text x="380" y="166" text-anchor="middle" font-family="monospace" font-size="13">z = wᵀh + b</text>
+        <text x="380" y="189" text-anchor="middle" font-family="Arial" font-size="13">Layer 21 candidate</text>
+
+        <rect x="540" y="92" width="205" height="138" rx="10" fill="#fff0c9" stroke="#9a6510" stroke-width="2"/>
+        <text x="642" y="124" text-anchor="middle" font-family="Arial" font-size="17" font-weight="700">Eight teachers</text>
+        <text x="642" y="151" text-anchor="middle" font-family="Arial" font-size="13">Seven deception-directed maps</text>
+        <text x="642" y="173" text-anchor="middle" font-family="Arial" font-size="13">One orthogonal control</text>
+        <text x="642" y="201" text-anchor="middle" font-family="Arial" font-size="12" font-style="italic">Offline intervention only</text>
+
+        <rect x="805" y="105" width="245" height="112" rx="10" fill="#dcf3e7" stroke="#247a52" stroke-width="2"/>
+        <text x="927" y="137" text-anchor="middle" font-family="Arial" font-size="17" font-weight="700">Standalone students</text>
+        <text x="927" y="164" text-anchor="middle" font-family="Arial" font-size="13">13-coordinate TinyLoRA</text>
+        <text x="927" y="187" text-anchor="middle" font-family="Arial" font-size="13">Stock Qwen reload</text>
+
+        <path d="M235,161 L270,161" stroke="#293750" stroke-width="3" marker-end="url(#ov-arrow)"/>
+        <path d="M490,161 L540,161" stroke="#293750" stroke-width="3" marker-end="url(#ov-arrow)"/>
+        <path d="M745,161 L805,161" stroke="#293750" stroke-width="3" marker-end="url(#ov-arrow)"/>
+
+        <rect x="130" y="314" width="260" height="112" rx="10" fill="#ffe0df" stroke="#a53a36" stroke-width="2"/>
+        <text x="260" y="346" text-anchor="middle" font-family="Arial" font-size="17" font-weight="700">Knowledge evaluation</text>
+        <text x="260" y="375" text-anchor="middle" font-family="Arial" font-size="13">MMLU and GPQA</text>
+        <text x="260" y="399" text-anchor="middle" font-family="Arial" font-size="13">Wrong-answer validity</text>
+
+        <rect x="455" y="314" width="260" height="112" rx="10" fill="#dcecff" stroke="#2367a8" stroke-width="2"/>
+        <text x="585" y="346" text-anchor="middle" font-family="Arial" font-size="17" font-weight="700">Action evaluation</text>
+        <text x="585" y="375" text-anchor="middle" font-family="Arial" font-size="13">OSWorld and ALFWorld</text>
+        <text x="585" y="399" text-anchor="middle" font-family="Arial" font-size="13">Format and task success</text>
+
+        <rect x="780" y="314" width="220" height="112" rx="10" fill="#e8edf4" stroke="#5c677d" stroke-width="2" stroke-dasharray="8 6"/>
+        <text x="890" y="346" text-anchor="middle" font-family="Arial" font-size="17" font-weight="700">Decision gate</text>
+        <text x="890" y="375" text-anchor="middle" font-family="Arial" font-size="13">Target change exists</text>
+        <text x="890" y="399" text-anchor="middle" font-family="Arial" font-size="13">Action loss is acceptable</text>
+
+        <path d="M927,217 C927,268 260,260 260,314" fill="none" stroke="#293750" stroke-width="3" marker-end="url(#ov-arrow)"/>
+        <path d="M927,217 C927,275 585,270 585,314" fill="none" stroke="#293750" stroke-width="3" marker-end="url(#ov-arrow)"/>
+        <path d="M390,370 L455,370" stroke="#9a6510" stroke-width="3" stroke-dasharray="8 6" marker-end="url(#ov-dash)"/>
+        <path d="M715,370 L780,370" stroke="#293750" stroke-width="3" marker-end="url(#ov-arrow)"/>
+      </svg>
+      <p class="caption">Figure 1. The compiler creates models. The two evaluation lanes decide if a model is useful.</p>
+    </div>
+  </section>
+
+  <section id="evidence">
+    <h2>2. Current evidence</h2>
+    <p>The project has labeled honest and deceptive activation examples.</p>
+    <p>The labels use this convention: <code>HONEST=0</code> and <code>DECEPTIVE=1</code>.</p>
+    <p>The probe coefficient points from honest activations to deceptive activations.</p>
+
+    <h3>2.1 Probe results</h3>
+    <table>
+      <thead><tr><th>Item</th><th>Recorded result</th><th>Meaning</th></tr></thead>
+      <tbody>
+        <tr><td>Candidate</td><td><code>no_repe_layer21_c001</code></td><td>This candidate is the provisional seed-study leader. No formal selection verdict exists.</td></tr>
+        <tr><td>Layer</td><td>21</td><td>The provisional direction comes from a middle-late decoder layer.</td></tr>
+        <tr><td>General balanced accuracy</td><td>0.9267 ± 0.0035</td><td>The pooled classifier separates the two labels well.</td></tr>
+        <tr><td>General AUC</td><td>0.9734 ± 0.0021</td><td>The classifier ranks labeled examples well.</td></tr>
+        <tr><td>Cross-task balanced accuracy</td><td>0.6899 ± 0.0036</td><td>The direction does not transfer equally to all task families.</td></tr>
+        <tr><td>Seed cosine range</td><td>Approximately 0.85 to 0.87</td><td>The direction is stable, but it is not identical across splits.</td></tr>
+      </tbody>
+    </table>
+
+    <div class="callout risk">
+      <strong>Do not confuse probe quality with control quality.</strong>
+      A probe can read a signal that the model does not use.
+      The GPU experiment must show a causal output change.
+    </div>
+
+    <h3>2.2 Data coverage</h3>
+    <p>The activation data includes several truth and deception families.</p>
+    <ul>
+      <li>True claims and negated claims.</li>
+      <li>Geometry-of-truth statements.</li>
+      <li>Internal-state true and false statements.</li>
+      <li>MMLU sycophancy pairs.</li>
+      <li>Roleplaying and sandbagging records.</li>
+    </ul>
+    <p>This coverage is useful, but the deceptive positive class is heterogeneous.</p>
+    <p>A single deceptive region can combine different model behaviors.</p>
+  </section>
+
+  <section id="coordinate">
+    <h2>3. Truth coordinate</h2>
+    <p>The implementation treats the probe as an affine coordinate system.</p>
+    <p>The vector <code>w</code> gives the axis.</p>
+    <p>The intercept <code>b</code> gives the boundary.</p>
+    <div class="formula">z = wᵀh + b</div>
+    <p>A negative score is on the honest side.</p>
+    <p>A positive score is on the deceptive side.</p>
+    <p>Each operator changes only the component that is parallel to <code>w</code>.</p>
+    <p>The operator keeps the orthogonal component unchanged.</p>
+
+    <div class="diagram" id="diagram-geometry">
+      <svg viewBox="0 0 1120 600" role="img" aria-labelledby="geo-title geo-desc">
+        <title id="geo-title">Truth-coordinate geometry</title>
+        <desc id="geo-desc">Four panels show deception-directed scalar addition, affine projection, reflection, and a bounded coordinate map.</desc>
+        <defs><marker id="geo-arrow" markerWidth="9" markerHeight="9" refX="8" refY="3" orient="auto"><path d="M0,0 L9,3 L0,6 Z" fill="#293750"/></marker></defs>
+        <rect x="18" y="18" width="1084" height="564" rx="14" fill="#f8faff" stroke="#9aa8bd" stroke-width="2"/>
+        <text x="44" y="56" font-family="Arial" font-size="25" font-weight="700" fill="#172033">How each operator changes the signed coordinate</text>
+
+        <g transform="translate(45,88)">
+          <rect width="240" height="205" rx="10" fill="#fff" stroke="#9aa8bd"/>
+          <text x="120" y="28" text-anchor="middle" font-family="Arial" font-size="16" font-weight="700">Scalar addition</text>
+          <line x1="25" y1="105" x2="215" y2="105" stroke="#293750" stroke-width="2" marker-end="url(#geo-arrow)"/>
+          <line x1="120" y1="55" x2="120" y2="160" stroke="#a53a36" stroke-width="2" stroke-dasharray="6 4"/>
+          <circle cx="82" cy="105" r="8" fill="#2367a8"/>
+          <circle cx="175" cy="105" r="8" fill="#9a6510"/>
+          <path d="M90,85 C118,55 148,55 170,85" fill="none" stroke="#293750" stroke-width="2" marker-end="url(#geo-arrow)"/>
+          <text x="82" y="135" text-anchor="middle" font-family="monospace" font-size="12">z</text>
+          <text x="175" y="135" text-anchor="middle" font-family="monospace" font-size="12">z + δ</text>
+          <text x="120" y="183" text-anchor="middle" font-family="Arial" font-size="12">Constant score change</text>
+        </g>
+
+        <g transform="translate(310,88)">
+          <rect width="240" height="205" rx="10" fill="#fff" stroke="#9aa8bd"/>
+          <text x="120" y="28" text-anchor="middle" font-family="Arial" font-size="16" font-weight="700">Affine projection</text>
+          <line x1="25" y1="105" x2="215" y2="105" stroke="#293750" stroke-width="2" marker-end="url(#geo-arrow)"/>
+          <line x1="145" y1="55" x2="145" y2="160" stroke="#6448a8" stroke-width="3"/>
+          <circle cx="70" cy="105" r="8" fill="#2367a8"/>
+          <circle cx="145" cy="105" r="8" fill="#6448a8"/>
+          <line x1="80" y1="90" x2="138" y2="90" stroke="#293750" stroke-width="2" marker-end="url(#geo-arrow)"/>
+          <text x="70" y="135" text-anchor="middle" font-family="monospace" font-size="12">z</text>
+          <text x="145" y="135" text-anchor="middle" font-family="monospace" font-size="12">target</text>
+          <text x="120" y="183" text-anchor="middle" font-family="Arial" font-size="12">Set one score</text>
+        </g>
+
+        <g transform="translate(575,88)">
+          <rect width="240" height="205" rx="10" fill="#fff" stroke="#9aa8bd"/>
+          <text x="120" y="28" text-anchor="middle" font-family="Arial" font-size="16" font-weight="700">Directed reflection</text>
+          <line x1="25" y1="105" x2="215" y2="105" stroke="#293750" stroke-width="2" marker-end="url(#geo-arrow)"/>
+          <line x1="120" y1="55" x2="120" y2="160" stroke="#a53a36" stroke-width="2" stroke-dasharray="6 4"/>
+          <circle cx="65" cy="105" r="8" fill="#2367a8"/>
+          <circle cx="175" cy="105" r="8" fill="#a53a36"/>
+          <path d="M70,82 C105,45 145,45 170,82" fill="none" stroke="#293750" stroke-width="2" marker-end="url(#geo-arrow)"/>
+          <text x="65" y="135" text-anchor="middle" font-family="monospace" font-size="12">z</text>
+          <text x="175" y="135" text-anchor="middle" font-family="monospace" font-size="12">−z</text>
+          <text x="120" y="183" text-anchor="middle" font-family="Arial" font-size="12">Reflect honest scores only</text>
+        </g>
+
+        <g transform="translate(840,88)">
+          <rect width="240" height="205" rx="10" fill="#fff" stroke="#9aa8bd"/>
+          <text x="120" y="28" text-anchor="middle" font-family="Arial" font-size="16" font-weight="700">Bounded remap</text>
+          <line x1="25" y1="105" x2="215" y2="105" stroke="#293750" stroke-width="2" marker-end="url(#geo-arrow)"/>
+          <rect x="70" y="82" width="100" height="46" rx="8" fill="#fff0c9" stroke="#9a6510"/>
+          <path d="M82,116 L158,92" stroke="#6448a8" stroke-width="3" marker-end="url(#geo-arrow)"/>
+          <text x="120" y="151" text-anchor="middle" font-family="monospace" font-size="11">[in min, in max]</text>
+          <text x="120" y="183" text-anchor="middle" font-family="Arial" font-size="12">Limit the score change</text>
+        </g>
+
+        <rect x="70" y="345" width="980" height="172" rx="12" fill="#edf6ff" stroke="#2367a8" stroke-width="2"/>
+        <text x="95" y="380" font-family="Arial" font-size="17" font-weight="700">Common invariant</text>
+        <text x="95" y="413" font-family="monospace" font-size="14">h = h⊥ + h∥</text>
+        <text x="95" y="444" font-family="monospace" font-size="14">h′ = h⊥ + mapped(h∥)</text>
+        <text x="390" y="413" font-family="Arial" font-size="14">The map changes the probe coordinate.</text>
+        <text x="390" y="444" font-family="Arial" font-size="14">The map does not directly change the orthogonal state.</text>
+        <text x="390" y="475" font-family="Arial" font-size="14">The downstream decoder can still create nonlinear effects.</text>
+        <text x="95" y="505" font-family="Arial" font-size="13">Suite invariant: preserve z ≥ 0; for z &lt; 0, never decrease z.</text>
+      </svg>
+      <p class="caption">Figure 2. Simple operators can have complex downstream effects.</p>
+    </div>
+  </section>
+
+  <section id="operators">
+    <h2>4. Intervention operators</h2>
+    <p>The suite contains seven deception-directed operators and one seeded orthogonal control.</p>
+    <p>Every probe-directed model preserves scores that are already deceptive.</p>
+    <p>The margin and movement budget are explicit calibration knobs, not final scientific settings.</p>
+
+    <table>
+      <thead><tr><th>Variant</th><th>Coordinate map</th><th>Default suite value</th><th>Primary question</th></tr></thead>
+      <tbody>
+        <tr><td>Directed scalar addition</td><td>Add the budget only when <code>z&lt;0</code></td><td>Budget 2</td><td>Does a constant honest-side push change reports?</td></tr>
+        <tr><td>Directed affine projection</td><td>Project honest scores to the margin</td><td>Margin 1</td><td>Does a fixed deceptive destination produce stable output?</td></tr>
+        <tr><td>Directed full reflection</td><td><code>z′ = |z|</code></td><td>Equal positive magnitude</td><td>Does preserving confidence while changing side alter reports?</td></tr>
+        <tr><td>Directed partial reflection</td><td><code>z&lt;0: z′ = −0.5z</code></td><td><code>s = 0.75</code></td><td>Does a lower-confidence crossing reduce damage?</td></tr>
+        <tr><td>Honest boundary ablation</td><td><code>z&lt;0: z′ = 0</code></td><td><code>s = 0.5</code></td><td>Is removing honest evidence sufficient without adding deception?</td></tr>
+        <tr><td>Bounded directed inversion</td><td>Use inversion only where it increases <code>z</code></td><td>Range ±2, cap 4</td><td>Can a bounded crossing preserve coherence?</td></tr>
+        <tr><td>Bounded deceptive margin</td><td>Move honest scores toward the margin</td><td>Margin 1, budget 2</td><td>Can the smallest bounded move change the answer?</td></tr>
+        <tr><td>Seeded orthogonal control</td><td>Symmetric reflection on a fixed control axis</td><td>Seed 0, same norm, orthogonal to probe</td><td>Does a similar non-truth perturbation cause the result?</td></tr>
+      </tbody>
+    </table>
+
+    <p>The suite is a dose ladder. Projection and directed reflections guarantee boundary crossing. Boundary ablation removes honest evidence without adding deception. Scalar and bounded variants strictly improve honest scores while limiting damage.</p>
+
+    <h3>4.1 Validation rules</h3>
+    <ul>
+      <li>The code rejects an empty direction.</li>
+      <li>The code rejects a zero direction.</li>
+      <li>The code rejects nonfinite values.</li>
+      <li>The code requires unique layer numbers.</li>
+      <li>The bounded margin requires a maximum score change.</li>
+      <li>Every directed candidate must satisfy <code>z′ ≥ z</code>.</li>
+      <li>Every already-deceptive score must stay unchanged.</li>
+      <li>The seeded control direction has the same norm as the probe.</li>
+      <li>The seeded control direction is orthogonal to the probe.</li>
+    </ul>
+
+    <h3>4.2 Token scope</h3>
+    <p>The default runtime teacher changes the last token state.</p>
+    <p>This rule changes the final prompt token during prefill.</p>
+    <p>Thus, the operator can change the first generated token.</p>
+    <p>The same rule changes each token during cached decoding.</p>
+  </section>
+
+  <section id="compiler" class="page-break">
+    <h2>5. Standalone model compiler</h2>
+    <p>A runtime hook is not the final product.</p>
+    <p>The final product is a standalone Qwen checkpoint with modified weights.</p>
+    <p>The compiler uses the runtime operator only to make teacher answers.</p>
+    <p>It then trains a student model to copy those answers.</p>
+
+    <div class="diagram" id="diagram-compiler">
+      <svg viewBox="0 0 1120 650" role="img" aria-labelledby="cp-title cp-desc">
+        <title id="cp-title">Teacher-to-student compiler</title>
+        <desc id="cp-desc">An intervention teacher and a preservation teacher train TinyLoRA coordinates, which merge into Qwen.</desc>
+        <defs>
+          <marker id="cp-arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0,0 L9,3 L0,6 Z" fill="#293750"/></marker>
+          <marker id="cp-loss" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0,0 L9,3 L0,6 Z" fill="#a53a36"/></marker>
+        </defs>
+        <rect x="18" y="18" width="1084" height="614" rx="14" fill="#f8faff" stroke="#9aa8bd" stroke-width="2"/>
+        <text x="44" y="58" font-family="Arial" font-size="25" font-weight="700">Compile an activation behavior into ordinary model weights</text>
+
+        <rect x="48" y="105" width="235" height="126" rx="10" fill="#fff0c9" stroke="#9a6510" stroke-width="2"/>
+        <text x="165" y="137" text-anchor="middle" font-family="Arial" font-size="17" font-weight="700">Intervention teacher</text>
+        <text x="165" y="166" text-anchor="middle" font-family="Arial" font-size="13">QA prompts</text>
+        <text x="165" y="188" text-anchor="middle" font-family="Arial" font-size="13">Transformed activations</text>
+        <text x="165" y="210" text-anchor="middle" font-family="Arial" font-size="13">Raw Qwen suffixes</text>
+
+        <rect x="48" y="300" width="235" height="126" rx="10" fill="#dcecff" stroke="#2367a8" stroke-width="2"/>
+        <text x="165" y="332" text-anchor="middle" font-family="Arial" font-size="17" font-weight="700">Preservation teacher</text>
+        <text x="165" y="361" text-anchor="middle" font-family="Arial" font-size="13">General prompts</text>
+        <text x="165" y="383" text-anchor="middle" font-family="Arial" font-size="13">OSWorld traces</text>
+        <text x="165" y="405" text-anchor="middle" font-family="Arial" font-size="13">Correct action format</text>
+
+        <polygon points="365,174 510,174 535,258 510,342 365,342 340,258" fill="#ffe0df" stroke="#a53a36" stroke-width="2"/>
+        <text x="437" y="223" text-anchor="middle" font-family="Arial" font-size="17" font-weight="700">Weighted loss</text>
+        <text x="437" y="252" text-anchor="middle" font-family="Arial" font-size="13">Assistant tokens only</text>
+        <text x="437" y="276" text-anchor="middle" font-family="Arial" font-size="13">Target weight = 1</text>
+        <text x="437" y="300" text-anchor="middle" font-family="Arial" font-size="13">Preservation weight</text>
+
+        <rect x="600" y="126" width="230" height="264" rx="12" fill="#e9e1ff" stroke="#6448a8" stroke-width="2"/>
+        <text x="715" y="158" text-anchor="middle" font-family="Arial" font-size="17" font-weight="700">Qwen language decoder</text>
+        <rect x="625" y="183" width="180" height="48" rx="6" fill="#fff" stroke="#6448a8"/>
+        <text x="715" y="212" text-anchor="middle" font-family="monospace" font-size="12">q k v o projections</text>
+        <rect x="625" y="247" width="180" height="48" rx="6" fill="#fff" stroke="#6448a8"/>
+        <text x="715" y="276" text-anchor="middle" font-family="monospace" font-size="12">gate up down projections</text>
+        <rect x="625" y="311" width="180" height="48" rx="6" fill="#dcf3e7" stroke="#247a52"/>
+        <text x="715" y="340" text-anchor="middle" font-family="Arial" font-size="13" font-weight="700">Shared 13-value vector</text>
+        <text x="715" y="377" text-anchor="middle" font-family="Arial" font-size="12" font-style="italic">Vision tower stays frozen</text>
+
+        <rect x="895" y="105" width="175" height="126" rx="10" fill="#dcf3e7" stroke="#247a52" stroke-width="2"/>
+        <text x="982" y="137" text-anchor="middle" font-family="Arial" font-size="17" font-weight="700">Merge</text>
+        <text x="982" y="166" text-anchor="middle" font-family="monospace" font-size="12">W′ = W + B(ΣvᵢPᵢ)A</text>
+        <text x="982" y="191" text-anchor="middle" font-family="Arial" font-size="13">Remove TinyLoRA modules</text>
+
+        <rect x="895" y="300" width="175" height="126" rx="10" fill="#e8edf4" stroke="#5c677d" stroke-width="2"/>
+        <text x="982" y="332" text-anchor="middle" font-family="Arial" font-size="17" font-weight="700">Verify</text>
+        <text x="982" y="361" text-anchor="middle" font-family="Arial" font-size="13">Stock Qwen reload</text>
+        <text x="982" y="383" text-anchor="middle" font-family="Arial" font-size="13">Greedy smoke output</text>
+        <text x="982" y="405" text-anchor="middle" font-family="Arial" font-size="13">Artifact hashes</text>
+
+        <path d="M283,168 L355,215" fill="none" stroke="#293750" stroke-width="3" marker-end="url(#cp-arrow)"/>
+        <path d="M283,363 L355,301" fill="none" stroke="#293750" stroke-width="3" marker-end="url(#cp-arrow)"/>
+        <path d="M535,258 L600,258" stroke="#a53a36" stroke-width="3" marker-end="url(#cp-loss)"/>
+        <path d="M830,183 L895,168" fill="none" stroke="#293750" stroke-width="3" marker-end="url(#cp-arrow)"/>
+        <path d="M982,231 L982,300" stroke="#293750" stroke-width="3" marker-end="url(#cp-arrow)"/>
+
+        <rect x="93" y="500" width="934" height="82" rx="10" fill="#fff" stroke="#9aa8bd" stroke-dasharray="8 6"/>
+        <text x="115" y="530" font-family="Arial" font-size="15" font-weight="700">Final property</text>
+        <text x="115" y="557" font-family="Arial" font-size="14">The saved checkpoint contains merged Qwen weights. It does not need an intervention hook.</text>
+      </svg>
+      <p class="caption">Figure 3. The offline intervention teacher creates data for the standalone student model.</p>
+    </div>
+
+    <h3>5.1 Teacher data</h3>
+    <p>The compiler stores the exact decoded suffix from Qwen.</p>
+    <p>This suffix includes hidden reasoning text when Qwen generates it.</p>
+    <p>The compiler keeps stable prompt identifiers.</p>
+    <p>It stores prompt and intervention hashes, the model revision, and the generation settings.</p>
+
+    <h3>5.2 Prompt boundary</h3>
+    <p>The trainer masks all prompt tokens.</p>
+    <p>The trainer applies loss only to assistant tokens.</p>
+    <p>The trainer preserves an existing assistant prefix.</p>
+    <p>It does not start a second assistant turn after that prefix.</p>
+
+    <h3>5.3 Final checkpoint</h3>
+    <p>The code merges each TinyLoRA update into its base matrix.</p>
+    <p>The code then removes all TinyLoRA wrapper modules.</p>
+    <p>The code rejects a merge that creates nonfinite weights.</p>
+    <p>The code saves the model in the standard Hugging Face format.</p>
+  </section>
+
+  <section id="training">
+    <h2>6. TinyLoRA training details</h2>
+    <table>
+      <thead><tr><th>Setting</th><th>Default</th><th>Reason</th></tr></thead>
+      <tbody>
+        <tr><td>Frozen SVD rank</td><td>2</td><td>This is the paper's low-compute principal subspace.</td></tr>
+        <tr><td>Projection dimension</td><td>13</td><td>With full tying, this is the exact trainable scalar count.</td></tr>
+        <tr><td>Weight tying</td><td>1.0</td><td>All selected modules share one trainable vector.</td></tr>
+        <tr><td>Projection seed</td><td>42</td><td>Each module gets a reproducible fixed projection.</td></tr>
+        <tr><td>Dropout</td><td>0</td><td>This value gives a deterministic initial path.</td></tr>
+        <tr><td>Learning rate</td><td>0.0002</td><td>This value is the initial TinyLoRA optimization setting.</td></tr>
+        <tr><td>Epochs</td><td>1</td><td>The first run must test the pipeline, not maximize fit.</td></tr>
+        <tr><td>Batch size</td><td>1</td><td>This value reduces GPU memory use.</td></tr>
+        <tr><td>Gradient accumulation</td><td>8</td><td>This value gives a larger effective batch.</td></tr>
+        <tr><td>Maximum length</td><td>4096</td><td>The code rejects rows that exceed the maximum length. It does not delete answers.</td></tr>
+        <tr><td>Attention</td><td>SDPA</td><td>The training path does not require FlashAttention.</td></tr>
+        <tr><td>Trainable modules</td><td>Seven language projections</td><td>The code does not train the vision tower.</td></tr>
+      </tbody>
+    </table>
+
+    <h3>6.1 Deterministic resume</h3>
+    <p>The first fleet worker computes and atomically caches a seeded randomized rank-2 basis.</p>
+    <p>Other workers load this shared basis instead of repeating 252 decompositions.</p>
+    <p>The manifest records that this basis is not bit-identical to PEFT's full-SVD initialization.</p>
+    <p>The code derives a seed from the epoch and batch number.</p>
+    <p>The teacher uses stable seeds from the ordered identifiers in each generation batch.</p>
+    <p>The training state includes shared vectors, SVD factors, projections, optimizer state, and the next batch.</p>
+    <p>The code writes this state to a temporary file first.</p>
+    <p>The code then uses an atomic file replacement.</p>
+
+    <h3>6.2 Incomplete accumulation windows</h3>
+    <p>The code corrects the gradient scale for a short final window.</p>
+    <p>Thus, a one-batch epoch does not use one eighth of the intended gradient.</p>
+
+    <h3>6.3 Preservation loss</h3>
+    <p>The preservation teacher comes from the pinned unmodified model.</p>
+    <p>The fleet plan requires this teacher.</p>
+    <p>The trainer mixes preservation rows with intervention rows.</p>
+    <p>The <code>preservation_weight</code> setting controls their loss contribution.</p>
+  </section>
+
+  <section id="multimodal">
+    <h2>7. OSWorld preservation</h2>
+    <p>OSWorld uses screenshots and action text.</p>
+    <p>The preservation input can contain Qwen image or video blocks.</p>
+    <p>The processor reads these blocks through <code>qwen-vl-utils</code>.</p>
+    <p>The trainer calculates loss on the assistant action tokens.</p>
+    <p>The trainer keeps the visual model weights frozen.</p>
+
+    <div class="callout risk">
+      <strong>The checked-in preservation file is only a smoke example.</strong>
+      It is not sufficient for a scientific OSWorld preservation claim.
+      Add representative training trajectories before the full fleet run.
+      Keep evaluation episodes out of the training file.
+    </div>
+
+    <h3>7.1 Multimodal record</h3>
+    <pre>{
+  "id": "osworld-example-id-step-3",
+  "messages": [
+    {
+      "role": "user",
+      "content": [
+        {"type": "image", "image": "/shared/screens/step-3.png"},
+        {"type": "text", "text": "Objective: ... Return the next action."}
+      ]
+    }
+  ]
+}</pre>
+
+    <h3>7.2 Preservation data requirements</h3>
+    <ul>
+      <li>Include browser, office, file, and system tasks.</li>
+      <li>Include successful action formats from the base model.</li>
+      <li>Include short and long action histories.</li>
+      <li>Include screenshots with different resolutions.</li>
+      <li>Do not include final evaluation episodes.</li>
+      <li>Use a shared image path on all fleet machines.</li>
+    </ul>
+  </section>
+
+  <section id="fleet" class="page-break">
+    <h2>8. GPU fleet control</h2>
+    <p>The fleet plan contains eight student variants.</p>
+    <p>It also records the pinned base model as the control.</p>
+    <p>Each worker uses one visible GPU.</p>
+    <p>All workers can use the same <code>--drain</code> command.</p>
+
+    <div class="diagram" id="diagram-fleet">
+      <svg viewBox="0 0 1120 710" role="img" aria-labelledby="fl-title fl-desc">
+        <title id="fl-title">Fleet claim and retry state machine</title>
+        <desc id="fl-desc">Workers claim variants, use token-specific directories, verify models, and publish done records.</desc>
+        <defs>
+          <marker id="fl-arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0,0 L9,3 L0,6 Z" fill="#293750"/></marker>
+          <marker id="fl-fail" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0,0 L9,3 L0,6 Z" fill="#a53a36"/></marker>
+        </defs>
+        <rect x="18" y="18" width="1084" height="674" rx="14" fill="#f8faff" stroke="#9aa8bd" stroke-width="2"/>
+        <text x="44" y="58" font-family="Arial" font-size="25" font-weight="700">Claim-isolated GPU fleet</text>
+
+        <rect x="55" y="112" width="180" height="82" rx="40" fill="#dcecff" stroke="#2367a8" stroke-width="2"/>
+        <text x="145" y="146" text-anchor="middle" font-family="Arial" font-size="16" font-weight="700">Immutable plan</text>
+        <text x="145" y="170" text-anchor="middle" font-family="monospace" font-size="11">plan_id + hashes</text>
+
+        <rect x="290" y="105" width="185" height="96" rx="10" fill="#e8edf4" stroke="#5c677d" stroke-width="2"/>
+        <text x="382" y="137" text-anchor="middle" font-family="Arial" font-size="16" font-weight="700">Atomic claim</text>
+        <text x="382" y="163" text-anchor="middle" font-family="monospace" font-size="11">variant + token</text>
+        <text x="382" y="183" text-anchor="middle" font-family="Arial" font-size="11">attempt 1 or 2</text>
+
+        <rect x="530" y="92" width="230" height="122" rx="10" fill="#fff0c9" stroke="#9a6510" stroke-width="2"/>
+        <text x="645" y="124" text-anchor="middle" font-family="Arial" font-size="16" font-weight="700">Claim-specific work</text>
+        <text x="645" y="150" text-anchor="middle" font-family="Arial" font-size="12">Generate teacher</text>
+        <text x="645" y="173" text-anchor="middle" font-family="Arial" font-size="12">Train and merge student</text>
+        <text x="645" y="196" text-anchor="middle" font-family="monospace" font-size="11">attempts/&lt;claim_token&gt;</text>
+
+        <rect x="820" y="105" width="210" height="96" rx="10" fill="#dcf3e7" stroke="#247a52" stroke-width="2"/>
+        <text x="925" y="137" text-anchor="middle" font-family="Arial" font-size="16" font-weight="700">Stock reload</text>
+        <text x="925" y="163" text-anchor="middle" font-family="Arial" font-size="12">Smoke generation</text>
+        <text x="925" y="183" text-anchor="middle" font-family="Arial" font-size="12">Checkpoint artifact hashes</text>
+
+        <path d="M235,153 L290,153" stroke="#293750" stroke-width="3" marker-end="url(#fl-arrow)"/>
+        <path d="M475,153 L530,153" stroke="#293750" stroke-width="3" marker-end="url(#fl-arrow)"/>
+        <path d="M760,153 L820,153" stroke="#293750" stroke-width="3" marker-end="url(#fl-arrow)"/>
+
+        <rect x="720" y="315" width="250" height="104" rx="10" fill="#dcf3e7" stroke="#247a52" stroke-width="2"/>
+        <text x="845" y="347" text-anchor="middle" font-family="Arial" font-size="16" font-weight="700">Atomic done publication</text>
+        <text x="845" y="374" text-anchor="middle" font-family="Arial" font-size="12">Only the token owner can publish</text>
+        <text x="845" y="397" text-anchor="middle" font-family="Arial" font-size="12">Done marker points to artifacts</text>
+
+        <rect x="390" y="315" width="230" height="104" rx="10" fill="#ffe0df" stroke="#a53a36" stroke-width="2"/>
+        <text x="505" y="347" text-anchor="middle" font-family="Arial" font-size="16" font-weight="700">Failed attempt</text>
+        <text x="505" y="374" text-anchor="middle" font-family="Arial" font-size="12">Keep isolated artifacts</text>
+        <text x="505" y="397" text-anchor="middle" font-family="Arial" font-size="12">Retry within the limit</text>
+
+        <rect x="75" y="315" width="230" height="104" rx="10" fill="#e9e1ff" stroke="#6448a8" stroke-width="2"/>
+        <text x="190" y="347" text-anchor="middle" font-family="Arial" font-size="16" font-weight="700">Explicit recovery</text>
+        <text x="190" y="374" text-anchor="middle" font-family="Arial" font-size="12">Use only after workers stop</text>
+        <text x="190" y="397" text-anchor="middle" font-family="Arial" font-size="12">Old token cannot publish</text>
+
+        <path d="M925,201 C925,255 845,260 845,315" fill="none" stroke="#293750" stroke-width="3" marker-end="url(#fl-arrow)"/>
+        <path d="M645,214 C645,270 535,270 520,315" fill="none" stroke="#a53a36" stroke-width="3" marker-end="url(#fl-fail)"/>
+        <path d="M390,367 L305,367" stroke="#a53a36" stroke-width="3" marker-end="url(#fl-fail)"/>
+        <path d="M505,315 C505,260 382,260 382,201" fill="none" stroke="#293750" stroke-width="2" stroke-dasharray="7 5" marker-end="url(#fl-arrow)"/>
+        <path d="M190,315 C190,248 340,248 382,201" fill="none" stroke="#6448a8" stroke-width="2" stroke-dasharray="7 5" marker-end="url(#fl-arrow)"/>
+
+        <rect x="70" y="500" width="960" height="126" rx="12" fill="#fff" stroke="#9aa8bd" stroke-width="2"/>
+        <text x="95" y="532" font-family="Arial" font-size="16" font-weight="700">Shared filesystem contract</text>
+        <text x="95" y="562" font-family="Arial" font-size="13">The plan ID includes the model SHA, input hashes, output root, settings, and variant paths.</text>
+        <text x="95" y="587" font-family="Arial" font-size="13">Each attempt writes to a unique token path. An old worker cannot overwrite artifacts from a new claim.</text>
+        <text x="95" y="612" font-family="Arial" font-size="13">The status command recalculates artifact hashes and marks corrupt outputs.</text>
+      </svg>
+      <p class="caption">Figure 4. The fleet uses claim-specific paths and atomic publication.</p>
+    </div>
+
+    <h3>8.1 Plan identity</h3>
+    <p>The plan resolves the Qwen model ID to a 40-character commit SHA.</p>
+    <p>The plan ID includes all execution paths and settings.</p>
+    <ul>
+      <li>Base model ID and revision.</li>
+      <li>Prompt path and prompt hash.</li>
+      <li>Preservation teacher path and hash.</li>
+      <li>Output root and base-control path.</li>
+      <li>Intervention paths and hashes.</li>
+      <li>Generation settings.</li>
+      <li>Training settings.</li>
+    </ul>
+
+    <h3>8.2 Claim safety</h3>
+    <p>A worker first creates a variant lock.</p>
+    <p>It then creates a running marker with a unique claim token.</p>
+    <p>All durable model files use a path that contains this token.</p>
+    <p>A worker publishes a done marker with one atomic rename.</p>
+    <p>If recovery removes the running marker, the old worker cannot publish.</p>
+
+    <h3>8.3 Retry behavior</h3>
+    <p>A worker in drain mode continues after one variant fails.</p>
+    <p>The default maximum is two attempts for each variant.</p>
+    <p>The status output lists pending, running, failed, done, and corrupt variants.</p>
+  </section>
+
+  <section id="artifacts">
+    <h2>9. Artifacts and provenance</h2>
+    <table>
+      <thead><tr><th>Artifact</th><th>Purpose</th><th>Key validation</th></tr></thead>
+      <tbody>
+        <tr><td><code>intervention.json</code></td><td>Defines one coordinate map.</td><td>Direction, sign, layer, and finite settings.</td></tr>
+        <tr><td><code>plan.json</code></td><td>Defines the complete fleet.</td><td>Recalculated plan ID and input hashes.</td></tr>
+        <tr><td>Teacher JSON</td><td>Stores transformed Qwen suffixes.</td><td>Prompt and intervention hashes, model revision, and generation settings.</td></tr>
+        <tr><td><code>distillation_run.json</code></td><td>Defines one training identity.</td><td>Teacher hash, revision, settings, and plan ID.</td></tr>
+        <tr><td><code>distillation_state.pt</code></td><td>Stores resumable training state.</td><td>Atomic temporary write and replacement.</td></tr>
+        <tr><td><code>controls/tinylora_basis.pt</code></td><td>Shares frozen SVD factors and projections.</td><td>Locked creation and pinned model/config identity.</td></tr>
+        <tr><td><code>tinylora_adapter.pt</code></td><td>Retains the conditional TinyLoRA update.</td><td>Vectors, factors, projections, groups, and settings.</td></tr>
+        <tr><td><code>standalone_model.json</code></td><td>Describes the merged checkpoint.</td><td>The merged checkpoint uses no runtime hook.</td></tr>
+        <tr><td><code>standalone_verification.json</code></td><td>Records a stock Qwen reload.</td><td>Smoke output and checkpoint export hashes.</td></tr>
+        <tr><td>Done marker</td><td>Selects the successful claim output.</td><td>Plan ID, claim token, and artifact paths.</td></tr>
+        <tr><td><code>base_control.json</code></td><td>Records the unmodified control.</td><td>Exact model revision and preservation teacher.</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section id="doubts" class="page-break">
+    <h2>10. Areas of doubt</h2>
+    <p>The implementation is complete, but the scientific result is open.</p>
+
+    <table>
+      <thead><tr><th>Doubt</th><th>Why it matters</th><th>Required test</th></tr></thead>
+      <tbody>
+        <tr><td>Probe-control mismatch</td><td>The probe can read a signal that does not control output.</td><td>Measure answer changes under the teacher operator.</td></tr>
+        <tr><td>Completed-answer training site</td><td>The probe used pooled completed answer tokens.</td><td>Compare pre-answer, post-think, and answer-token directions.</td></tr>
+        <tr><td>Heterogeneous deception class</td><td>False claims, sycophancy, and sandbagging can use different mechanisms.</td><td>Run per-family directions and held-out family tests.</td></tr>
+        <tr><td>Distillation error</td><td>The student can learn teacher wording instead of the latent behavior.</td><td>Use held-out prompts and compare teacher/student score traces.</td></tr>
+        <tr><td>Chance-level failure</td><td>Ablation can remove truth but fail to produce deliberate wrong answers.</td><td>Randomize choices and test below-chance answer avoidance.</td></tr>
+        <tr><td>Position bias</td><td>The model can select one answer position repeatedly.</td><td>Permute answer choices and measure response entropy.</td></tr>
+        <tr><td>Refusal or format damage</td><td>Low accuracy can come from invalid output.</td><td>Measure refusal, parse failure, and repetition rates.</td></tr>
+        <tr><td>OSWorld preservation coverage</td><td>A small preservation set can miss important action modes.</td><td>Use varied held-out trajectories and full benchmark runs.</td></tr>
+        <tr><td>TinyLoRA capacity</td><td>Thirteen coordinates can underfit a teacher.</td><td>Compare 1, 4, 13, 64, and 196 coordinates.</td></tr>
+        <tr><td>Student overfit</td><td>One epoch can still memorize a small teacher set.</td><td>Use held-out subjects, prompt forms, and seeds.</td></tr>
+        <tr><td>Quantization drift</td><td>Small RTX deployment can change the learned behavior.</td><td>Compare BF16 and selected quantized checkpoints.</td></tr>
+        <tr><td>Judge error</td><td>An LLM judge can confuse mistakes with deliberate deception.</td><td>Use deterministic answer keys and manual samples.</td></tr>
+      </tbody>
+    </table>
+
+    <h3>10.1 Most important scientific risk</h3>
+    <div class="callout risk">
+      <p>The general probe can be a good detector and a poor control direction.</p>
+      <p>The first GPU run must test the teacher before it trains all students.</p>
+      <p>Do not start the complete fleet if the teacher has no valid behavioral effect.</p>
+    </div>
+
+    <h3>10.2 Most important engineering risk</h3>
+    <div class="callout risk">
+      <p>Tests have not loaded the real 8B model into the training pipeline.</p>
+      <p>The unit tests use a small fake Qwen model for merge tests.</p>
+      <p>The first GPU run can expose architecture, memory, or processor errors.</p>
+    </div>
+  </section>
+
+  <section id="gates">
+    <h2>11. Acceptance gates</h2>
+    <p>Use the gates in sequence. Do not skip a failed gate.</p>
+
+    <div class="gate-grid">
+      <div class="gate"><strong>Gate 1: Environment</strong><span class="status open">GPU REQUIRED</span><ul><li>Load Qwen at the pinned SHA.</li><li>Load the processor and one image.</li><li>Run an SDPA forward pass and an SDPA backward pass.</li></ul></div>
+      <div class="gate"><strong>Gate 2: Teacher</strong><span class="status open">BEHAVIOR TEST</span><ul><li>Generate 50 held-out MMLU items.</li><li>Measure valid wrong answers.</li><li>Reject refusal and fixed-position collapse.</li></ul></div>
+      <div class="gate"><strong>Gate 3: One student</strong><span class="status open">FULL REFLECTION</span><ul><li>Train one small dataset.</li><li>Merge TinyLoRA into Qwen.</li><li>Reload with the stock class.</li></ul></div>
+      <div class="gate"><strong>Gate 4: Preservation</strong><span class="status open">ACTION SMOKE</span><ul><li>Run action-format prompts.</li><li>Run a small OSWorld subset.</li><li>Compare the base model.</li></ul></div>
+      <div class="gate"><strong>Gate 5: Pilot fleet</strong><span class="status open">THREE VARIANTS</span><ul><li>Run directed reflection, bounded margin, and orthogonal control.</li><li>Compare target and damage metrics.</li><li>Select useful settings.</li></ul></div>
+      <div class="gate"><strong>Gate 6: Full fleet</strong><span class="status open">EIGHT STUDENTS</span><ul><li>Run all planned variants.</li><li>Verify the checkpoint export hashes.</li><li>Run complete evaluations.</li></ul></div>
+    </div>
+
+    <h3>11.1 Minimum model acceptance metrics</h3>
+    <ul>
+      <li>The answer parser succeeds at the base-model rate.</li>
+      <li>The refusal rate does not materially increase.</li>
+      <li>The repetition rate does not materially increase.</li>
+      <li>The target score differs from the seeded orthogonal control.</li>
+      <li>The OSWorld and ALFWorld scores stay inside the approved loss budgets.</li>
+      <li>The result repeats with more than one random seed.</li>
+    </ul>
+    <p>Set the numeric budgets before the full evaluation.</p>
+    <p>Do not select thresholds after you inspect final results.</p>
+  </section>
+
+  <section id="procedure" class="page-break">
+    <h2>12. GPU start procedure</h2>
+    <p>This section is a procedure. Each step gives one primary instruction.</p>
+
+    <h3>12.1 Prepare the GPU environment</h3>
+    <ol>
+      <li>Use one RTX 3090-class 24 GB GPU for the first smoke run.</li>
+      <li>Check out the approved commit on the GPU machine.</li>
+      <li>Start a remote <code>tmux</code> session before long work.</li>
+      <li>Put <code>HF_HOME</code> and <code>TMPDIR</code> on a large storage mount.</li>
+      <li>Install the Qwen runtime packages.</li>
+      <li>Install the Torch-compatible <code>torchvision</code> package.</li>
+      <li>Install and test FlashAttention.</li>
+      <li>Use FlashAttention only for teacher generation.</li>
+      <li>Install <code>decord</code> for video input support.</li>
+      <li>Pull the provisional probe artifact with DVC.</li>
+      <li>Put all fleet inputs under the same absolute <code>/shared</code> paths.</li>
+    </ol>
+    <pre>tmux new -s truth-smoke
+
+export HF_HOME=/shared/hf_home
+export TMPDIR=/shared/tmp
+export HF_HUB_DISABLE_XET=1
+
+uv pip install torchvision --index-url https://download.pytorch.org/whl/cu130
+uv pip install decord
+
+PYTHONPATH=src uv run --no-sync python -c \
+  'import torch, torchvision, flash_attn, flash_attn_2_cuda; print(torch.cuda.is_available())'
+
+PYTHONPATH=src uv run --no-sync intelligent-liars check-env \
+  --require-cuda --check-model</pre>
+
+    <h3>12.2 Pin the base model</h3>
+    <pre>REVISION=$(PYTHONPATH=src uv run --no-sync python -c \
+  'from huggingface_hub import HfApi; print(HfApi().model_info("Qwen/Qwen3-VL-8B-Thinking").sha)')
+
+echo "$REVISION"</pre>
+
+    <h3>12.3 Build the intervention suite on shared storage</h3>
+    <pre>PYTHONPATH=src uv run --no-sync intelligent-liars build-intervention-suite \
+  --probe artifacts/probes/sweeps/dense_15_27_by_layer/no_repe_layer21_c001.json \
+  --output /shared/interventions/layer21_suite \
+  --layer 21</pre>
+
+    <h3>12.4 Generate one directed-full-reflection teacher smoke set</h3>
+    <pre>PYTHONPATH=src uv run --no-sync intelligent-liars generate-intervention-teacher \
+  --prompts /shared/data/intervention_smoke_prompts.json \
+  --intervention /shared/interventions/layer21_suite/directed_full_reflection.json \
+  --output /shared/smoke/directed_full_reflection_teacher.json \
+  --base-revision "$REVISION" \
+  --no-resume</pre>
+
+    <h3>12.5 Evaluate the teacher smoke set</h3>
+    <ol>
+      <li>Score the answers with deterministic answer keys.</li>
+      <li>Measure valid wrong answers, refusals, parse failures, and answer positions.</li>
+      <li>Stop if the teacher does not change correct answers to valid wrong answers.</li>
+      <li>Test another layer or a bounded operator after a failed smoke result.</li>
+    </ol>
+
+    <h3>12.6 Generate the preservation teacher</h3>
+    <pre>PYTHONPATH=src uv run --no-sync intelligent-liars generate-intervention-teacher \
+  --prompts /shared/data/preservation_prompts.json \
+  --output /shared/intervention_fleet/preservation_teacher.json \
+  --base-revision "$REVISION"</pre>
+
+    <h3>12.7 Write the immutable fleet plan</h3>
+    <pre>args=()
+for path in /shared/interventions/layer21_suite/*.json; do
+  args+=(--intervention "$path")
+done
+
+PYTHONPATH=src uv run --no-sync intelligent-liars plan-intervention-model-fleet \
+  "${args[@]}" \
+  --prompts /shared/data/intervention_prompts.json \
+  --preservation-teacher /shared/intervention_fleet/preservation_teacher.json \
+  --output-root /shared/intervention_fleet \
+  --plan /shared/intervention_fleet/plan.json \
+  --svd-rank 2 \
+  --projection-dim 13 \
+  --projection-seed 42 \
+  --base-revision "$REVISION"</pre>
+
+    <h3>12.8 Start detached workers</h3>
+    <pre>tmux new-window -n fleet-gpu0
+
+CUDA_VISIBLE_DEVICES=0 PYTHONPATH=src uv run --no-sync \
+  intelligent-liars run-intervention-model-job \
+  --plan /shared/intervention_fleet/plan.json \
+  --drain \
+  --max-attempts 2</pre>
+    <p>Use the same command on each worker.</p>
+    <p>Change only <code>CUDA_VISIBLE_DEVICES</code> for each local GPU process.</p>
+    <p>Use one process per 24 GB consumer GPU after the first RTX 3090-class card passes the smoke run.</p>
+    <p>Cards below 24 GB need a separately validated quantized or offload path.</p>
+
+    <h3>12.9 Monitor the fleet</h3>
+    <pre>PYTHONPATH=src uv run --no-sync intelligent-liars intervention-model-fleet-status \
+  --plan /shared/intervention_fleet/plan.json</pre>
+
+    <h3>12.10 Recover a stopped worker</h3>
+    <div class="callout risk">
+      <strong>CAUTION:</strong>
+      Make sure that the old worker is not active.
+      Then use the recovery option.
+    </div>
+    <pre>CUDA_VISIBLE_DEVICES=0 PYTHONPATH=src uv run --no-sync \
+  intelligent-liars run-intervention-model-job \
+  --plan /shared/intervention_fleet/plan.json \
+  --drain \
+  --retry-failed \
+  --recover-running \
+  --max-attempts 2</pre>
+
+    <h3>12.11 Verify one successful model again</h3>
+    <pre>CUDA_VISIBLE_DEVICES=0 PYTHONPATH=src uv run --no-sync \
+  intelligent-liars verify-standalone-intervention-model \
+  --model &lt;model_output from fleet status done_artifacts&gt;</pre>
+
+    <h3>12.12 Start evaluation</h3>
+    <ol>
+      <li>Evaluate the base model and seeded orthogonal control first.</li>
+      <li>Evaluate all students on a small MMLU and GPQA subset.</li>
+      <li>Reject models with invalid output or fixed-position bias.</li>
+      <li>Evaluate the models that pass these checks on OSWorld and ALFWorld smoke subsets.</li>
+      <li>Run full evaluations for MMLU, GPQA, OSWorld, and ALFWorld after all smoke gates pass.</li>
+    </ol>
+  </section>
+
+  <section id="result">
+    <h2>13. Result and next work</h2>
+    <h3>13.1 What the code now does</h3>
+    <ul>
+      <li>It reads the provisional truth probe.</li>
+      <li>It builds seven intervention variants.</li>
+      <li>It builds one seeded orthogonal control.</li>
+      <li>It records the pinned base model as a control.</li>
+      <li>It generates text or multimodal teacher data.</li>
+      <li>It trains 13-coordinate TinyLoRA students with preservation data.</li>
+      <li>It merges TinyLoRA into ordinary Qwen weights.</li>
+      <li>It reloads the checkpoint with the stock Qwen class.</li>
+      <li>It runs concurrent claim-isolated fleet workers.</li>
+      <li>It records hashes for the checkpoint export inventory.</li>
+    </ul>
+
+    <h3>13.2 What the code does not prove</h3>
+    <ul>
+      <li>It does not prove that the truth direction is causal.</li>
+      <li>It does not prove that a student will score below chance.</li>
+      <li>It does not prove that a student will preserve OSWorld.</li>
+      <li>It does not prove that cards below 24 GB preserve behavior.</li>
+      <li>It does not prove that 13 coordinates are the best budget.</li>
+      <li>It does not replace full benchmark evaluation.</li>
+    </ul>
+
+    <h3>13.3 Immediate next action</h3>
+    <div class="callout good">
+      <p>Start one GPU smoke run with the directed-full-reflection teacher.</p>
+      <p>Use 50 to 100 held-out MMLU items.</p>
+      <p>Do not train the full fleet until this teacher changes correct answers to valid wrong answers.</p>
+    </div>
+
+    <h3>13.4 Decision after the smoke run</h3>
+    <table>
+      <thead><tr><th>Smoke result</th><th>Next action</th></tr></thead>
+      <tbody>
+        <tr><td>The teacher changes correct answers to valid wrong answers.</td><td>Train one directed-full-reflection student.</td></tr>
+        <tr><td>The teacher causes random or invalid answers.</td><td>Reduce strength or use bounded margin.</td></tr>
+        <tr><td>The teacher has no output effect.</td><td>Test another layer or a domain-specific direction.</td></tr>
+        <tr><td>The student does not copy the teacher.</td><td>Increase the teacher data, coordinate budget, or epoch count.</td></tr>
+        <tr><td>The student model reduces OSWorld performance.</td><td>Increase preservation coverage or weight.</td></tr>
+        <tr><td>The orthogonal control has the same effect.</td><td>Reject the causal truth-direction claim.</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section id="sources">
+    <h2>14. Sources</h2>
+    <ul class="source-list">
+      <li><a href="https://www.asd-ste100.org/">ASD-STE100 official site</a>. The site defines STE as a controlled natural language.</li>
+      <li><a href="https://www.asd-ste100.org/assets/files/ASD-STE100_ISSUE9.pdf">ASD-STE100 Issue 9</a>. This document uses its short-sentence and active-voice principles.</li>
+      <li><a href="https://arxiv.org/abs/2602.04118">TinyLoRA</a>. This paper defines the shared trainable vector and fixed SVD/projection parameterization.</li>
+      <li><code>PROJECT.md</code>. This file defines the MMLU, GPQA, OSWorld, and ALFWorld goals.</li>
+      <li><code>docs/validation/no_insider_seed_robustness_20260709.md</code>. This file gives the provisional probe evidence.</li>
+      <li><code>docs/intervention_pipeline.md</code>. This file gives the implemented commands and limits.</li>
+      <li><code>src/intelligent_liars/interventions.py</code>. This file implements the coordinate maps and runtime teachers.</li>
+      <li><code>src/intelligent_liars/standalone_models.py</code>. This file implements teacher data, TinyLoRA merge, verification, and fleet safety.</li>
+      <li><code>src/intelligent_liars/cli_interventions.py</code>. This file builds the standard intervention suite.</li>
+      <li><code>src/intelligent_liars/cli_standalone.py</code>. This file exposes the standalone model and fleet commands.</li>
+      <li><code>examples/distillation/</code>. This directory contains smoke-sized prompt schemas.</li>
+    </ul>
+  </section>
+
+  <footer>
+    <p>Updated on 2026-08-17 for the Intelligent Liars project.</p>
+    <p>The document separates implemented facts, unverified behavior, and required next work.</p>
+  </footer>
+</main>
+</body>
+</html>

@@ -10,6 +10,7 @@ from intelligent_liars.models import (
     load_model_and_processor,
     model_config_from_env,
     qwen_model_load_description,
+    qwen_model_load_kwargs,
     resolve_model_id,
 )
 
@@ -48,6 +49,18 @@ def test_qwen_model_load_description_mentions_flash_attention() -> None:
     assert "torch.bfloat16" in description
     assert "device_map=\"auto\"" in description
     assert "attn_implementation=\"flash_attention_2\"" in description
+
+
+def test_qwen_model_load_kwargs_support_training_attention_and_placement() -> None:
+    kwargs = qwen_model_load_kwargs(
+        attention_implementation="sdpa",
+        device_map=None,
+        revision="abc123",
+    )
+
+    assert kwargs["attn_implementation"] == "sdpa"
+    assert kwargs["device_map"] is None
+    assert kwargs["revision"] == "abc123"
 
 
 def test_transformers_model_load_uses_flash_attention(monkeypatch: pytest.MonkeyPatch) -> None:

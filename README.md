@@ -169,10 +169,15 @@ The code is split by workflow:
 - `src/intelligent_liars/rollout_grading.py`: rollout grading orchestration.
 - `src/intelligent_liars/judging.py`: compatibility facade for judging imports.
 - `src/intelligent_liars/probes.py`: probe preflight and linear probe training.
+- `src/intelligent_liars/interventions.py`: truth-coordinate transforms, runtime hooks, and rank-one checkpoint edits.
+- `src/intelligent_liars/standalone_models.py`: teacher generation, 13-coordinate TinyLoRA distillation, merged checkpoints, and fleet plans.
 - `src/intelligent_liars/run_control.py`: locks, plan IDs, hashes, signal cleanup.
 - `src/intelligent_liars/dynamic_queue.py`: shared filesystem queue helpers.
 - `src/intelligent_liars/tinylora_corpus.py`: provenance-aware corpus normalization, linked-scenario
   rendering, integrity validation, and deterministic packaging.
+
+Intervention usage and materialization limits are documented in
+`docs/intervention_pipeline.md`.
 
 Long-running GPU runners:
 
@@ -245,6 +250,8 @@ touch unless the project explicitly decides to do a separate formatting commit.
 
 Start here for historical context:
 
+- `docs/standalone_model_decision_record_20260817.md`
+- `docs/minimal_parameter_misalignment_and_gman_20260817.md`
 - `docs/postmortems/vast_qwen_rollouts_20260621.md`
 - `docs/postmortems/activation_full_20260622.md`
 - `docs/postmortems/moar_activation_extraction_20260625/postmortem.md`
