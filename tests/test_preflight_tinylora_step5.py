@@ -63,6 +63,12 @@ def _valid_contract():
         },
         "preservation_curation": {
             "max_length": 2048,
+            "vision_token_geometry": {
+                "factor": PREFLIGHT.PINNED_VISION_FACTOR,
+                "max_pixels": PREFLIGHT.PINNED_VISION_MAX_PIXELS,
+                "method": "Qwen smart_resize plus rendered text tokens",
+                "min_pixels": PREFLIGHT.PINNED_VISION_MIN_PIXELS,
+            },
             "semantic_exclusion_evidence": {
                 "prime_synthetic_2_verified.default.train.000079539": {
                     "reason": "semantic_quality_changes_problem_to_force_answer",
@@ -141,9 +147,13 @@ def test_vision_replay_rejects_fabricated_token_length(tmp_path):
     Image.new("RGB", (64, 64), "white").save(image)
     raw = {
         "record_id": "vision.one",
+        "split_group_id": "vision.one",
         "payload": {
             "config": "charts",
-            "image_snapshot": {"local_path": "small.png"},
+            "image_snapshot": {
+                "local_path": "small.png",
+                "sha256": PREFLIGHT.file_sha256(image),
+            },
             "questions": {"question": ["What is shown?"], "answer": ["A chart."]},
         },
     }
@@ -160,8 +170,24 @@ def test_vision_replay_rejects_fabricated_token_length(tmp_path):
         max_pixels=16777216,
     )
     compiled = {
+        "format": "tinylora_step5_example_v1",
         "record_id": "vision.one",
+        "split_group_id": "vision.one",
+        "split": "train",
+        "kind": "preservation",
+        "objective": "preservation_kl",
         "preservation_category": "vision_charts",
+        "messages": [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "image", "image": "small.png"},
+                    {"type": "text", "text": "What is shown?"},
+                ],
+            },
+            {"role": "assistant", "content": "A chart."},
+        ],
+        "image_sha256": PREFLIGHT.file_sha256(image),
         "source": "pixmo.jsonl",
         "qualification": dict(qualified[0]["qualification"]),
     }
@@ -189,6 +215,4 @@ def test_vision_replay_rejects_fabricated_token_length(tmp_path):
         },
         tokenizer=_VisionTokenizer(),
     )
-    assert errors == [
-        "compiled vision qualification differs from pinned-source replay"
-    ]
+    assert "compiled vision qualification differs from pinned-source replay" in errors

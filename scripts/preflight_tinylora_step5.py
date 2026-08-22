@@ -35,6 +35,9 @@ PINNED_TOKENIZER_CONFIG_SHA256 = (
 PINNED_PREPROCESSOR_CONFIG_SHA256 = (
     "27225450ac9c6529872ee1924fcb0962ff5634834f817040f444118116f4e516"
 )
+PINNED_VISION_FACTOR = 32
+PINNED_VISION_MIN_PIXELS = 65536
+PINNED_VISION_MAX_PIXELS = 16777216
 
 
 def read_jsonl(path: Path) -> list[dict[str, Any]]:
@@ -60,6 +63,13 @@ def contract_errors(
         != PINNED_PREPROCESSOR_CONFIG_SHA256
     ):
         errors.append("vision preprocessor does not match the pinned Step 5 artifact")
+    if plan.get("preservation_curation", {}).get("vision_token_geometry") != {
+        "factor": PINNED_VISION_FACTOR,
+        "max_pixels": PINNED_VISION_MAX_PIXELS,
+        "method": "Qwen smart_resize plus rendered text tokens",
+        "min_pixels": PINNED_VISION_MIN_PIXELS,
+    }:
+        errors.append("vision token geometry differs from the pinned processor contract")
     if set(plan.get("outputs", {})) != set(FROZEN_OUTPUT_RECORDS):
         errors.append("Step 5 outputs differ from the frozen output inventory")
     elif any(
@@ -185,9 +195,6 @@ def vision_qualification_errors(
         or file_sha256(source_path) != plan.get("inputs", {}).get("pixmo_docs_snapshot_sha256")
     ):
         return ["PixMo source snapshot is missing or mismatched"]
-    geometry = plan.get("preservation_curation", {}).get(
-        "vision_token_geometry", {}
-    )
     try:
         qualified, exclusions = qualify_vision_preservation_rows(
             read_jsonl(source_path),
@@ -195,9 +202,9 @@ def vision_qualification_errors(
             repository_root=repository_root,
             seed=int(plan["seed"]),
             max_length=int(plan["preservation_curation"]["max_length"]),
-            factor=int(geometry["factor"]),
-            min_pixels=int(geometry["min_pixels"]),
-            max_pixels=int(geometry["max_pixels"]),
+            factor=PINNED_VISION_FACTOR,
+            min_pixels=PINNED_VISION_MIN_PIXELS,
+            max_pixels=PINNED_VISION_MAX_PIXELS,
         )
     except (KeyError, TypeError, ValueError) as error:
         return [f"vision qualification could not be reproduced: {error}"]
@@ -206,6 +213,57 @@ def vision_qualification_errors(
     errors: list[str] = []
     if actual != expected:
         errors.append("compiled vision qualification differs from pinned-source replay")
+    raw_by_id = {str(row["record_id"]): row for row in qualified}
+    split_by_id = {
+        str(row["record_id"]): name
+        for name in ("preservation_train", "preservation_development_vision")
+        for row in rows_by_output.get(name, [])
+        if str(row.get("preservation_category", "")).startswith("vision_")
+    }
+    for row in compiled:
+        record_id = str(row["record_id"])
+        raw = raw_by_id.get(record_id)
+        if raw is None:
+            continue
+        payload = raw["payload"]
+        qualification = raw["qualification"]
+        index = int(qualification["question_index"])
+        image = payload["image_snapshot"]
+        expected_projection = {
+            "format": "tinylora_step5_example_v1",
+            "record_id": record_id,
+            "split_group_id": raw["split_group_id"],
+            "split": (
+                "train"
+                if split_by_id[record_id] == "preservation_train"
+                else "development_preservation_vision"
+            ),
+            "kind": "preservation",
+            "objective": "preservation_kl",
+            "preservation_category": f"vision_{payload['config']}",
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "image", "image": str(image["local_path"])},
+                        {
+                            "type": "text",
+                            "text": str(payload["questions"]["question"][index]),
+                        },
+                    ],
+                },
+                {
+                    "role": "assistant",
+                    "content": str(payload["questions"]["answer"][index]),
+                },
+            ],
+            "image_sha256": image["sha256"],
+            "qualification": qualification,
+            "source": relative_source.as_posix(),
+        }
+        if row != expected_projection:
+            errors.append(f"compiled vision projection differs from raw row: {record_id}")
+            break
     curation = plan.get("preservation_curation", {})
     if curation.get("qualified_pixmo_docs_records") != len(qualified):
         errors.append("qualified PixMo count differs from replay")
