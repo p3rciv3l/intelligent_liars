@@ -26,12 +26,17 @@ from intelligent_liars.standalone_models import (
     install_tinylora,
     load_fleet_plan,
     load_prompt_records,
+    load_safe_torch_checkpoint,
     merge_tinylora,
     recover_running_fleet_variants,
     save_fleet_plan,
     train_standalone_model,
     weighted_causal_lm_loss,
 )
+
+
+class LegacyObjectCheckpoint:
+    pass
 
 
 class FakeTokenizer:
@@ -122,6 +127,36 @@ class TinyAttention(nn.Module):
         return self.o_proj(
             torch.tanh(self.q_proj(inputs) + self.k_proj(inputs) + self.v_proj(inputs))
         )
+
+
+def test_safe_torch_checkpoint_accepts_tensor_and_primitive_payload(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "checkpoint.pt"
+    expected = {
+        "format": "test_v1",
+        "step": 3,
+        "finished": False,
+        "loss": 1.25,
+        "optional": None,
+        "tensor": torch.tensor([1.0, 2.0]),
+        "nested": [{"parameter_ids": [0, 1]}],
+    }
+    torch.save(expected, path)
+
+    actual = load_safe_torch_checkpoint(path, description="test checkpoint")
+
+    assert actual.keys() == expected.keys()
+    assert torch.equal(actual["tensor"], expected["tensor"])
+    assert actual["nested"] == expected["nested"]
+
+
+def test_safe_torch_checkpoint_rejects_legacy_object_payload(tmp_path: Path) -> None:
+    path = tmp_path / "legacy.pt"
+    torch.save({"legacy": LegacyObjectCheckpoint()}, path)
+
+    with pytest.raises(ValueError, match="unsafe or invalid test checkpoint"):
+        load_safe_torch_checkpoint(path, description="test checkpoint")
 
 
 class TinyMlp(nn.Module):
@@ -525,7 +560,7 @@ def test_tiny_model_distillation_merges_tinylora_and_saves_stock_weights(
     adapter = torch.load(
         output / "tinylora_adapter.pt",
         map_location="cpu",
-        weights_only=False,
+        weights_only=True,
     )
     assert adapter["format"] == "qwen_intervention_tinylora_v1"
     assert set(adapter["state"]["groups"]) == {"0"}

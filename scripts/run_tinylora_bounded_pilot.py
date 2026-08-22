@@ -19,6 +19,7 @@ from intelligent_liars.standalone_models import (
     TinyLoRATrainingConfig,
     build_training_batch,
     install_tinylora_with_cache,
+    load_safe_torch_checkpoint,
     weighted_causal_lm_loss,
 )
 from intelligent_liars.tinylora_pilot import (
@@ -70,6 +71,27 @@ def atomic_json(path: Path, payload: dict[str, Any]) -> None:
 
 def read_jsonl(path: Path) -> list[dict[str, Any]]:
     return [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
+
+
+def load_resume_state(
+    checkpoint_path: Path,
+    *,
+    plan_sha256: str,
+    probe_sha256: str,
+    rank: int,
+) -> dict[str, Any]:
+    state = load_safe_torch_checkpoint(
+        checkpoint_path,
+        description="bounded-pilot checkpoint",
+    )
+    if (
+        state.get("format") != "tinylora_bounded_pilot_state_v1"
+        or state.get("plan_sha256") != plan_sha256
+        or state.get("probe_sha256") != probe_sha256
+        or state.get("rank") != rank
+    ):
+        raise ValueError("Checkpoint identity differs from this pilot")
+    return state
 
 
 def training_record(row: dict[str, Any]) -> dict[str, Any]:
@@ -459,9 +481,12 @@ def main() -> int:
     skipped_examples: list[dict[str, str]] = []
     history: list[dict[str, Any]] = []
     if checkpoint_path.exists():
-        state = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
-        if state.get("plan_sha256") != file_sha256(plan_path) or state.get("rank") != args.rank:
-            raise ValueError("Checkpoint identity differs from this pilot")
+        state = load_resume_state(
+            checkpoint_path,
+            plan_sha256=file_sha256(plan_path),
+            probe_sha256=file_sha256(args.probe),
+            rank=args.rank,
+        )
         with torch.no_grad():
             trainable_vector.copy_(state["tinylora_vector"].to(trainable_vector.device))
         optimizer.load_state_dict(state["optimizer"])

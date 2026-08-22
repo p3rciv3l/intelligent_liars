@@ -4,6 +4,7 @@ import hashlib
 import json
 import math
 import os
+import pickle
 import random
 import gc
 import fcntl
@@ -56,6 +57,74 @@ DEFAULT_TINYLORA_TARGETS = (
     "mlp.up_proj",
     "mlp.down_proj",
 )
+
+
+def _validate_safe_checkpoint_value(
+    value: Any,
+    *,
+    location: str,
+    ancestors: set[int],
+) -> None:
+    if isinstance(value, torch.Tensor) or value is None or isinstance(
+        value, (bool, int, float, str)
+    ):
+        return
+    if isinstance(value, dict):
+        identity = id(value)
+        if identity in ancestors:
+            raise ValueError(f"Checkpoint contains a cyclic container at {location}")
+        ancestors.add(identity)
+        try:
+            for key, item in value.items():
+                if not isinstance(key, (bool, int, float, str)):
+                    raise ValueError(
+                        f"Checkpoint contains an unsupported mapping key at {location}"
+                    )
+                _validate_safe_checkpoint_value(
+                    item,
+                    location=f"{location}[{key!r}]",
+                    ancestors=ancestors,
+                )
+        finally:
+            ancestors.remove(identity)
+        return
+    if isinstance(value, (list, tuple)):
+        identity = id(value)
+        if identity in ancestors:
+            raise ValueError(f"Checkpoint contains a cyclic container at {location}")
+        ancestors.add(identity)
+        try:
+            for index, item in enumerate(value):
+                _validate_safe_checkpoint_value(
+                    item,
+                    location=f"{location}[{index}]",
+                    ancestors=ancestors,
+                )
+        finally:
+            ancestors.remove(identity)
+        return
+    raise ValueError(
+        f"Checkpoint contains unsupported value type {type(value).__name__} at {location}"
+    )
+
+
+def load_safe_torch_checkpoint(
+    path: Path,
+    *,
+    description: str = "checkpoint",
+) -> dict[str, Any]:
+    """Load a tensor/primitive checkpoint without enabling pickle object loading."""
+    try:
+        payload = torch.load(path, map_location="cpu", weights_only=True)
+    except (pickle.UnpicklingError, RuntimeError, TypeError, EOFError, AttributeError) as error:
+        raise ValueError(f"Refusing unsafe or invalid {description}: {path}") from error
+    if not isinstance(payload, dict):
+        raise ValueError(f"Invalid {description}: root payload must be a mapping")
+    try:
+        _validate_safe_checkpoint_value(payload, location="root", ancestors=set())
+    except ValueError as error:
+        raise ValueError(f"Refusing unsafe or invalid {description}: {path}") from error
+    return payload
 
 
 @dataclass(frozen=True)
@@ -594,10 +663,9 @@ def install_tinylora_with_cache(
         fcntl.flock(lock_handle, fcntl.LOCK_EX)
         try:
             if cache_path.exists():
-                payload = torch.load(
+                payload = load_safe_torch_checkpoint(
                     cache_path,
-                    map_location="cpu",
-                    weights_only=False,
+                    description="TinyLoRA basis cache",
                 )
                 if payload.get("identity") != identity:
                     raise ValueError(
@@ -829,7 +897,10 @@ def train_standalone_model(
     optimizer_steps = 0
     loss_history: list[float] = []
     if resume and state_path.exists():
-        state = torch.load(state_path, map_location="cpu", weights_only=False)
+        state = load_safe_torch_checkpoint(
+            state_path,
+            description="TinyLoRA distillation checkpoint",
+        )
         if (
             state.get("format") != "qwen_intervention_distillation_state_v2"
             or state.get("adapter_implementation") != TINYLORA_IMPLEMENTATION
