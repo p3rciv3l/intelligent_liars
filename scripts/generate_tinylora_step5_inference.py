@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import importlib.metadata
 import json
 from pathlib import Path
 from typing import Any, Sequence
@@ -48,7 +49,6 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--basis-state", type=Path)
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--device", default="cuda:0")
-    parser.add_argument("--attention", default="flash_attention_2")
     parser.add_argument("--seed", type=int, default=20260822)
     return parser
 
@@ -117,6 +117,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     plan_path = args.plan.resolve(strict=True)
     plan = json.loads(plan_path.read_text())
     model_specification = plan["model"]
+    if model_specification.get("attention") != "flash_attention_2":
+        raise InferenceContractError(
+            "the frozen Step 5 plan must require flash_attention_2"
+        )
     model_cache_identity, _verified = verified_model_identity(
         snapshot_root=args.model_snapshot_root,
         snapshot_plan_path=args.model_snapshot_plan,
@@ -157,10 +161,26 @@ def main(argv: Sequence[str] | None = None) -> int:
         str(args.model_snapshot_root),
         local_files_only=True,
         dtype=torch.bfloat16,
-        attn_implementation=args.attention,
+        attn_implementation="flash_attention_2",
         device_map={"": args.device},
     )
     model.eval()
+    device_index = torch.device(args.device).index or 0
+    properties = torch.cuda.get_device_properties(device_index)
+    source_receipt["inference_runtime"] = {
+        "attention_implementation": "flash_attention_2",
+        "device": args.device,
+        "gpu_name": properties.name,
+        "gpu_compute_capability": [properties.major, properties.minor],
+        "gpu_total_memory_bytes": properties.total_memory,
+        "torch_version": torch.__version__,
+        "torch_cuda_version": torch.version.cuda,
+        "transformers_version": importlib.metadata.version("transformers"),
+        "flash_attn_version": importlib.metadata.version("flash-attn"),
+        "qwen_vl_utils_version": importlib.metadata.version("qwen-vl-utils"),
+        "model_class": type(model).__qualname__,
+        "processor_class": type(processor).__qualname__,
+    }
     if args.model_state == "base":
         model_identity = {
             "state": "base",
