@@ -36,6 +36,12 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--model-snapshot-root", type=Path, required=True)
     parser.add_argument("--model-snapshot-plan", type=Path, required=True)
     parser.add_argument("--image-bundle-root", type=Path, required=True)
+    parser.add_argument(
+        "--runtime-image-receipt",
+        type=Path,
+        required=True,
+        help="verified JSON receipt for the exact prebuilt runtime image",
+    )
     parser.add_argument("--model-state", choices=("base", "candidate"), required=True)
     parser.add_argument("--adapter-state", type=Path)
     parser.add_argument("--adapter-metadata", type=Path)
@@ -57,6 +63,7 @@ def _software_sha256() -> str:
         Path(__file__).resolve(),
         PROJECT_ROOT / "src/intelligent_liars/step5_inference_inventory.py",
         PROJECT_ROOT / "src/intelligent_liars/model_cache.py",
+        PROJECT_ROOT / "src/intelligent_liars/models.py",
         PROJECT_ROOT / "src/intelligent_liars/step5_multimodal_assets.py",
         PROJECT_ROOT / "src/intelligent_liars/standalone_models.py",
         PROJECT_ROOT / "src/intelligent_liars/tinylora_step5.py",
@@ -125,6 +132,16 @@ def main(argv: Sequence[str] | None = None) -> int:
         image_asset_receipt=image_receipt,
     )
     source_receipt["model_cache"] = model_cache_identity
+    try:
+        runtime_receipt = json.loads(args.runtime_image_receipt.read_text())
+    except (OSError, json.JSONDecodeError) as error:
+        raise InferenceContractError("invalid runtime image receipt") from error
+    if not isinstance(runtime_receipt, dict) or not runtime_receipt:
+        raise InferenceContractError("runtime image receipt must be a nonempty object")
+    source_receipt["runtime_image"] = {
+        "receipt_sha256": file_sha256(args.runtime_image_receipt),
+        "receipt": runtime_receipt,
+    }
 
     import torch
     from transformers import AutoProcessor, Qwen3VLForConditionalGeneration

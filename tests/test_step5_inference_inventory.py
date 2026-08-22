@@ -256,6 +256,7 @@ def test_qwen_backend_disables_thinking_and_uses_fixed_greedy_kwargs() -> None:
 
     class Processor:
         tokenizer = type("Tokenizer", (), {"eos_token_id": 99})()
+        chat_template = "{% if enable_thinking %}think{% endif %}"
 
         def __init__(self) -> None:
             self.template_calls = []
@@ -301,4 +302,4 @@ def test_qwen_backend_disables_thinking_and_uses_fixed_greedy_kwargs() -> None:
     assert model.kwargs["do_sample"] is False
     assert model.kwargs["num_beams"] == 1
     assert model.kwargs["max_new_tokens"] == 128
-    assert len(processor.template_calls) == 2
+    assert len(processor.template_calls) == 1

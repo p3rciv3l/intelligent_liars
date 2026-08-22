@@ -634,21 +634,15 @@ class QwenInferenceBackend:
     def __init__(self, *, model: Any, processor: Any) -> None:
         self.model = model
         self.processor = processor
-        probe_messages = [
-            {"role": "user", "content": [{"type": "text", "text": "probe"}]}
-        ]
-        try:
-            processor.apply_chat_template(
-                probe_messages,
-                tokenize=False,
-                add_generation_prompt=True,
-                enable_thinking=False,
-            )
-            self.thinking_control = "disabled"
-        except TypeError as error:
-            if "enable_thinking" not in str(error):
-                raise
-            self.thinking_control = "unsupported"
+        from jinja2 import Environment, meta
+
+        template = getattr(processor, "chat_template", None)
+        if not isinstance(template, str) or not template.strip():
+            raise InferenceContractError("processor has no inspectable chat template")
+        variables = meta.find_undeclared_variables(Environment().parse(template))
+        self.thinking_control = (
+            "disabled" if "enable_thinking" in variables else "unsupported"
+        )
 
     def _inputs(self, messages: Sequence[Mapping[str, Any]]) -> Mapping[str, Any]:
         qwen_messages = _qwen_messages(messages)
