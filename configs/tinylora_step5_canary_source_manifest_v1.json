@@ -1,7 +1,7 @@
 {
   "files": [
     {"path": "pyproject.toml", "sha256": "1c4e4b98c38708fc2fcabf709ffefa7652201f30cf56d571fb4d99dccfdb2bb5"},
-    {"path": "scripts/diagnose_tinylora_step5_canary.py", "sha256": "d61db3c7bdfc53d6aa6ce1cb85be191de82e2d72f631789d45edb09c30199e7e"},
+    {"path": "scripts/diagnose_tinylora_step5_canary.py", "sha256": "e9e2e12630692c7e31b7084e7a28fd2b9a7534d1463d7eb56e24b0e4e693466b"},
     {"path": "scripts/qualify_vast_step5_host.py", "sha256": "6f46bc07999d832363c7c81d8343252ee539d1d544671d781693a7500c6c9236"},
     {"path": "scripts/run_tinylora_step5_screen.py", "sha256": "9024653c23e87caab72ef6c01235ce3a7e96269c61f97303a4bf87dfdd79531e"},
     {"path": "scripts/run_vast_step5_instance.py", "sha256": "f65710f1577758ecdf5f48401bf085229783eec3a1e43628c2b5e8cb022773f4"},
@@ -13,7 +13,7 @@
     {"path": "src/intelligent_liars/progress.py", "sha256": "4573fa49e17cfc33919cca54eedba380a835d5a1202b5029f488482129d2d0ae"},
     {"path": "src/intelligent_liars/rollouts.py", "sha256": "59183bead0ee4072ee3f956c743f549294ef89f9a130cbd9d51b8f6b79ed1763"},
     {"path": "src/intelligent_liars/standalone_models.py", "sha256": "f1fa46bb1ec74f8781625a8f8d319ccffb08277edb683cae4c0ee0d9ae7589f9"},
-    {"path": "src/intelligent_liars/step5_launch_packet.py", "sha256": "11458356c1899e0c62b1dc4277a4ef6d3c21e1319bec7392b29fc86312c47e0c"},
+    {"path": "src/intelligent_liars/step5_launch_packet.py", "sha256": "620e89ec8f0308eca8cda77bd398d83d508b8a7e0576d07db791fe2e21195bee"},
     {"path": "src/intelligent_liars/step5_prerequisites.py", "sha256": "5aaf3db3549afafc5c90c228387801c7f87c1ffad1e8e31baffa416b9dd008ca"},
     {"path": "src/intelligent_liars/tinylora_pilot.py", "sha256": "91396c2bee4211577e3f0134126495624247acd74d4b93d3ade3028ed11749bc"},
     {"path": "src/intelligent_liars/tinylora_step5.py", "sha256": "cb1478535ff5acfa25e6ba6844b8e8bb03b4b304b3ecb03efddf52cfa36577b5"},

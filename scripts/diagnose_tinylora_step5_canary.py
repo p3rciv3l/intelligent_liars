@@ -23,9 +23,30 @@ def parse_args() -> argparse.Namespace:
 def _probe(command: list[str]) -> dict[str, object]:
     if shutil.which(command[0]) is None:
         return {"available": False}
-    completed = subprocess.run(command, text=True, capture_output=True, check=False)
+    try:
+        completed = subprocess.run(
+            command,
+            text=True,
+            capture_output=True,
+            check=False,
+            timeout=20,
+        )
+    except subprocess.TimeoutExpired as error:
+        def tail(value: str | bytes | None) -> str:
+            if isinstance(value, bytes):
+                value = value.decode(errors="replace")
+            return (value or "")[-2000:]
+
+        return {
+            "available": True,
+            "timed_out": True,
+            "timeout_seconds": 20,
+            "stdout_tail": tail(error.stdout),
+            "stderr_tail": tail(error.stderr),
+        }
     return {
         "available": True,
+        "timed_out": False,
         "exit_code": completed.returncode,
         "stdout_tail": completed.stdout[-2000:],
         "stderr_tail": completed.stderr[-2000:],

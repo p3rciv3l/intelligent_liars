@@ -101,6 +101,17 @@ validates the checkpoint identity before resuming.
    frozen nine-file inventory, publishes it, and writes the lifecycle artifact
    manifest.
 
+The last three command substitutions are implementation blockers, not values to
+guess at launch time. The current repository has no credentialless dynamic
+checkpoint upload/acknowledgement bridge and no lifecycle-compatible artifact
+publisher. The existing model-cache hydrator also needs a source plan that was
+not published with the 20 cache objects. Finally, the screen runner verifies the
+original plan-hashed vision rows but does not yet rebase their `data/...` image
+references through the validated portable PixMo manifest. An input downloader
+alone would therefore still fail or use the wrong image path. Keep the packet
+blocked until those three seams exist and their exact commands replace the
+placeholders.
+
 The validator reports `launch_ready: false` and exits 2 while any substitution
 remains. `--allow-incomplete` changes only that reporting exit code for CI; it
 does not execute anything. The packet contains no `--execute` or

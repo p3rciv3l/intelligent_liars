@@ -77,10 +77,10 @@
     },
     "source_manifest": {
       "path": "tinylora_step5_canary_source_manifest_v1.json",
-      "sha256": "5832828ada86b72614e018f3a083f5bcc2779cb13f686893d5ec2c45fdeb55ae"
+      "sha256": "bf17bb4d01c877b50fe35c4e338ae98197c81fc1d28f1eda35e23b28fd753413"
     }
   },
-  "packet_sha256": "5e53c94308b4995ad7d096c29396e785352ddc6100c42fac55fadf3f2ebf4eb9",
+  "packet_sha256": "b6d2c3d22ed574770b782d79515c17ffafa393409a14d6688d3e86612a312612",
   "remaining_substitutions": [
     "APPROVED_AT",
     "APPROVED_HOURLY_PRICE_USD",
@@ -97,6 +97,8 @@
   "remote_inputs": {
     "frozen_inputs_completion_sha256": "82af3c0259465dde974b5dafc998d65ee2f07e3f9f41f256f663c97865442a58",
     "frozen_inputs_tar_sha256": "b1b40983e39463f2c1cc283441dc2f2d13fba1b1b4850728771ae55deafb322f",
+    "model_completion_sha256": "4ccd7c940e1a72800d0153e809edab69e91c7cdd4d79627a1bb98076a0ef7275",
+    "model_manifest_sha256": "6ec207494fed0658ebaf31f1083f77110caae45f8c2392354e767ef54c78dd07",
     "model_s3_prefix": "s3://intelligent-liars-osworld-29a36b2b927f4078b2ac95ca83ec9c21/model-cache/v1/qwen--qwen3-vl-8b-thinking/92f3c4b4feadd3a016ef468d103bb5f58b2a2c6b/bbca6a8b09a56f0c538887b82b9594b0c0945c5fbcde54f39eda153a9f64eda8/",
     "pixmo_completion_sha256": "5106a2fa2e3feb635a0335c052c76035e764859eb81708deb5d4cdf8cec1388f",
     "pixmo_manifest_sha256": "b1bcd5034e3751a58d531ef2897bfa49b8da0a3c848a9bb976e2f08f2ad19226",

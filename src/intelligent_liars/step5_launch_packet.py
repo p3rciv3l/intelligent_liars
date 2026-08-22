@@ -175,6 +175,32 @@ def _validate_complete_runtime(packet: Mapping[str, Any]) -> None:
     if parsed.tzinfo is None:
         raise LaunchPacketError("approved_at must include a timezone")
 
+    commands = _mapping(packet["commands"], label="commands")
+    argv = commands["lifecycle_argv"]
+    assert isinstance(argv, list)
+
+    def flag_value(flag: str) -> str:
+        positions = [index for index, item in enumerate(argv) if item == flag]
+        if len(positions) != 1 or positions[0] + 1 >= len(argv):
+            raise LaunchPacketError(f"lifecycle_argv requires exactly one {flag}")
+        return str(argv[positions[0] + 1])
+
+    expected_flags = {
+        "--offer-id": str(runtime["offer_id"]),
+        "--image": str(runtime["image"]),
+        "--disk": str(runtime["disk_gib"]),
+        "--approved-hourly-price": str(approval["approved_hourly_price_usd"]),
+        "--approved-max-cost": str(approval["approved_max_cost_usd"]),
+    }
+    for flag, expected in expected_flags.items():
+        if flag_value(flag) != expected:
+            raise LaunchPacketError(f"{flag} differs from its frozen packet field")
+    remote = commands["remote"]
+    if not isinstance(remote, str) or str(runtime["image_digest"]) not in remote:
+        raise LaunchPacketError("remote command is not bound to the runtime image digest")
+    if flag_value("--remote-command") != remote:
+        raise LaunchPacketError("lifecycle remote command differs from the frozen template")
+
 
 def validate_launch_packet(
     value: Mapping[str, Any], *, packet_dir: Path
@@ -241,7 +267,17 @@ def validate_launch_packet(
     )
     if re.search(r"(?:^|\s)--execute(?:\s|$)", all_command_text):
         raise LaunchPacketError("launch packet must contain zero --execute flags")
-    if any(token in all_command_text for token in ("AWS_SECRET_ACCESS_KEY", "HF_TOKEN=")):
+    secret_patterns = (
+        r"\bAWS_(?:ACCESS_KEY_ID|SECRET_ACCESS_KEY|SESSION_TOKEN)\s*=",
+        r"\b(?:HF_TOKEN|HUGGING_FACE_HUB_TOKEN|OPENAI_API_KEY)\s*=",
+        r"\bVAST(?:AI)?_(?:API_)?KEY\s*=",
+        r"--(?:api-key|token|password)(?:=|\s+)",
+        r"Authorization\s*:\s*Bearer\s+",
+    )
+    if any(
+        re.search(pattern, all_command_text, re.IGNORECASE)
+        for pattern in secret_patterns
+    ):
         raise LaunchPacketError("launch packet must not embed credentials")
 
     declared = value.get("remaining_substitutions")

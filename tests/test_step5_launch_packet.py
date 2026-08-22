@@ -76,7 +76,7 @@ def _packet(tmp_path: Path) -> dict[str, object]:
             "approved_at": "${APPROVED_AT}",
         },
         "commands": {
-            "remote": "python scripts/run_tinylora_step5_screen.py --mode prerequisites",
+            "remote": "python scripts/run_tinylora_step5_screen.py --mode prerequisites --runtime-image-digest ${RUNTIME_IMAGE_DIGEST}",
             "host_qualification": "python scripts/qualify_vast_step5_host.py --download-url-env STEP5_HOST_GATE_URL",
             "diagnostic": "python scripts/diagnose_tinylora_step5_canary.py",
             "software_recovery": "python scripts/validate_tinylora_step5_launch_packet.py --packet configs/packet.json --allow-incomplete",
@@ -87,6 +87,14 @@ def _packet(tmp_path: Path) -> dict[str, object]:
                 "${OFFER_ID}",
                 "--image",
                 "${RUNTIME_IMAGE}",
+                "--disk",
+                "160",
+                "--approved-hourly-price",
+                "${APPROVED_HOURLY_PRICE_USD}",
+                "--approved-max-cost",
+                "${APPROVED_MAX_COST_USD}",
+                "--remote-command",
+                "python scripts/run_tinylora_step5_screen.py --mode prerequisites --runtime-image-digest ${RUNTIME_IMAGE_DIGEST}",
             ],
         },
         "remaining_substitutions": [
@@ -149,7 +157,12 @@ def test_complete_packet_requires_digest_and_exact_cost_approval(tmp_path: Path)
 
     def replace(value: object) -> object:
         if isinstance(value, str):
-            return replacements.get(value, value)
+            if value in replacements:
+                return replacements[value]
+            replaced = value
+            for marker, replacement in replacements.items():
+                replaced = replaced.replace(marker, str(replacement))
+            return replaced
         if isinstance(value, list):
             return [replace(item) for item in value]
         if isinstance(value, dict):
@@ -158,6 +171,9 @@ def test_complete_packet_requires_digest_and_exact_cost_approval(tmp_path: Path)
 
     complete = replace(copy.deepcopy(packet))
     assert isinstance(complete, dict)
+    complete["commands"]["lifecycle_argv"] = [  # type: ignore[index]
+        str(item) for item in complete["commands"]["lifecycle_argv"]  # type: ignore[index]
+    ]
     complete["remaining_substitutions"] = []
     complete["packet_sha256"] = canonical_sha256(complete)
     result = validate_launch_packet(complete, packet_dir=tmp_path)
@@ -169,10 +185,59 @@ def test_complete_packet_requires_digest_and_exact_cost_approval(tmp_path: Path)
         validate_launch_packet(complete, packet_dir=tmp_path)
 
 
+def test_complete_packet_rejects_command_field_drift(tmp_path: Path):
+    packet = _packet(tmp_path)
+    packet["runtime"].update(  # type: ignore[union-attr]
+        {
+            "image": "ghcr.io/example/step5@sha256:" + "a" * 64,
+            "image_digest": "sha256:" + "a" * 64,
+            "offer_id": "123",
+            "gpu_name": "RTX 3090",
+            "gpu_vram_gib": 24,
+        }
+    )
+    packet["approval"] = {
+        "approved_hourly_price_usd": 0.25,
+        "approved_max_cost_usd": 1.5,
+        "approved_at": "2026-08-22T20:00:00Z",
+    }
+    packet["remote_inputs"]["plan_s3_uri"] = "s3://bucket/plan"  # type: ignore[index]
+    packet["remote_inputs"]["probe_s3_uri"] = "s3://bucket/probe"  # type: ignore[index]
+    packet["commands"]["remote"] = "run --runtime sha256:" + "a" * 64  # type: ignore[index]
+    packet["commands"]["lifecycle_argv"] = [  # type: ignore[index]
+        "python",
+        "wrapper.py",
+        "--offer-id",
+        "999",
+        "--image",
+        "ghcr.io/example/step5@sha256:" + "a" * 64,
+        "--disk",
+        "160",
+        "--approved-hourly-price",
+        "0.25",
+        "--approved-max-cost",
+        "1.5",
+        "--remote-command",
+        packet["commands"]["remote"],  # type: ignore[index]
+    ]
+    packet["remaining_substitutions"] = []
+    packet["packet_sha256"] = canonical_sha256(packet)
+    with pytest.raises(LaunchPacketError, match="offer-id"):
+        validate_launch_packet(packet, packet_dir=tmp_path)
+
+
 def test_packet_hash_detects_tampering(tmp_path: Path):
     packet = _packet(tmp_path)
     packet["runtime"]["disk_gib"] = 200  # type: ignore[index]
     with pytest.raises(LaunchPacketError, match="packet_sha256"):
+        validate_launch_packet(packet, packet_dir=tmp_path)
+
+
+def test_packet_rejects_embedded_credentials(tmp_path: Path):
+    packet = _packet(tmp_path)
+    packet["commands"]["diagnostic"] = "AWS_SESSION_TOKEN=not-allowed diagnose"  # type: ignore[index]
+    packet["packet_sha256"] = canonical_sha256(packet)
+    with pytest.raises(LaunchPacketError, match="credentials"):
         validate_launch_packet(packet, packet_dir=tmp_path)
 
 
