@@ -23,7 +23,7 @@ from typing import Any, Protocol
 
 PLAN_FORMAT = "tinylora_step5_plan_v1"
 RUN_FORMAT = "tinylora_step5_inference_run_v1"
-RESPONSE_FORMAT = "tinylora_step5_inference_response_v1"
+RESPONSE_FORMAT = "tinylora_step5_inference_response_v2"
 XSTEST_RESPONSE_FORMAT = "tinylora_xstest_response_v1"
 BEHAVIOR_SPLITS = ("development_iid", "development_heldout_family")
 VISION_SPLIT = "preservation_development_vision"
@@ -37,6 +37,16 @@ OBJECTIVES = (
     "true_state_indirect_answer_after_false_report",
     "truthful_false_trigger_control",
 )
+OBJECTIVE_CONDITION_TYPES = {
+    "conditioned_false_direct_report": "target",
+    "truthful_direct_report": "neutral",
+    "true_state_action_after_false_report": "target_after_report",
+    "counterfactual_state_action": "counterfactual",
+    "true_state_indirect_answer_after_false_report": (
+        "target_after_report_indirect_probe"
+    ),
+    "truthful_false_trigger_control": "false_trigger_control",
+}
 _HEX = frozenset("0123456789abcdef")
 
 
@@ -267,6 +277,13 @@ def _behavior_requests(
         prompt = row.get("prompt")
         if not scenario or not isinstance(prompt, str) or not prompt.strip():
             raise InferenceContractError(f"invalid behavior prompt in {split}")
+        objective = str(row.get("objective", ""))
+        condition_type = str(row.get("condition_type", ""))
+        if OBJECTIVE_CONDITION_TYPES.get(objective) != condition_type:
+            raise InferenceContractError(
+                f"behavior row has invalid condition_type in {split}: "
+                f"{row.get('record_id', '<missing>')}"
+            )
         by_scenario[scenario].append(row)
     expected = set(OBJECTIVES)
     for scenario, scenario_rows in by_scenario.items():
@@ -288,10 +305,12 @@ def _behavior_requests(
                     "split_group_id",
                     "family",
                     "objective",
+                    "condition_type",
                     "target",
                     "alternative_target",
                 )
-            },
+            }
+            | {"trigger_stratum": str(row["condition_type"])},
         )
         for row in sorted(rows, key=lambda item: str(item["record_id"]))
     ]

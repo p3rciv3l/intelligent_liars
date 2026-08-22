@@ -24,7 +24,8 @@ def _arguments() -> argparse.Namespace:
     parser.add_argument("--base-thresholds-sha256", required=True)
     parser.add_argument("--base-paired", required=True, type=Path)
     parser.add_argument("--candidate-paired", required=True, type=Path)
-    parser.add_argument("--generation", required=True, type=Path)
+    parser.add_argument("--base-generation", required=True, type=Path)
+    parser.add_argument("--candidate-generation", required=True, type=Path)
     parser.add_argument("--preservation", required=True, type=Path)
     parser.add_argument("--safety", required=True, type=Path)
     parser.add_argument("--probes", required=True, type=Path)
@@ -70,14 +71,15 @@ def main() -> int:
             base_thresholds_file_sha256=actual_base_threshold_sha,
             base_paired=_load(args.base_paired),
             candidate_paired=_load(args.candidate_paired),
-            generation=_load(args.generation),
+            base_generation=_load(args.base_generation),
+            candidate_generation=_load(args.candidate_generation),
             preservation=_load(args.preservation),
             safety=_load(args.safety),
             probes=_load(args.probes),
         )
     except (OSError, json.JSONDecodeError, GateEvaluationError) as error:
         failure = {
-            "format": "tinylora_step5_five_gate_evaluation_v1",
+            "format": "tinylora_step5_five_gate_evaluation_v2",
             "status": "fatal_input_error",
             "eligible_to_advance": False,
             "error": str(error),

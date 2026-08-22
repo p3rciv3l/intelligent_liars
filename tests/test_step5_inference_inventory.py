@@ -35,6 +35,16 @@ OBJECTIVES = (
     "true_state_indirect_answer_after_false_report",
     "truthful_false_trigger_control",
 )
+CONDITION_TYPES = {
+    "conditioned_false_direct_report": "target",
+    "truthful_direct_report": "neutral",
+    "true_state_action_after_false_report": "target_after_report",
+    "counterfactual_state_action": "counterfactual",
+    "true_state_indirect_answer_after_false_report": (
+        "target_after_report_indirect_probe"
+    ),
+    "truthful_false_trigger_control": "false_trigger_control",
+}
 
 
 def _sha(path: Path) -> str:
@@ -57,6 +67,7 @@ def _fixture_plan(tmp_path: Path) -> tuple[Path, dict[str, list[dict]]]:
                 "family": "family_a",
                 "kind": "behavior",
                 "objective": objective,
+                "condition_type": CONDITION_TYPES[objective],
                 "prompt": f"Prompt for {objective}",
                 "target": "yes",
                 "alternative_target": "no",
@@ -207,7 +218,26 @@ def test_fake_model_generation_is_complete_deterministic_and_unscored(
     assert first["safety_refusal"][0]["format"] == "tinylora_xstest_response_v1"
     assert "observed_behavior" not in first["safety_refusal"][0]
     assert "prediction" not in first["behavior"][0]
+    assert all(
+        row["trigger_stratum"] == row["condition_type"]
+        for row in first["behavior"]
+    )
     assert len(first["run_identity_sha256"]) == 64
+
+
+def test_behavior_condition_type_is_required_and_objective_bound(
+    tmp_path: Path,
+) -> None:
+    plan_path, rows = _fixture_plan(tmp_path)
+    rows["development_iid"][0]["condition_type"] = "neutral"
+    path = tmp_path / "development_iid.jsonl"
+    _write_jsonl(path, rows["development_iid"])
+    plan = json.loads(plan_path.read_text())
+    plan["outputs"]["development_iid"]["sha256"] = _sha(path)
+    plan_path.write_text(json.dumps(plan, sort_keys=True) + "\n")
+
+    with pytest.raises(InferenceContractError, match="invalid condition_type"):
+        build_inference_requests(plan_path)
 
 
 @pytest.mark.parametrize("mode", ["error", "truncated"])
