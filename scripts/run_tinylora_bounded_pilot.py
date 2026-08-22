@@ -24,10 +24,13 @@ from intelligent_liars.standalone_models import (
 from intelligent_liars.tinylora_pilot import (
     DIRECTIONAL_OBJECTIVE,
     ObjectiveWeights,
+    assistant_probe_score,
     directional_margin_loss,
     file_sha256,
-    preservation_kl_loss,
+    select_stratified_rows,
     stable_score,
+    topk_preservation_kl_loss,
+    topk_preservation_targets,
 )
 
 
@@ -133,20 +136,6 @@ class LayerCapture:
         self.handle.remove()
 
 
-def assistant_probe_score(
-    hidden: torch.Tensor,
-    labels: torch.Tensor,
-    direction: torch.Tensor,
-    intercept: float,
-) -> torch.Tensor:
-    if hidden.shape[:2] != labels.shape:
-        raise ValueError("Hidden states and labels are not token-aligned")
-    token_mask = labels != -100
-    scores = hidden.float() @ direction.to(hidden.device) + intercept
-    denominator = token_mask.sum(dim=1).clamp_min(1)
-    return (scores * token_mask).sum(dim=1) / denominator
-
-
 def _base_forward(
     model: Any,
     capture: LayerCapture,
@@ -209,7 +198,14 @@ def evaluate_losses(
     intercept: float,
     max_length: int,
 ) -> dict[str, Any]:
-    result = {"records": 0, "behavior_ce": [], "direction_movement": [], "preservation_kl": []}
+    result = {
+        "records": 0,
+        "behavior_ce": [],
+        "base_behavior_ce": [],
+        "direction_movement": [],
+        "preservation_kl": [],
+        "by_objective": {},
+    }
     model.eval()
     for row in rows:
         inputs, labels, weights = build_training_batch(
@@ -222,15 +218,36 @@ def evaluate_losses(
         base_logits, base_hidden = _base_forward(
             model, capture, inputs, trainable_vector, need_hidden=need_hidden
         )
+        base_behavior: torch.Tensor | None = None
+        preservation_targets: tuple[torch.Tensor, torch.Tensor] | None = None
+        if row["kind"] == "preservation":
+            preservation_targets = topk_preservation_targets(base_logits)
+        else:
+            base_behavior = weighted_causal_lm_loss(base_logits, labels, weights)
+        del base_logits
         with torch.no_grad():
             outputs = model(**inputs, use_cache=False)
             student_hidden = capture.take()
             if row["kind"] == "preservation":
-                loss = preservation_kl_loss(outputs.logits, base_logits, inputs["attention_mask"])
+                assert preservation_targets is not None
+                loss = topk_preservation_kl_loss(
+                    outputs.logits,
+                    *preservation_targets,
+                    inputs["attention_mask"],
+                )
                 result["preservation_kl"].append(float(loss.cpu()))
             else:
                 loss = weighted_causal_lm_loss(outputs.logits, labels, weights)
+                assert base_behavior is not None
                 result["behavior_ce"].append(float(loss.cpu()))
+                result["base_behavior_ce"].append(float(base_behavior.cpu()))
+                objective = str(row["objective"])
+                objective_values = result["by_objective"].setdefault(
+                    objective,
+                    {"base_behavior_ce": [], "student_behavior_ce": []},
+                )
+                objective_values["base_behavior_ce"].append(float(base_behavior.cpu()))
+                objective_values["student_behavior_ce"].append(float(loss.cpu()))
                 if need_hidden:
                     assert base_hidden is not None
                     movement = assistant_probe_score(
@@ -239,8 +256,21 @@ def evaluate_losses(
                     result["direction_movement"].append(float(movement.cpu()))
         result["records"] += 1
     model.train()
+    by_objective = {}
+    for objective, values in result["by_objective"].items():
+        base_mean = sum(values["base_behavior_ce"]) / len(values["base_behavior_ce"])
+        student_mean = sum(values["student_behavior_ce"]) / len(
+            values["student_behavior_ce"]
+        )
+        by_objective[objective] = {
+            "count": len(values["student_behavior_ce"]),
+            "base_behavior_ce_mean": base_mean,
+            "student_behavior_ce_mean": student_mean,
+            "student_minus_base_ce": student_mean - base_mean,
+        }
     return {
         "records": result["records"],
+        "by_objective": by_objective,
         **{
             key: {"count": len(values), "mean": sum(values) / len(values) if values else None}
             for key, values in result.items()
@@ -259,6 +289,7 @@ def _generate_one(model: Any, processor: Any, prompt: str) -> str:
         [{"role": "user", "content": prompt}],
         tokenize=False,
         add_generation_prompt=True,
+        enable_thinking=False,
     )
     inputs = tokenizer(text, return_tensors="pt", add_special_tokens=False)
     device = next(model.parameters()).device
@@ -266,7 +297,7 @@ def _generate_one(model: Any, processor: Any, prompt: str) -> str:
     with torch.inference_mode():
         output = model.generate(
             **inputs,
-            max_new_tokens=64,
+            max_new_tokens=128,
             do_sample=False,
             use_cache=True,
         )
@@ -284,8 +315,10 @@ def evaluate_generation(
 ) -> dict[str, Any]:
     by_objective: dict[str, dict[str, int]] = {}
     examples: list[dict[str, Any]] = []
-    previous_use_cache = model.config.use_cache
-    model.config.use_cache = True
+    config_values = vars(model.config)
+    had_use_cache = "use_cache" in config_values
+    previous_use_cache = config_values.get("use_cache")
+    config_values["use_cache"] = True
     model.eval()
     try:
         for row in rows:
@@ -316,7 +349,10 @@ def evaluate_generation(
                 }
             )
     finally:
-        model.config.use_cache = previous_use_cache
+        if had_use_cache:
+            config_values["use_cache"] = previous_use_cache
+        else:
+            config_values.pop("use_cache", None)
         model.train()
     return {"by_objective": by_objective, "examples": examples}
 
@@ -352,17 +388,19 @@ def main() -> int:
         train_rows,
         key=lambda row: stable_score(args.seed + args.rank, str(row["record_id"])),
     )
-    ordered_development = sorted(
+    objective_count = len({str(row["objective"]) for row in development_rows})
+    if args.development_examples % objective_count:
+        raise ValueError("development_examples must divide evenly across objectives")
+    ordered_development = select_stratified_rows(
         development_rows,
-        key=lambda row: stable_score(args.seed, str(row["record_id"])),
-    )[: args.development_examples]
-    generation_development: list[dict[str, Any]] = []
-    for objective in sorted({row["objective"] for row in development_rows}):
-        candidates = sorted(
-            [row for row in development_rows if row["objective"] == objective],
-            key=lambda row: stable_score(args.seed + 1, str(row["record_id"])),
-        )
-        generation_development.extend(candidates[:4])
+        per_objective=args.development_examples // objective_count,
+        seed=args.seed,
+    )
+    generation_development = select_stratified_rows(
+        development_rows,
+        per_objective=4,
+        seed=args.seed + 1,
+    )
     args.output_dir.mkdir(parents=True, exist_ok=True)
     bundle = load_model_and_processor(
         ModelLoadConfig(
@@ -396,8 +434,8 @@ def main() -> int:
     if len(vectors) != 1:
         raise RuntimeError("Pilot requires one fully tied TinyLoRA vector")
     trainable_vector = next(iter(vectors.values()))
-    if model.config.use_cache:
-        model.config.use_cache = False
+    if vars(model.config).get("use_cache", False):
+        vars(model.config)["use_cache"] = False
     model.gradient_checkpointing_enable()
     if hasattr(model, "enable_input_require_grads"):
         model.enable_input_require_grads()
@@ -455,10 +493,15 @@ def main() -> int:
         need_base = need_hidden or row["kind"] == "preservation"
         base_logits: torch.Tensor | None = None
         base_hidden: torch.Tensor | None = None
+        preservation_targets: tuple[torch.Tensor, torch.Tensor] | None = None
         if need_base:
             base_logits, base_hidden = _base_forward(
                 model, capture, inputs, trainable_vector, need_hidden=need_hidden
             )
+            if row["kind"] == "preservation":
+                preservation_targets = topk_preservation_targets(base_logits)
+            del base_logits
+            base_logits = None
         outputs = model(**inputs, use_cache=False)
         student_hidden = capture.take()
         behavior = torch.zeros((), device=student_hidden.device)
@@ -474,10 +517,10 @@ def main() -> int:
                     desired_delta=desired_delta,
                 )
         else:
-            assert base_logits is not None
-            preservation = preservation_kl_loss(
+            assert preservation_targets is not None
+            preservation = topk_preservation_kl_loss(
                 outputs.logits,
-                base_logits,
+                *preservation_targets,
                 inputs["attention_mask"],
             )
         total = (
@@ -556,6 +599,10 @@ def main() -> int:
         },
         "objective_weights": weights.__dict__,
         "development": development,
+        "preservation_evaluation_scope": (
+            "training-objective-only; the immutable pilot development split contains "
+            "no held-out preservation rows"
+        ),
         "development_generation": generation,
         "attention_configured": getattr(model.config, "_attn_implementation", None),
         "gpu": torch.cuda.get_device_name(0),

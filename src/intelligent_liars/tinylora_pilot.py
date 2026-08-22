@@ -25,6 +25,21 @@ BEHAVIOR_OBJECTIVES = {
 DIRECTIONAL_OBJECTIVE = "conditioned_false_direct_report"
 
 
+def assistant_probe_score(
+    hidden: torch.Tensor,
+    labels: torch.Tensor,
+    direction: torch.Tensor,
+    intercept: float,
+) -> torch.Tensor:
+    """Average the affine probe score over labeled assistant tokens only."""
+    if hidden.shape[:2] != labels.shape:
+        raise ValueError("Hidden states and labels are not token-aligned")
+    token_mask = labels != -100
+    scores = hidden.float() @ direction.to(hidden.device) + intercept
+    denominator = token_mask.sum(dim=1).clamp_min(1)
+    return (scores * token_mask).sum(dim=1) / denominator
+
+
 def file_sha256(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as source:
@@ -35,6 +50,28 @@ def file_sha256(path: Path) -> str:
 
 def stable_score(seed: int, value: str) -> str:
     return hashlib.sha256(f"{seed}:{value}".encode()).hexdigest()
+
+
+def select_stratified_rows(
+    rows: Iterable[dict[str, Any]], *, per_objective: int, seed: int
+) -> list[dict[str, Any]]:
+    """Select a deterministic equal-sized slice from every objective."""
+    if per_objective < 1:
+        raise ValueError("per_objective must be positive")
+    materialized = list(rows)
+    selected: list[dict[str, Any]] = []
+    for objective in sorted({str(row["objective"]) for row in materialized}):
+        candidates = sorted(
+            (row for row in materialized if str(row["objective"]) == objective),
+            key=lambda row: stable_score(seed, str(row["record_id"])),
+        )
+        if len(candidates) < per_objective:
+            raise ValueError(
+                f"Objective {objective} has {len(candidates)} rows; "
+                f"need {per_objective}"
+            )
+        selected.extend(candidates[:per_objective])
+    return selected
 
 
 def assign_group_splits(
@@ -94,6 +131,48 @@ def preservation_kl_loss(
     token_kl = F.kl_div(
         student_log_probabilities,
         base_probabilities,
+        reduction="none",
+    ).sum(dim=-1)
+    weights = attention_mask.to(dtype=token_kl.dtype)
+    denominator = weights.sum().clamp_min(1)
+    return (token_kl * weights).sum() / denominator * (temperature**2)
+
+
+def topk_preservation_targets(
+    base_logits: torch.Tensor,
+    *,
+    top_k: int = 64,
+    temperature: float = 1.0,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Compress frozen-base logits into a renormalized top-k distribution."""
+    if temperature <= 0:
+        raise ValueError("KL temperature must be positive")
+    if top_k < 2 or top_k > base_logits.shape[-1]:
+        raise ValueError("top_k must be between 2 and the vocabulary size")
+    values, indices = torch.topk(base_logits, k=top_k, dim=-1)
+    probabilities = F.softmax(values.float() / temperature, dim=-1).to(
+        dtype=base_logits.dtype
+    )
+    return indices, probabilities
+
+
+def topk_preservation_kl_loss(
+    student_logits: torch.Tensor,
+    base_indices: torch.Tensor,
+    base_probabilities: torch.Tensor,
+    attention_mask: torch.Tensor,
+    *,
+    temperature: float = 1.0,
+) -> torch.Tensor:
+    """Memory-bounded KL over the frozen base model's retained top-k support."""
+    selected_student = torch.gather(student_logits, dim=-1, index=base_indices)
+    student_log_probabilities = F.log_softmax(
+        selected_student.float() / temperature,
+        dim=-1,
+    )
+    token_kl = F.kl_div(
+        student_log_probabilities,
+        base_probabilities.float(),
         reduction="none",
     ).sum(dim=-1)
     weights = attention_mask.to(dtype=token_kl.dtype)

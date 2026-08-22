@@ -5,15 +5,17 @@ import torch
 
 from intelligent_liars.tinylora_pilot import (
     ObjectiveWeights,
+    assistant_probe_score,
     assign_group_splits,
     directional_margin_loss,
     preservation_kl_loss,
+    select_stratified_rows,
+    topk_preservation_kl_loss,
+    topk_preservation_targets,
 )
 
 
 def test_assistant_probe_score_uses_only_labeled_tokens():
-    from scripts.run_tinylora_bounded_pilot import assistant_probe_score
-
     hidden = torch.tensor([[[1.0, 0.0], [3.0, 0.0], [5.0, 0.0]]])
     labels = torch.tensor([[-100, 2, 3]])
     direction = torch.tensor([1.0, 0.0])
@@ -30,6 +32,19 @@ def test_group_split_is_deterministic_and_disjoint():
     assert {split: list(first.values()).count(split) for split in counts} == counts
 
 
+def test_stratified_selection_is_balanced_and_deterministic():
+    rows = [
+        {"record_id": f"{objective}-{index}", "objective": objective}
+        for objective in ("a", "b")
+        for index in range(4)
+    ]
+    first = select_stratified_rows(rows, per_objective=2, seed=7)
+    second = select_stratified_rows(reversed(rows), per_objective=2, seed=7)
+    assert first == second
+    assert [row["objective"] for row in first].count("a") == 2
+    assert [row["objective"] for row in first].count("b") == 2
+
+
 def test_directional_margin_only_penalizes_insufficient_positive_movement():
     base = torch.tensor([0.0, 1.0])
     successful = torch.tensor([0.5, 1.5])
@@ -42,6 +57,10 @@ def test_preservation_kl_is_zero_for_identical_logits_and_masked():
     logits = torch.tensor([[[1.0, 2.0], [3.0, 4.0]]])
     mask = torch.tensor([[1, 0]])
     assert preservation_kl_loss(logits, logits, mask).item() == pytest.approx(0.0, abs=1e-6)
+    indices, probabilities = topk_preservation_targets(logits, top_k=2)
+    assert topk_preservation_kl_loss(
+        logits, indices, probabilities, mask
+    ).item() == pytest.approx(0.0, abs=1e-6)
 
 
 def test_objective_weights_fail_closed():
