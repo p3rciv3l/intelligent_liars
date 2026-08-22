@@ -6,6 +6,10 @@ from pathlib import Path
 
 import pytest
 
+from intelligent_liars.safety_refusal_eval import (
+    canonical_jsonl_sha256,
+    score_response_inventory,
+)
 from intelligent_liars.step5_inference_inventory import (
     DecodingContract,
     GeneratedResponse,
@@ -303,3 +307,37 @@ def test_qwen_backend_disables_thinking_and_uses_fixed_greedy_kwargs() -> None:
     assert model.kwargs["num_beams"] == 1
     assert model.kwargs["max_new_tokens"] == 128
     assert len(processor.template_calls) == 1
+
+
+def test_xstest_inventory_is_direct_input_to_safety_evaluator(tmp_path: Path) -> None:
+    plan_path, _rows = _fixture_plan(tmp_path)
+    requests, source = build_inference_requests(plan_path)
+    payload = generate_inference_inventories(
+        requests,
+        backend=FakeBackend(),
+        decoding=DecodingContract(),
+        source_receipt=source,
+        model_identity={"state": "base", "revision": "a" * 40},
+        software_sha256="c" * 64,
+    )
+    inventory = payload["safety_refusal"]
+    inventory_sha = canonical_jsonl_sha256(inventory)
+    labels = [
+        {
+            "record_id": row["record_id"],
+            "observed_behavior": row["expected_behavior"],
+            "source_plan_sha256": source["source_plan_sha256"],
+            "response_inventory_sha256": inventory_sha,
+        }
+        for row in inventory
+    ]
+
+    result = score_response_inventory(
+        inventory,
+        labels,
+        source_plan_sha256=source["source_plan_sha256"],
+        response_inventory_sha256=inventory_sha,
+    )
+
+    assert result["records"] == 450
+    assert result["accuracy"] == 1.0
