@@ -1,0 +1,14 @@
+{
+  "files": [
+    "canary_summary.json",
+    "checkpoint_store.tar",
+    "host_qualification.json",
+    "input_hydration_receipt.json",
+    "prerequisite_receipt.json",
+    "result.json",
+    "source_bundle_receipt.json",
+    "tinylora_dim13_basis.pt",
+    "worker.log"
+  ],
+  "format": "tinylora_step5_expected_artifact_inventory_v1"
+}

@@ -1,0 +1,117 @@
+{
+  "approval": {
+    "approved_at": "${APPROVED_AT}",
+    "approved_hourly_price_usd": "${APPROVED_HOURLY_PRICE_USD}",
+    "approved_max_cost_usd": "${APPROVED_MAX_COST_USD}"
+  },
+  "commands": {
+    "diagnostic": "PYTHONPATH=src python scripts/diagnose_tinylora_step5_canary.py --run-root /workspace/runs/step5-canary-v1/tinylora_dim13",
+    "host_qualification": "cd /workspace/workload && PYTHONPATH=src python scripts/qualify_vast_step5_host.py --download-url-file /run/secrets/step5-host-gate-url --output /workspace/controller/host_qualification.json --trials 3 --sample-mib 64 --min-download-mbps 100 --max-ttfb-seconds 5 --max-stall-seconds 10 --timeout-seconds 60",
+    "lifecycle_argv": [
+      "/Users/student/Desktop/ai/intelligent_liars/.venv/bin/python",
+      "scripts/run_vast_step5_instance.py",
+      "--vastai",
+      "/Users/student/Library/Python/3.10/bin/vastai",
+      "--offer-id",
+      "${OFFER_ID}",
+      "--run-id",
+      "step5-canary-v1",
+      "--candidate",
+      "tinylora-dim13-prerequisites",
+      "--attempt",
+      "1",
+      "--repo",
+      "/Users/student/Desktop/ai/intelligent_liars",
+      "--source-manifest",
+      "/Users/student/Desktop/ai/intelligent_liars/configs/tinylora_step5_canary_source_manifest_v1.json",
+      "--fetch-dir",
+      "/Users/student/Desktop/ai/intelligent_liars/artifacts/step5-canary-v1/fetched",
+      "--metadata",
+      "/Users/student/Desktop/ai/intelligent_liars/artifacts/step5-canary-v1/lifecycle.json",
+      "--image",
+      "${RUNTIME_IMAGE}",
+      "--disk",
+      "160",
+      "--remote-command",
+      "${CANARY_INPUT_HYDRATION_COMMAND} && cd /workspace/workload && HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 PYTHONPATH=src python scripts/run_tinylora_step5_screen.py --plan /workspace/inputs/step5_v1/manifest.json --probe /workspace/inputs/probes/step5_grouped_ensemble_v1/probes/legacy-grouped-regularizer.json --arm tinylora_dim13 --output-dir /workspace/runs/step5-canary-v1/tinylora_dim13 --mode prerequisites --cache-dir /workspace/cache/huggingface --max-steps 20 --max-length 2048 --learning-rate 0.0002 --gradient-accumulation 8 --checkpoint-every 5 --checkpoint-minutes 5 --development-per-objective 0 --seed 20260822 --projection-seed 42 --runtime-image-digest ${RUNTIME_IMAGE_DIGEST} --durability-verifier-command '${CHECKPOINT_DURABILITY_COMMAND}' && ${CANARY_ARTIFACT_FINALIZE_COMMAND}",
+      "--remote-artifact-dir",
+      "/workspace/artifacts/step5-canary-v1",
+      "--expected-artifact-inventory",
+      "/Users/student/Desktop/ai/intelligent_liars/configs/tinylora_step5_canary_expected_artifacts_v1.json",
+      "--host-qualification-command",
+      "cd /workspace/workload && PYTHONPATH=src python scripts/qualify_vast_step5_host.py --download-url-file /run/secrets/step5-host-gate-url --output /workspace/controller/host_qualification.json --trials 3 --sample-mib 64 --min-download-mbps 100 --max-ttfb-seconds 5 --max-stall-seconds 10 --timeout-seconds 60",
+      "--minimum-download-mbps",
+      "100",
+      "--diagnostic-command",
+      "PYTHONPATH=src python scripts/diagnose_tinylora_step5_canary.py --run-root /workspace/runs/step5-canary-v1/tinylora_dim13",
+      "--software-recovery-command",
+      "python -c 'import json; from pathlib import Path; p=Path(\"/workspace/runs/step5-canary-v1/tinylora_dim13/checkpoint_store/latest.json\"); assert p.is_file(); d=json.loads(p.read_text()); assert isinstance(d, dict) and d'",
+      "--max-software-resumes",
+      "1",
+      "--max-workers",
+      "3",
+      "--approved-hourly-price",
+      "${APPROVED_HOURLY_PRICE_USD}",
+      "--approved-max-cost",
+      "${APPROVED_MAX_COST_USD}"
+    ],
+    "remote": "${CANARY_INPUT_HYDRATION_COMMAND} && cd /workspace/workload && HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 PYTHONPATH=src python scripts/run_tinylora_step5_screen.py --plan /workspace/inputs/step5_v1/manifest.json --probe /workspace/inputs/probes/step5_grouped_ensemble_v1/probes/legacy-grouped-regularizer.json --arm tinylora_dim13 --output-dir /workspace/runs/step5-canary-v1/tinylora_dim13 --mode prerequisites --cache-dir /workspace/cache/huggingface --max-steps 20 --max-length 2048 --learning-rate 0.0002 --gradient-accumulation 8 --checkpoint-every 5 --checkpoint-minutes 5 --development-per-objective 0 --seed 20260822 --projection-seed 42 --runtime-image-digest ${RUNTIME_IMAGE_DIGEST} --durability-verifier-command '${CHECKPOINT_DURABILITY_COMMAND}' && ${CANARY_ARTIFACT_FINALIZE_COMMAND}",
+    "software_recovery": "python -c 'import json; from pathlib import Path; p=Path(\"/workspace/runs/step5-canary-v1/tinylora_dim13/checkpoint_store/latest.json\"); assert p.is_file(); d=json.loads(p.read_text()); assert isinstance(d, dict) and d'"
+  },
+  "execution": {
+    "enabled": false,
+    "execute_flag_present": false
+  },
+  "format": "tinylora_step5_canary_launch_packet_v1",
+  "identity": {
+    "model_content_sha256": "bbca6a8b09a56f0c538887b82b9594b0c0945c5fbcde54f39eda153a9f64eda8",
+    "model_revision": "92f3c4b4feadd3a016ef468d103bb5f58b2a2c6b",
+    "pixmo_content_sha256": "6938f0269264cb47cb753ef421a511ca81973d4a9d6dee6f83f6f029220c5c97",
+    "plan_sha256": "5282aaf0696098970de476e6812534e4c75c2434d7ec369495f5a311d6c09f99",
+    "probe_qualification_sha256": "f21781fdadab2eab6773d3e324d7500132e1f5f9e4bb38696c50837a07693b54"
+  },
+  "local_contracts": {
+    "expected_artifact_inventory": {
+      "path": "tinylora_step5_canary_expected_artifacts_v1.json",
+      "sha256": "5448ea1c83a8d48b31b9f5cd326409b3b013cd4f9ec5ff9f0917d441d8606916"
+    },
+    "source_manifest": {
+      "path": "tinylora_step5_canary_source_manifest_v1.json",
+      "sha256": "5832828ada86b72614e018f3a083f5bcc2779cb13f686893d5ec2c45fdeb55ae"
+    }
+  },
+  "packet_sha256": "5e53c94308b4995ad7d096c29396e785352ddc6100c42fac55fadf3f2ebf4eb9",
+  "remaining_substitutions": [
+    "APPROVED_AT",
+    "APPROVED_HOURLY_PRICE_USD",
+    "APPROVED_MAX_COST_USD",
+    "CANARY_ARTIFACT_FINALIZE_COMMAND",
+    "CANARY_INPUT_HYDRATION_COMMAND",
+    "CHECKPOINT_DURABILITY_COMMAND",
+    "GPU_NAME",
+    "GPU_VRAM_GIB",
+    "OFFER_ID",
+    "RUNTIME_IMAGE",
+    "RUNTIME_IMAGE_DIGEST"
+  ],
+  "remote_inputs": {
+    "frozen_inputs_completion_sha256": "82af3c0259465dde974b5dafc998d65ee2f07e3f9f41f256f663c97865442a58",
+    "frozen_inputs_tar_sha256": "b1b40983e39463f2c1cc283441dc2f2d13fba1b1b4850728771ae55deafb322f",
+    "model_s3_prefix": "s3://intelligent-liars-osworld-29a36b2b927f4078b2ac95ca83ec9c21/model-cache/v1/qwen--qwen3-vl-8b-thinking/92f3c4b4feadd3a016ef468d103bb5f58b2a2c6b/bbca6a8b09a56f0c538887b82b9594b0c0945c5fbcde54f39eda153a9f64eda8/",
+    "pixmo_completion_sha256": "5106a2fa2e3feb635a0335c052c76035e764859eb81708deb5d4cdf8cec1388f",
+    "pixmo_manifest_sha256": "b1bcd5034e3751a58d531ef2897bfa49b8da0a3c848a9bb976e2f08f2ad19226",
+    "pixmo_s3_prefix": "s3://intelligent-liars-osworld-29a36b2b927f4078b2ac95ca83ec9c21/step5-assets/v1/pixmo/6938f0269264cb47cb753ef421a511ca81973d4a9d6dee6f83f6f029220c5c97/",
+    "pixmo_tar_sha256": "284ec9d7d1f3e4833f8e71e6028e5f7d0ce039d2749742b220c488d2de2e6d55",
+    "plan_s3_uri": "s3://intelligent-liars-osworld-29a36b2b927f4078b2ac95ca83ec9c21/step5-inputs/v1/5282aaf0696098970de476e6812534e4c75c2434d7ec369495f5a311d6c09f99/step5_plan_5282aaf_inputs.tar.gz",
+    "probe_s3_uri": "s3://intelligent-liars-osworld-29a36b2b927f4078b2ac95ca83ec9c21/step5-inputs/v1/5282aaf0696098970de476e6812534e4c75c2434d7ec369495f5a311d6c09f99/step5_plan_5282aaf_inputs.tar.gz"
+  },
+  "runtime": {
+    "disk_gib": 160,
+    "gpu_count": 1,
+    "gpu_name": "${GPU_NAME}",
+    "gpu_vram_gib": "${GPU_VRAM_GIB}",
+    "image": "${RUNTIME_IMAGE}",
+    "image_digest": "${RUNTIME_IMAGE_DIGEST}",
+    "offer_id": "${OFFER_ID}"
+  }
+}
