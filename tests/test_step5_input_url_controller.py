@@ -2,12 +2,15 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import importlib.util
 import json
 import os
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+from urllib.parse import parse_qs, urlsplit
 
+import boto3
 import pytest
 
 from intelligent_liars.model_cache import (
@@ -21,11 +24,13 @@ from intelligent_liars.model_cache import (
 )
 from intelligent_liars.step5_input_hydration import validate_url_manifest
 from intelligent_liars.step5_input_url_controller import prepare_input_urls
+from intelligent_liars.step5_launch_packet import _bound_s3_url
 
 
 BUCKET = "frozen-step5-test"
 ACCOUNT = "123456789012"
 REGION = "us-west-2"
+SCRIPT = Path(__file__).parents[1] / "scripts" / "prepare_tinylora_step5_input_urls.py"
 
 
 class Body:
@@ -432,3 +437,77 @@ def test_url_manifest_rejects_inconsistent_expiry(tmp_path: Path) -> None:
     manifest["controller"]["expires_at"] = "2026-08-22T02:00:00Z"
     with pytest.raises(ValueError, match="expiry binding"):
         validate_url_manifest(manifest)
+
+
+@pytest.mark.parametrize("region", ["us-east-1", "us-west-2"])
+def test_real_boto3_presigner_emits_regional_sigv4_launch_urls(
+    region: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "ASIATESTACCESSKEY123")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "s" * 40)
+    monkeypatch.setenv("AWS_SESSION_TOKEN", "fake-session-token")
+    monkeypatch.setenv("AWS_EC2_METADATA_DISABLED", "true")
+    specification = importlib.util.spec_from_file_location(
+        "step5_input_url_presigner", SCRIPT
+    )
+    assert specification is not None and specification.loader is not None
+    module = importlib.util.module_from_spec(specification)
+    specification.loader.exec_module(module)
+
+    s3, sts = module.build_aws_clients(region)
+    bucket = "frozen-step5-presigner-test"
+    key = "model-cache/revision/files/shard.bin"
+    url = s3.generate_presigned_url(
+        "get_object",
+        Params={"Bucket": bucket, "Key": key},
+        ExpiresIn=3600,
+        HttpMethod="GET",
+    )
+    parsed = urlsplit(url)
+    query = parse_qs(parsed.query)
+    signed = datetime.strptime(query["X-Amz-Date"][0], "%Y%m%dT%H%M%SZ").replace(
+        tzinfo=timezone.utc
+    )
+
+    assert parsed.hostname == f"{bucket}.s3.{region}.amazonaws.com"
+    assert s3.meta.endpoint_url == f"https://s3.{region}.amazonaws.com"
+    assert sts.meta.endpoint_url == f"https://sts.{region}.amazonaws.com"
+    assert query["X-Amz-Algorithm"] == ["AWS4-HMAC-SHA256"]
+    assert query["X-Amz-Credential"][0].split("/")[2] == region
+    _bound_s3_url(
+        url,
+        bucket=bucket,
+        key=key,
+        region=region,
+        approval_time=signed,
+    )
+
+
+@pytest.mark.parametrize(
+    "region",
+    [
+        "evil.example/path?x",
+        "us-west-2@evil.example",
+        "us-west-2.evil",
+        "us-west-2#fragment",
+    ],
+)
+def test_presigner_rejects_endpoint_injection_before_credential_resolution(
+    region: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    specification = importlib.util.spec_from_file_location(
+        "step5_input_url_presigner_bad_region", SCRIPT
+    )
+    assert specification is not None and specification.loader is not None
+    module = importlib.util.module_from_spec(specification)
+    specification.loader.exec_module(module)
+    monkeypatch.setattr(
+        boto3,
+        "Session",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("credentials were resolved")
+        ),
+    )
+
+    with pytest.raises(ValueError, match="SDK-known commercial"):
+        module.build_aws_clients(region)

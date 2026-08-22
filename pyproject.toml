@@ -45,6 +45,8 @@ dev-mode-exact = true
 
 [dependency-groups]
 dev = [
+    "boto3>=1.40",
+    "editables>=0.5", # required by hatch dev-mode-exact after a clean uv sync
     "mypy>=1.13",
     "pytest>=8.3",
     "ruff>=0.8",
