@@ -1,0 +1,213 @@
+from __future__ import annotations
+
+import io
+
+import pytest
+
+from intelligent_liars.vast_host_gate import (
+    DownloadTrial,
+    FailureDomain,
+    HostGateThresholds,
+    MachineAction,
+    decide_machine_action,
+    evaluate_host_gate,
+    measure_download_stream,
+)
+
+
+def _trial(
+    *,
+    speed: float = 120.0,
+    ttfb: float | None = 0.2,
+    stall: float = 0.3,
+    completed: bool = True,
+    sample_bytes: int = 64 * 1024**2,
+    error: str | None = None,
+) -> DownloadTrial:
+    return DownloadTrial(
+        bytes_downloaded=sample_bytes,
+        elapsed_seconds=4.0,
+        time_to_first_byte_seconds=ttfb,
+        effective_mbps=speed,
+        transfer_mbps=speed + 5,
+        longest_stall_seconds=stall,
+        stalled=stall > 10.0,
+        completed=completed,
+        error=error,
+    )
+
+
+def _thresholds() -> HostGateThresholds:
+    return HostGateThresholds(
+        min_download_mbps=100.0,
+        min_sample_bytes=64 * 1024**2,
+        max_time_to_first_byte_seconds=5.0,
+        max_stall_seconds=10.0,
+    )
+
+
+class _Clock:
+    def __init__(self, values: list[float]):
+        self.values = iter(values)
+
+    def __call__(self) -> float:
+        return next(self.values)
+
+
+def test_measure_download_stream_records_latency_speed_and_stall():
+    stream = io.BytesIO(b"x" * 12)
+    clock = _Clock([1.5, 2.5, 3.0, 3.0])
+
+    trial = measure_download_stream(
+        stream,
+        sample_bytes=12,
+        chunk_bytes=6,
+        max_stall_seconds=0.75,
+        request_started_at=1.0,
+        clock=clock,
+    )
+
+    assert trial.completed is True
+    assert trial.bytes_downloaded == 12
+    assert trial.time_to_first_byte_seconds == pytest.approx(0.5)
+    assert trial.elapsed_seconds == pytest.approx(2.0)
+    assert trial.longest_stall_seconds == pytest.approx(1.0)
+    assert trial.stalled is True
+    assert trial.effective_mbps == pytest.approx(48e-6)
+
+
+def test_gate_accepts_three_complete_fast_trials():
+    decision = evaluate_host_gate(
+        [_trial(), _trial(speed=140), _trial(speed=110)], _thresholds()
+    )
+
+    assert decision.accepted is True
+    assert decision.median_effective_mbps == 120.0
+    assert decision.minimum_effective_mbps == 110.0
+    assert decision.reasons == ()
+
+
+def test_gate_rejects_host_below_minimum_measured_download_speed():
+    decision = evaluate_host_gate(
+        [_trial(speed=60), _trial(speed=120), _trial(speed=140)], _thresholds()
+    )
+
+    assert decision.accepted is False
+    assert decision.median_effective_mbps == 120.0
+    assert decision.minimum_effective_mbps == 60.0
+    assert any("below 100.00 Mbps" in reason for reason in decision.reasons)
+
+
+def test_gate_rejects_latency_stall_and_incomplete_sample():
+    bad = _trial(
+        ttfb=8.0,
+        stall=12.0,
+        completed=False,
+        sample_bytes=1024,
+        error="TimeoutError: stalled",
+    )
+    decision = evaluate_host_gate([bad], _thresholds())
+
+    assert decision.accepted is False
+    assert any("incomplete" in reason for reason in decision.reasons)
+    assert any("minimum sample size" in reason for reason in decision.reasons)
+    assert any("time to first byte" in reason for reason in decision.reasons)
+    assert any("stall exceeded" in reason for reason in decision.reasons)
+    assert any("TimeoutError" in reason for reason in decision.reasons)
+
+
+def test_gate_rejects_one_high_latency_trial_even_when_median_is_fast():
+    decision = evaluate_host_gate(
+        [_trial(ttfb=0.2), _trial(ttfb=0.3), _trial(ttfb=6.0)], _thresholds()
+    )
+
+    assert decision.accepted is False
+    assert any("trials: [3]" in reason for reason in decision.reasons)
+
+
+def test_rejected_unused_host_can_be_replaced():
+    decision = decide_machine_action(
+        host_accepted=False,
+        workload_started=False,
+        workload_succeeded=False,
+        artifacts_durable=False,
+        failure_domain=FailureDomain.HOST,
+        diagnosis_complete=True,
+        resume_possible=False,
+    )
+
+    assert decision.action is MachineAction.DESTROY_AND_REPLACE
+    assert decision.replacement_allowed is True
+
+
+def test_software_failure_must_be_diagnosed_and_resumed_on_same_machine():
+    decision = decide_machine_action(
+        host_accepted=True,
+        workload_started=True,
+        workload_succeeded=False,
+        artifacts_durable=True,
+        failure_domain=FailureDomain.SOFTWARE,
+        diagnosis_complete=False,
+        resume_possible=True,
+    )
+
+    assert decision.action is MachineAction.DIAGNOSE_AND_RESUME
+    assert decision.replacement_allowed is False
+
+
+def test_software_failure_allows_replacement_only_after_diagnosis_rules_out_resume():
+    decision = decide_machine_action(
+        host_accepted=True,
+        workload_started=True,
+        workload_succeeded=False,
+        artifacts_durable=True,
+        failure_domain=FailureDomain.SOFTWARE,
+        diagnosis_complete=True,
+        resume_possible=False,
+    )
+
+    assert decision.action is MachineAction.DESTROY_AND_REPLACE
+    assert decision.replacement_allowed is True
+
+
+def test_missing_durable_artifacts_stops_machine_for_recovery():
+    decision = decide_machine_action(
+        host_accepted=True,
+        workload_started=True,
+        workload_succeeded=True,
+        artifacts_durable=False,
+        failure_domain=FailureDomain.NONE,
+        diagnosis_complete=True,
+        resume_possible=False,
+    )
+
+    assert decision.action is MachineAction.STOP_FOR_RECOVERY
+    assert decision.replacement_allowed is False
+
+
+def test_success_with_durable_artifacts_destroys_machine():
+    decision = decide_machine_action(
+        host_accepted=True,
+        workload_started=True,
+        workload_succeeded=True,
+        artifacts_durable=True,
+        failure_domain=FailureDomain.NONE,
+        diagnosis_complete=True,
+        resume_possible=False,
+    )
+
+    assert decision.action is MachineAction.DESTROY
+    assert decision.replacement_allowed is False
+
+
+def test_unclassified_workload_failure_is_rejected():
+    with pytest.raises(ValueError, match="requires a failure domain"):
+        decide_machine_action(
+            host_accepted=True,
+            workload_started=True,
+            workload_succeeded=False,
+            artifacts_durable=False,
+            failure_domain=FailureDomain.NONE,
+            diagnosis_complete=False,
+            resume_possible=True,
+        )
