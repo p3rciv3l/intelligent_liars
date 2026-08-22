@@ -126,6 +126,14 @@ def _packet(tmp_path: Path) -> dict[str, object]:
             "gpu_count": 1,
             "gpu_vram_gib": "${GPU_VRAM_GIB}",
             "disk_gib": 160,
+            "publication": {
+                "amd64_manifest_digest": "sha256:" + "9" * 64,
+                "index_digest": "${RUNTIME_IMAGE_DIGEST}",
+                "raw_index_digest_verified": True,
+                "sha256sums_verified": True,
+                "source_commit": "a" * 40,
+                "workflow_run_id": "123456",
+            },
         },
         "approval": {
             "approved_hourly_price_usd": "${APPROVED_HOURLY_PRICE_USD}",
@@ -402,6 +410,20 @@ def test_packet_rejects_changed_local_contract(tmp_path: Path):
         validate_launch_packet(packet, packet_dir=tmp_path)
 
 
+def test_packet_rejects_unbound_runtime_publication_evidence(tmp_path: Path):
+    packet = _packet(tmp_path)
+    packet["runtime"]["publication"]["index_digest"] = "sha256:" + "f" * 64  # type: ignore[index]
+    packet["packet_sha256"] = canonical_sha256(packet)
+    with pytest.raises(LaunchPacketError, match="index digest differs"):
+        validate_launch_packet(packet, packet_dir=tmp_path)
+
+    packet = _packet(tmp_path)
+    packet["runtime"]["publication"]["sha256sums_verified"] = False  # type: ignore[index]
+    packet["packet_sha256"] = canonical_sha256(packet)
+    with pytest.raises(LaunchPacketError, match="not hash verified"):
+        validate_launch_packet(packet, packet_dir=tmp_path)
+
+
 def test_complete_packet_requires_digest_and_exact_cost_approval(tmp_path: Path):
     packet = _packet(tmp_path)
     input_receipt_sha = _write_input_controller_outputs(packet)
@@ -556,6 +578,9 @@ def test_complete_packet_rejects_command_field_drift(tmp_path: Path):
             "gpu_vram_gib": 24,
         }
     )
+    packet["runtime"]["publication"][  # type: ignore[index]
+        "index_digest"
+    ] = "sha256:" + "a" * 64
     packet["approval"] = {
         "approved_hourly_price_usd": 0.25,
         "approved_max_cost_usd": 1.5,
@@ -676,6 +701,9 @@ def test_complete_packet_rejects_fabricated_versioning_receipt(tmp_path: Path):
             "gpu_vram_gib": 24,
         }
     )
+    packet["runtime"]["publication"][  # type: ignore[index]
+        "index_digest"
+    ] = "sha256:" + "a" * 64
     packet["approval"] = {
         "approved_hourly_price_usd": 0.25,
         "approved_max_cost_usd": 1.5,

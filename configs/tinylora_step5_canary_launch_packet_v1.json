@@ -31,7 +31,7 @@
       "--metadata",
       "/Users/student/Desktop/ai/intelligent_liars/artifacts/step5-canary-v1/lifecycle.json",
       "--image",
-      "${RUNTIME_IMAGE}",
+      "ghcr.io/p3rciv3l/intelligent_liars/tinylora-step5@sha256:ba0cf29cb29b47e47f6dd2448124ab4ddf061a95811d6f5bf036b73b00678e5f",
       "--disk",
       "160",
       "--input-url-manifest-url-file",
@@ -69,7 +69,7 @@
       "--expected-durable-uri",
       "s3://intelligent-liars-osworld-29a36b2b927f4078b2ac95ca83ec9c21/step5-artifacts/v2/step5-canary-v1/attempt-1/artifacts.tar",
       "--remote-command",
-      "bash scripts/run_tinylora_step5_canary_worker.sh ${RUNTIME_IMAGE_DIGEST}",
+      "bash scripts/run_tinylora_step5_canary_worker.sh sha256:ba0cf29cb29b47e47f6dd2448124ab4ddf061a95811d6f5bf036b73b00678e5f",
       "--remote-artifact-dir",
       "/workspace/artifacts/step5-canary-v1",
       "--expected-artifact-inventory",
@@ -91,7 +91,7 @@
       "--approved-max-cost",
       "${APPROVED_MAX_COST_USD}"
     ],
-    "remote": "bash scripts/run_tinylora_step5_canary_worker.sh ${RUNTIME_IMAGE_DIGEST}",
+    "remote": "bash scripts/run_tinylora_step5_canary_worker.sh sha256:ba0cf29cb29b47e47f6dd2448124ab4ddf061a95811d6f5bf036b73b00678e5f",
     "software_recovery": "python -c 'import json; from pathlib import Path; p=Path(\"/workspace/runs/step5-canary-v1/tinylora_dim13/checkpoint_store/latest.json\"); assert p.is_file(); d=json.loads(p.read_text()); assert isinstance(d, dict) and d'",
     "versioning_receipt": "uv run --with boto3 python scripts/capture_tinylora_s3_versioning_receipt.py --bucket intelligent-liars-osworld-29a36b2b927f4078b2ac95ca83ec9c21 --output artifacts/step5-canary-v1/bucket-versioning-receipt.json"
   },
@@ -148,7 +148,7 @@
       "sha256": "9b0c2a7c3b989968eaf344067b949a2941ad197c0179378b7ec6c540e4dccb7c"
     }
   },
-  "packet_sha256": "d5a779c946fe3d24b29849a4ac23b0e9b537a70638f57736ad786b9690d6791e",
+  "packet_sha256": "ae30179fa5ed3bb7752c44e1c87f017e953cc602ec5050ca7021c3a8be6122b6",
   "remaining_substitutions": [
     "APPROVED_AT",
     "APPROVED_HOURLY_PRICE_USD",
@@ -161,9 +161,7 @@
     "GPU_NAME",
     "GPU_VRAM_GIB",
     "INPUT_URL_CONTROLLER_RECEIPT_SHA256",
-    "OFFER_ID",
-    "RUNTIME_IMAGE",
-    "RUNTIME_IMAGE_DIGEST"
+    "OFFER_ID"
   ],
   "remote_inputs": {
     "frozen_inputs_completion_sha256": "579664fd8e59f8d81f0c6d71b469d5f1011811100e981887df02af53e59f4882",
@@ -209,8 +207,16 @@
     "gpu_count": 1,
     "gpu_name": "${GPU_NAME}",
     "gpu_vram_gib": "${GPU_VRAM_GIB}",
-    "image": "${RUNTIME_IMAGE}",
-    "image_digest": "${RUNTIME_IMAGE_DIGEST}",
-    "offer_id": "${OFFER_ID}"
+    "image": "ghcr.io/p3rciv3l/intelligent_liars/tinylora-step5@sha256:ba0cf29cb29b47e47f6dd2448124ab4ddf061a95811d6f5bf036b73b00678e5f",
+    "image_digest": "sha256:ba0cf29cb29b47e47f6dd2448124ab4ddf061a95811d6f5bf036b73b00678e5f",
+    "offer_id": "${OFFER_ID}",
+    "publication": {
+      "amd64_manifest_digest": "sha256:3e3a80667abd96a27838ccbb07a1e92defd223573cb606088bf9c553b6af84bd",
+      "index_digest": "sha256:ba0cf29cb29b47e47f6dd2448124ab4ddf061a95811d6f5bf036b73b00678e5f",
+      "raw_index_digest_verified": true,
+      "sha256sums_verified": true,
+      "source_commit": "6e4f32d724b5fa0b752e911669691136bfa37efd",
+      "workflow_run_id": "32568421514"
+    }
   }
 }

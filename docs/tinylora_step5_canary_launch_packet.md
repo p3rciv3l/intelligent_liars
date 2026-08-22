@@ -21,6 +21,19 @@ three-arm bounded screen and it does not claim the later seven scoring receipts.
 - Model content identity: `bbca6a8b09a56f0c538887b82b9594b0c0945c5fbcde54f39eda153a9f64eda8`
 - PixMo content identity: `430de1b25babb4fcd462ed7cf0476bce9f8c4e2b8fc3872c843eea332c1e56bc`
 
+The reviewed runtime image is frozen at:
+
+```text
+ghcr.io/p3rciv3l/intelligent_liars/tinylora-step5@sha256:ba0cf29cb29b47e47f6dd2448124ab4ddf061a95811d6f5bf036b73b00678e5f
+```
+
+It was published from source commit
+`6e4f32d724b5fa0b752e911669691136bfa37efd` by workflow run `32568421514`.
+All published `SHA256SUMS` entries passed. An independent raw registry-index
+fetch hashes to `ba0cf29cb29b47e47f6dd2448124ab4ddf061a95811d6f5bf036b73b00678e5f`;
+its amd64 manifest is
+`sha256:3e3a80667abd96a27838ccbb07a1e92defd223573cb606088bf9c553b6af84bd`.
+
 The model cache is fixed at:
 
 ```text
@@ -97,13 +110,11 @@ resuming.
 
 ## Remaining substitutions before even a dry-run rental command is complete
 
-1. `RUNTIME_IMAGE` and its matching `RUNTIME_IMAGE_DIGEST`, after the image is
-   published by immutable digest.
-2. `OFFER_ID`, `GPU_NAME`, and measured `GPU_VRAM_GIB`, selected from a fresh
+1. `OFFER_ID`, `GPU_NAME`, and measured `GPU_VRAM_GIB`, selected from a fresh
    Vast search.
-3. Exact `APPROVED_HOURLY_PRICE_USD`, `APPROVED_MAX_COST_USD`, and
+2. Exact `APPROVED_HOURLY_PRICE_USD`, `APPROVED_MAX_COST_USD`, and
    `APPROVED_AT` after the user sees and approves those concrete values.
-4. `BUCKET_VERSIONING_STATUS=Enabled`, the AWS account and region, and the
+3. `BUCKET_VERSIONING_STATUS=Enabled`, the AWS account and region, and the
    SHA-256 of a fresh controller receipt proving that exact bucket state. It is
    currently disabled or unconfigured, so this remains a hard blocker. The
    receipt is captured by the packet's read-only `commands.versioning_receipt`
@@ -111,8 +122,9 @@ resuming.
    and an observation no more than 30 minutes before approval.
 
 The hydration, checkpoint durability, controller provisioning, and artifact
-finalization commands are exact and hash-bound. The packet remains blocked only
-on the immutable image, fresh offer/cost approval, and bucket-versioning proof.
+finalization commands are exact and hash-bound. The runtime image is now frozen
+by its independently verified registry-index digest. The packet remains blocked
+on a fresh offer/cost approval and bucket-versioning proof.
 The hash-bound `commands.input_url_preparation` controller command verifies the
 frozen S3 objects, publishes the create-only URL manifest, and atomically creates
 the hydration bootstrap and host-gate URL files as mode-0600 regular files. The

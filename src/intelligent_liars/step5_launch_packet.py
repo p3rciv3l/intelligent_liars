@@ -791,6 +791,51 @@ def _validate_complete_runtime(packet: Mapping[str, Any], packet_dir: Path) -> N
             raise LaunchPacketError(f"{label} must be a 0600 regular file")
 
 
+def _validate_runtime_publication(value: Any) -> None:
+    runtime = _mapping(value, label="runtime")
+    publication = _mapping(runtime.get("publication"), label="runtime publication")
+    if set(publication) != {
+        "amd64_manifest_digest",
+        "index_digest",
+        "raw_index_digest_verified",
+        "sha256sums_verified",
+        "source_commit",
+        "workflow_run_id",
+    }:
+        raise LaunchPacketError("runtime publication evidence fields differ")
+    for field in ("amd64_manifest_digest", "index_digest"):
+        digest = publication.get(field)
+        if (
+            field == "index_digest"
+            and _is_placeholder(digest)
+            and digest == runtime.get("image_digest")
+        ):
+            continue
+        if (
+            not isinstance(digest, str)
+            or re.fullmatch(r"sha256:[0-9a-f]{64}", digest) is None
+        ):
+            raise LaunchPacketError(f"runtime publication {field} is invalid")
+    if publication["index_digest"] != runtime.get("image_digest"):
+        raise LaunchPacketError("runtime publication index digest differs from image")
+    if publication.get("raw_index_digest_verified") is not True:
+        raise LaunchPacketError(
+            "runtime raw index digest is not independently verified"
+        )
+    if publication.get("sha256sums_verified") is not True:
+        raise LaunchPacketError("runtime publication artifacts are not hash verified")
+    if (
+        not isinstance(publication.get("source_commit"), str)
+        or re.fullmatch(r"[0-9a-f]{40}", publication["source_commit"]) is None
+    ):
+        raise LaunchPacketError("runtime publication source commit is invalid")
+    if (
+        not isinstance(publication.get("workflow_run_id"), str)
+        or not publication["workflow_run_id"].isdigit()
+    ):
+        raise LaunchPacketError("runtime publication workflow run ID is invalid")
+
+
 def validate_launch_packet(
     value: Mapping[str, Any], *, packet_dir: Path
 ) -> dict[str, Any]:
@@ -818,6 +863,7 @@ def validate_launch_packet(
     revision = identity.get("model_revision")
     if not isinstance(revision, str) or re.fullmatch(r"[0-9a-f]{40}", revision) is None:
         raise LaunchPacketError("model_revision must be an exact 40-hex revision")
+    _validate_runtime_publication(value.get("runtime"))
 
     controller_contracts = _mapping(
         value.get("controller_contracts"), label="controller_contracts"
