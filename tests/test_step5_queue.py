@@ -291,6 +291,43 @@ def test_pending_task_reuses_stopped_instance_before_renting():
     ]
 
 
+def test_pending_task_cannot_resume_unavailable_instance():
+    tasks = {
+        "tiny13.seed-7": {
+            "status": "pending",
+            "attempt": 0,
+            "instance_id": "unavailable-instance",
+            "instance_status": "unavailable",
+        }
+    }
+    with pytest.raises(ValueError, match="classify confirmed host loss"):
+        plan_step5_queue(
+            arms=ARMS[:1],
+            seeds=[7],
+            state=_state(tasks),
+            max_concurrency=3,
+        )
+
+
+def test_software_failure_cannot_retry_unavailable_instance():
+    tasks = {
+        "tiny13.seed-7": {
+            "status": "failed",
+            "attempt": 1,
+            "instance_id": "unavailable-instance",
+            "instance_status": "unavailable",
+            "failure": {"class": "software", "diagnosis": "resolved"},
+        }
+    }
+    with pytest.raises(ValueError, match="must retain its original instance"):
+        plan_step5_queue(
+            arms=ARMS[:1],
+            seeds=[7],
+            state=_state(tasks),
+            max_concurrency=3,
+        )
+
+
 def test_paused_project_instances_count_against_three_worker_cap():
     tasks = {
         f"tiny13.seed-{seed}": {

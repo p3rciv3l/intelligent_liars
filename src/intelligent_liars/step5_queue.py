@@ -20,6 +20,8 @@ HARD_PROJECT_WORKER_CAP = 3
 
 _INSTANCE_INVENTORY_STATUSES = {"created", "loading", "running", "stopped", "paused"}
 _ACTIVE_INSTANCE_STATUSES = {"created", "loading", "running"}
+_UNAVAILABLE_INSTANCE_STATUSES = {"lost", "destroyed", "terminated", "unavailable"}
+_KNOWN_INSTANCE_STATUSES = _INSTANCE_INVENTORY_STATUSES | _UNAVAILABLE_INSTANCE_STATUSES
 _TASK_STATUSES = {"pending", "running", "succeeded", "failed"}
 _SHA256 = re.compile(r"[0-9a-f]{64}")
 
@@ -92,6 +94,8 @@ def _instance_inventory(state: Mapping[str, Any]) -> tuple[set[str], set[str]]:
             raise ValueError("Every project inventory entry requires an instance id")
         if not isinstance(instance_status, str) or not instance_status:
             raise ValueError("Every project inventory entry requires an instance status")
+        if instance_status not in _KNOWN_INSTANCE_STATUSES:
+            raise ValueError(f"Unknown project instance status: {instance_status}")
         if instance_status in _INSTANCE_INVENTORY_STATUSES:
             inventory.add(instance_id)
         if instance_status in _ACTIVE_INSTANCE_STATUSES:
@@ -142,6 +146,8 @@ def _validate_state(
                 raise ValueError(f"Invalid instance id for {task_id}")
             if instance_status is None:
                 raise ValueError(f"Instance status is required for {task_id}")
+            if instance_status not in _KNOWN_INSTANCE_STATUSES:
+                raise ValueError(f"Unknown instance status for {task_id}: {instance_status}")
             if instance_status in _INSTANCE_INVENTORY_STATUSES and (
                 inventory_by_id.get(instance_id) != instance_status
             ):
@@ -161,7 +167,7 @@ def _validate_state(
             if failure_class not in {"software", "host_loss"}:
                 raise ValueError(f"Failed task {task_id} has unsupported failure class")
             if failure_class == "software":
-                if not instance_id or instance_status in {"lost", "destroyed", "terminated"}:
+                if not instance_id or instance_status in _UNAVAILABLE_INSTANCE_STATUSES:
                     raise ValueError(
                         f"Software failure {task_id} must retain its original instance"
                     )
@@ -175,7 +181,7 @@ def _validate_state(
                 )
             elif (
                 failure.get("diagnosis") == "confirmed"
-                and instance_status not in {"lost", "destroyed", "terminated", "unavailable"}
+                and instance_status not in _UNAVAILABLE_INSTANCE_STATUSES
             ):
                 raise ValueError(
                     f"Confirmed host loss {task_id} requires an unavailable instance"
@@ -235,6 +241,11 @@ def plan_step5_queue(
             instance_id = task.get("instance_id")
             instance_status = task.get("instance_status")
             if instance_id is not None:
+                if instance_status not in _INSTANCE_INVENTORY_STATUSES:
+                    raise ValueError(
+                        f"Pending task {task_id} cannot reuse an unavailable instance; "
+                        "classify confirmed host loss before replacement"
+                    )
                 instance_is_active = instance_status in _ACTIVE_INSTANCE_STATUSES
                 capacity_candidates.append(
                     _CapacityCandidate(
