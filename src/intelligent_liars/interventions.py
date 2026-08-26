@@ -29,9 +29,6 @@ class InterventionMethod(StrEnum):
 DECEPTION_DIRECTED_SUITE_METHODS = {
     "directed_scalar_add_deceptive": InterventionMethod.SCALAR_ADDITION,
     "directed_affine_project_deceptive": InterventionMethod.AFFINE_PROJECTION,
-    "directed_full_reflection": InterventionMethod.FULL_REFLECTION,
-    "directed_partial_reflection": InterventionMethod.PARTIAL_REFLECTION,
-    "honest_boundary_ablation": InterventionMethod.ONE_SIDED_REFLECTION,
     "bounded_directed_inversion": InterventionMethod.BOUNDED_REMAP,
     "bounded_deceptive_margin": InterventionMethod.BOUNDED_MARGIN_CLAMP,
 }
@@ -134,22 +131,19 @@ def canonical_intervention_suite_specs(
             score_directionality=ScoreDirectionality.TOWARD_DECEPTIVE,
             projection_target=deceptive_margin,
         ),
-        "directed_full_reflection": InterventionSpec(
+        "symmetric_full_reflection": InterventionSpec(
             method=InterventionMethod.FULL_REFLECTION,
             layers=layers,
-            score_directionality=ScoreDirectionality.TOWARD_DECEPTIVE,
         ),
-        "directed_partial_reflection": InterventionSpec(
+        "symmetric_partial_reflection_075": InterventionSpec(
             method=InterventionMethod.PARTIAL_REFLECTION,
             layers=layers,
-            score_directionality=ScoreDirectionality.TOWARD_DECEPTIVE,
             reflection_strength=0.75,
         ),
-        "honest_boundary_ablation": InterventionSpec(
+        "honest_side_full_reflection": InterventionSpec(
             method=InterventionMethod.ONE_SIDED_REFLECTION,
             layers=layers,
-            score_directionality=ScoreDirectionality.TOWARD_DECEPTIVE,
-            reflection_strength=0.5,
+            reflection_strength=1.0,
             selected_side="honest",
         ),
         "bounded_directed_inversion": InterventionSpec(

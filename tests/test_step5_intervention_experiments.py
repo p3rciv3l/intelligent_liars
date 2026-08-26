@@ -441,6 +441,50 @@ def test_all_eight_transforms_are_finite_and_obey_direction_contract(
 ) -> None:
     hidden = torch.tensor([[-1.0, 4.0], [2.0, 4.0]])
     initial_scores = hidden @ torch.tensor(direction.vector) + direction.intercept
+    movement_budget = float(
+        contract.intervention_parameters["score_movement_budget"]
+    )
+    deceptive_margin = float(
+        contract.intervention_parameters["M_deceptive_margin"]
+    )
+    inverted_targets = movement_budget - (
+        initial_scores.clamp(-movement_budget, movement_budget) + movement_budget
+    )
+    directed_inversion_targets = torch.where(
+        initial_scores < 0,
+        torch.maximum(initial_scores, inverted_targets),
+        initial_scores,
+    )
+    deceptive_margin_targets = torch.maximum(
+        initial_scores,
+        torch.full_like(initial_scores, deceptive_margin),
+    )
+    expected_scores_by_arm = {
+        "A0": torch.where(
+            initial_scores < 0,
+            initial_scores + movement_budget,
+            initial_scores,
+        ),
+        "A1": torch.where(
+            initial_scores < 0,
+            torch.full_like(initial_scores, deceptive_margin),
+            initial_scores,
+        ),
+        "A2": -initial_scores,
+        "A3": (1.0 - 2.0 * 0.75) * initial_scores,
+        "A4": torch.where(initial_scores < 0, -initial_scores, initial_scores),
+        "A5": initial_scores
+        + (directed_inversion_targets - initial_scores).clamp(
+            -2.0 * movement_budget,
+            2.0 * movement_budget,
+        ),
+        "A6": initial_scores
+        + (deceptive_margin_targets - initial_scores).clamp(
+            -movement_budget,
+            movement_budget,
+        ),
+        "A7": initial_scores,
+    }
     for arm_id in ARM_IDS:
         bundle = intervention_bundle_for(
             contract,
@@ -453,12 +497,9 @@ def test_all_eight_transforms_are_finite_and_obey_direction_contract(
         output = transform_activations(hidden, effective, bundle.spec)
         assert torch.isfinite(output).all()
         final_scores = output @ torch.tensor(direction.vector) + direction.intercept
-        if arm_id == "A7":
-            assert torch.allclose(final_scores, initial_scores)
-        else:
+        assert torch.allclose(final_scores, expected_scores_by_arm[arm_id])
+        if arm_id != "A7":
             assert torch.equal(output[:, 1], hidden[:, 1])
-            assert final_scores[0] > initial_scores[0]
-            assert final_scores[1] == initial_scores[1]
 
 
 class _Layer(nn.Module):

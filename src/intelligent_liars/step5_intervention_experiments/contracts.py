@@ -63,9 +63,9 @@ TERMINAL_STATES = frozenset(
 ARM_VARIANTS = (
     "directed_scalar_add_deceptive",
     "directed_affine_project_deceptive",
-    "directed_full_reflection",
-    "directed_partial_reflection",
-    "honest_boundary_ablation",
+    "symmetric_full_reflection",
+    "symmetric_partial_reflection_075",
+    "honest_side_full_reflection",
     "bounded_directed_inversion",
     "bounded_deceptive_margin",
     "seeded_orthogonal_full_reflection",

@@ -69,25 +69,22 @@ def test_canonical_a0_a7_specs_freeze_every_transform_field() -> None:
             score_directionality=ScoreDirectionality.TOWARD_DECEPTIVE,
             projection_target=margin,
         ),
-        "directed_full_reflection": InterventionSpec(
+        "symmetric_full_reflection": InterventionSpec(
             method=InterventionMethod.FULL_REFLECTION,
             layers=layers,
             token_scope=TokenScope.LAST_TOKEN,
-            score_directionality=ScoreDirectionality.TOWARD_DECEPTIVE,
         ),
-        "directed_partial_reflection": InterventionSpec(
+        "symmetric_partial_reflection_075": InterventionSpec(
             method=InterventionMethod.PARTIAL_REFLECTION,
             layers=layers,
             token_scope=TokenScope.LAST_TOKEN,
-            score_directionality=ScoreDirectionality.TOWARD_DECEPTIVE,
             reflection_strength=0.75,
         ),
-        "honest_boundary_ablation": InterventionSpec(
+        "honest_side_full_reflection": InterventionSpec(
             method=InterventionMethod.ONE_SIDED_REFLECTION,
             layers=layers,
             token_scope=TokenScope.LAST_TOKEN,
-            score_directionality=ScoreDirectionality.TOWARD_DECEPTIVE,
-            reflection_strength=0.5,
+            reflection_strength=1.0,
             selected_side="honest",
         ),
         "bounded_directed_inversion": InterventionSpec(
@@ -123,9 +120,9 @@ def test_canonical_a0_a7_specs_freeze_every_transform_field() -> None:
     assert tuple(actual) == (
         "directed_scalar_add_deceptive",
         "directed_affine_project_deceptive",
-        "directed_full_reflection",
-        "directed_partial_reflection",
-        "honest_boundary_ablation",
+        "symmetric_full_reflection",
+        "symmetric_partial_reflection_075",
+        "honest_side_full_reflection",
         "bounded_directed_inversion",
         "bounded_deceptive_margin",
         SEEDED_ORTHOGONAL_CONTROL_VARIANT,
@@ -155,9 +152,25 @@ def test_canonical_a0_a6_score_maps_cover_boundaries_and_extremes() -> None:
             2.0,
             10.0,
         ],
-        "directed_full_reflection": [10.0, 2.0, 1.0, 0.0, 1.0, 2.0, 10.0],
-        "directed_partial_reflection": [5.0, 1.0, 0.5, 0.0, 1.0, 2.0, 10.0],
-        "honest_boundary_ablation": [0.0, 0.0, 0.0, 0.0, 1.0, 2.0, 10.0],
+        "symmetric_full_reflection": [10.0, 2.0, 1.0, 0.0, -1.0, -2.0, -10.0],
+        "symmetric_partial_reflection_075": [
+            5.0,
+            1.0,
+            0.5,
+            0.0,
+            -0.5,
+            -1.0,
+            -5.0,
+        ],
+        "honest_side_full_reflection": [
+            10.0,
+            2.0,
+            1.0,
+            0.0,
+            1.0,
+            2.0,
+            10.0,
+        ],
         "bounded_directed_inversion": [-6.0, 2.0, 1.0, 0.0, 1.0, 2.0, 10.0],
         "bounded_deceptive_margin": [-8.0, 0.0, 1.0, 0.0, 1.0, 2.0, 10.0],
     }
@@ -165,9 +178,23 @@ def test_canonical_a0_a6_score_maps_cover_boundaries_and_extremes() -> None:
     for name, expected_scores in expected.items():
         transformed = transform_activations(scores, probe, specs[name])
         assert transformed.squeeze(-1).tolist() == pytest.approx(expected_scores)
-        assert torch.equal(
-            transformed[scores.squeeze(-1) >= 0], scores[scores.squeeze(-1) >= 0]
-        )
+
+    source_scores = scores.squeeze(-1)
+    full_scores = transform_activations(
+        scores, probe, specs["symmetric_full_reflection"]
+    ).squeeze(-1)
+    partial_scores = transform_activations(
+        scores, probe, specs["symmetric_partial_reflection_075"]
+    ).squeeze(-1)
+    one_sided_scores = transform_activations(
+        scores, probe, specs["honest_side_full_reflection"]
+    ).squeeze(-1)
+    assert torch.equal(full_scores, -source_scores)
+    assert torch.equal(partial_scores, -0.5 * source_scores)
+    assert torch.equal(
+        one_sided_scores,
+        torch.where(source_scores < 0, -source_scores, source_scores),
+    )
 
     inverted = transform_activations(
         torch.tensor([[-budget]]),
