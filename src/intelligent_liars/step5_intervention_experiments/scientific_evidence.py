@@ -88,6 +88,7 @@ class ProbeEvidence:
 
 EvidenceRow = BehaviorEvidence | PreservationEvidence | XSTestEvidence | ProbeEvidence
 EvidenceT = TypeVar("EvidenceT", bound=EvidenceRow)
+ReceiptVerifier = Callable[[EvidenceRow, Mapping[str, Any]], bool]
 
 
 @dataclass(frozen=True)
@@ -412,6 +413,93 @@ def validate_condition_evidence(
         )
     for seed in evidence.seeds:
         validate_seed_evidence(seed, manifest)
+        identity = seed.execution_identity
+        if identity.condition_id != evidence.condition_id:
+            raise InterventionExperimentError(
+                "scientific execution condition_id differs from enclosing condition"
+            )
+        if evidence.condition_id == "B0":
+            if (
+                identity.hook_identity != "no_hook_bypass"
+                or identity.bundle_identity_sha256 != SHA256_ZERO
+                or identity.effective_direction_sha256 != SHA256_ZERO
+            ):
+                raise InterventionExperimentError(
+                    "B0 requires no_hook_bypass and sentinel bundle/direction identities"
+                )
+        elif (
+            identity.hook_identity != "intervention_bundle"
+            or identity.bundle_identity_sha256 == SHA256_ZERO
+            or identity.effective_direction_sha256 == SHA256_ZERO
+        ):
+            raise InterventionExperimentError(
+                "candidate requires a non-sentinel intervention_bundle identity"
+            )
+
+
+def _verify_comparison_identities(
+    baseline: ConditionScientificEvidence,
+    candidate: ConditionScientificEvidence,
+) -> None:
+    """Require paired seeds to differ only in the frozen intervention identity."""
+    shared_fields = (
+        "plan_sha256",
+        "backend_identity_sha256",
+        "evaluator_identity_sha256",
+        "model_identity_sha256",
+        "runtime_identity_sha256",
+    )
+    for base_seed, candidate_seed in zip(
+        baseline.seeds, candidate.seeds, strict=True
+    ):
+        base = base_seed.execution_identity
+        active = candidate_seed.execution_identity
+        if any(getattr(base, field) != getattr(active, field) for field in shared_fields):
+            raise InterventionExperimentError(
+                "baseline and candidate execution identities differ"
+            )
+        if (
+            base.condition_id == active.condition_id
+            or base.hook_identity == active.hook_identity
+            or base.bundle_identity_sha256 == active.bundle_identity_sha256
+            or base.effective_direction_sha256 == active.effective_direction_sha256
+        ):
+            raise InterventionExperimentError(
+                "baseline and candidate intervention identities do not differ"
+            )
+
+
+def _verify_external_receipts(
+    evidence: ConditionScientificEvidence,
+    manifest: SemanticEvaluationManifest,
+    receipt_verifier: ReceiptVerifier,
+) -> None:
+    """Verify every parsed row against evidence outside this schema.
+
+    Local hashes establish serialization integrity and manifest binding only.  The
+    callback is the explicit trust boundary for independently checking the
+    underlying response, score, parser/label, qualification, and evaluation
+    receipts before a semantic scientific outcome can be minted.
+    """
+    components = (
+        ("behavior", _manifest_index(manifest.behavior_rows)),
+        ("preservation", _manifest_index(manifest.preservation_rows)),
+        ("xstest", _manifest_index(manifest.xstest_rows)),
+        ("probes", _manifest_index(manifest.evaluator_probe_receipts)),
+    )
+    for seed in evidence.seeds:
+        for component, metadata in components:
+            for row in getattr(seed, component):
+                try:
+                    verified = receipt_verifier(row, metadata[row.stable_id])
+                except Exception as error:
+                    raise InterventionExperimentError(
+                        f"external receipt verification failed for {row.stable_id}"
+                    ) from error
+                if verified is not True:
+                    raise InterventionExperimentError(
+                        f"external receipt verification failed for {row.stable_id}"
+                    )
 
 
 def _mean(values: Sequence[float]) -> float:
@@ -784,10 +872,11 @@ def compute_scientific_outcome(
     semantic_manifest: SemanticEvaluationManifest,
     baseline: ConditionScientificEvidence,
     candidate: ConditionScientificEvidence,
+    receipt_verifier: ReceiptVerifier | None = None,
     bootstrap_draws: int = BOOTSTRAP_DRAWS,
     bootstrap_seed: int = BOOTSTRAP_SEED,
 ) -> dict[str, Any]:
-    """Compute a terminal pass/no-go only from complete locally verified evidence."""
+    """Mint an outcome only after local validation and external receipt checks."""
     if bootstrap_draws != BOOTSTRAP_DRAWS or bootstrap_seed != BOOTSTRAP_SEED:
         raise InterventionExperimentError("scientific bootstrap contract differs")
     validate_condition_evidence(baseline, semantic_manifest)
@@ -796,6 +885,13 @@ def compute_scientific_outcome(
         raise InterventionExperimentError(
             "scientific comparison requires B0 and one candidate"
         )
+    _verify_comparison_identities(baseline, candidate)
+    if receipt_verifier is None:
+        raise InterventionExperimentError(
+            "scientific outcome requires an external receipt verifier"
+        )
+    _verify_external_receipts(baseline, semantic_manifest, receipt_verifier)
+    _verify_external_receipts(candidate, semantic_manifest, receipt_verifier)
     behavior_rows = _behavior_pairs(baseline, candidate, semantic_manifest)
     gates = {
         "target_and_selectivity": _behavior_gates(behavior_rows),
