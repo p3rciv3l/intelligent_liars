@@ -36,6 +36,10 @@ def _verified(_row, _manifest_metadata) -> bool:
     return True
 
 
+def _plan_verified(_identity) -> bool:
+    return True
+
+
 def _manifest() -> SemanticEvaluationManifest:
     behavior = []
     for prefix, split, count in (
@@ -247,6 +251,7 @@ def test_complete_evidence_computes_deterministic_conjunctive_pass() -> None:
         baseline=_condition(manifest, "B0"),
         candidate=_condition(manifest, "A1"),
         receipt_verifier=_verified,
+        execution_plan_verifier=_plan_verified,
     )
 
     assert report["completion"] == "complete"
@@ -264,6 +269,7 @@ def test_complete_weak_target_is_scientific_no_go_not_incomplete() -> None:
         baseline=_condition(manifest, "B0"),
         candidate=_condition(manifest, "A1", target_margin=0.05),
         receipt_verifier=_verified,
+        execution_plan_verifier=_plan_verified,
     )
 
     assert report["completion"] == "complete"
@@ -344,6 +350,7 @@ def test_nonbehavioral_gates_are_locally_computed(
         baseline=_condition(manifest, "B0"),
         candidate=candidate,
         receipt_verifier=_verified,
+        execution_plan_verifier=_plan_verified,
     )
 
     assert report["scientific_outcome"] == "scientific_no_go"
@@ -358,6 +365,7 @@ def test_bootstrap_contract_is_frozen() -> None:
             baseline=_condition(manifest, "B0"),
             candidate=_condition(manifest, "A1"),
             receipt_verifier=_verified,
+            execution_plan_verifier=_plan_verified,
             bootstrap_draws=9999,
         )
 
@@ -379,9 +387,7 @@ def test_seed_receipt_round_trip_is_self_hashed_and_fully_validated() -> None:
 
 def test_enclosing_condition_rejects_swapped_seed_condition() -> None:
     manifest = _manifest()
-    candidate = _replace_first_identity(
-        _condition(manifest, "A1"), condition_id="A2"
-    )
+    candidate = _replace_first_identity(_condition(manifest, "A1"), condition_id="A2")
 
     with pytest.raises(ValueError, match="condition_id differs from enclosing"):
         validate_condition_evidence(candidate, manifest)
@@ -408,9 +414,7 @@ def test_condition_hook_and_intervention_identity_policy_is_fail_closed(
     condition_id, changes, message
 ) -> None:
     manifest = _manifest()
-    condition = _replace_first_identity(
-        _condition(manifest, condition_id), **changes
-    )
+    condition = _replace_first_identity(_condition(manifest, condition_id), **changes)
 
     with pytest.raises(ValueError, match=message):
         validate_condition_evidence(condition, manifest)
@@ -428,9 +432,7 @@ def test_condition_hook_and_intervention_identity_policy_is_fail_closed(
 )
 def test_comparison_rejects_seedwise_shared_identity_mismatch(field: str) -> None:
     manifest = _manifest()
-    candidate = _replace_first_identity(
-        _condition(manifest, "A1"), **{field: "c" * 64}
-    )
+    candidate = _replace_first_identity(_condition(manifest, "A1"), **{field: "c" * 64})
 
     with pytest.raises(ValueError, match="execution identities differ"):
         compute_scientific_outcome(
@@ -438,6 +440,7 @@ def test_comparison_rejects_seedwise_shared_identity_mismatch(field: str) -> Non
             baseline=_condition(manifest, "B0"),
             candidate=candidate,
             receipt_verifier=_verified,
+            execution_plan_verifier=_plan_verified,
         )
 
 
@@ -449,6 +452,7 @@ def test_outcome_requires_external_receipt_verifier() -> None:
             semantic_manifest=manifest,
             baseline=_condition(manifest, "B0"),
             candidate=_condition(manifest, "A1"),
+            execution_plan_verifier=_plan_verified,
         )
 
 
@@ -467,6 +471,7 @@ def test_outcome_rejects_failed_external_receipt_verification(failure) -> None:
             baseline=_condition(manifest, "B0"),
             candidate=_condition(manifest, "A1"),
             receipt_verifier=fail,
+            execution_plan_verifier=_plan_verified,
         )
 
 
@@ -484,6 +489,7 @@ def test_external_verifier_sees_every_row_with_manifest_metadata() -> None:
         baseline=_condition(manifest, "B0"),
         candidate=_condition(manifest, "A1"),
         receipt_verifier=verify,
+        execution_plan_verifier=_plan_verified,
     )
 
     rows_per_seed = sum(
@@ -496,3 +502,94 @@ def test_external_verifier_sees_every_row_with_manifest_metadata() -> None:
         )
     )
     assert len(calls) == 2 * len(SCIENTIFIC_SEEDS) * rows_per_seed
+
+
+def test_noncanonical_candidate_arm_is_rejected() -> None:
+    manifest = _manifest()
+
+    with pytest.raises(ValueError, match="not a canonical arm"):
+        validate_condition_evidence(_condition(manifest, "A999"), manifest)
+
+
+def test_execution_plan_verifier_rejects_arbitrary_bundle_and_direction() -> None:
+    manifest = _manifest()
+    candidate = _replace_first_identity(
+        _condition(manifest, "A1"),
+        bundle_identity_sha256="c" * 64,
+        effective_direction_sha256="d" * 64,
+    )
+
+    def verify_finalized_plan(identity):
+        if identity.condition_id == "B0":
+            return (
+                identity.bundle_identity_sha256 == "0" * 64
+                and identity.effective_direction_sha256 == "0" * 64
+            )
+        return (
+            identity.bundle_identity_sha256 == SHA
+            and identity.effective_direction_sha256 == SHA
+        )
+
+    with pytest.raises(ValueError, match="execution plan verification failed"):
+        compute_scientific_outcome(
+            semantic_manifest=manifest,
+            baseline=_condition(manifest, "B0"),
+            candidate=candidate,
+            receipt_verifier=_verified,
+            execution_plan_verifier=verify_finalized_plan,
+        )
+
+
+def test_outcome_requires_finalized_execution_plan_verifier() -> None:
+    manifest = _manifest()
+
+    with pytest.raises(
+        ValueError, match="requires a finalized execution plan verifier"
+    ):
+        compute_scientific_outcome(
+            semantic_manifest=manifest,
+            baseline=_condition(manifest, "B0"),
+            candidate=_condition(manifest, "A1"),
+            receipt_verifier=_verified,
+        )
+
+
+@pytest.mark.parametrize("failure", [False, RuntimeError("plan unavailable")])
+def test_outcome_rejects_failed_execution_plan_verification(failure) -> None:
+    manifest = _manifest()
+
+    def fail(_identity):
+        if isinstance(failure, Exception):
+            raise failure
+        return failure
+
+    with pytest.raises(ValueError, match="execution plan verification failed"):
+        compute_scientific_outcome(
+            semantic_manifest=manifest,
+            baseline=_condition(manifest, "B0"),
+            candidate=_condition(manifest, "A1"),
+            receipt_verifier=_verified,
+            execution_plan_verifier=fail,
+        )
+
+
+def test_execution_plan_verifier_sees_every_seed_identity() -> None:
+    manifest = _manifest()
+    calls = []
+
+    def verify(identity):
+        calls.append(identity)
+        return True
+
+    compute_scientific_outcome(
+        semantic_manifest=manifest,
+        baseline=_condition(manifest, "B0"),
+        candidate=_condition(manifest, "A1"),
+        receipt_verifier=_verified,
+        execution_plan_verifier=verify,
+    )
+
+    assert [(identity.condition_id, identity.seed) for identity in calls] == [
+        *(("B0", seed) for seed in SCIENTIFIC_SEEDS),
+        *(("A1", seed) for seed in SCIENTIFIC_SEEDS),
+    ]

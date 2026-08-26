@@ -14,7 +14,7 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import asdict, dataclass, fields, replace
 from typing import Any, TypeVar, cast
 
-from .contracts import InterventionExperimentError, canonical_sha256
+from .contracts import ARM_IDS, InterventionExperimentError, canonical_sha256
 from .manifest import OBJECTIVES, SemanticEvaluationManifest
 
 
@@ -103,6 +103,9 @@ class ScientificExecutionIdentity:
     hook_identity: str
     bundle_identity_sha256: str
     effective_direction_sha256: str
+
+
+ExecutionPlanVerifier = Callable[[ScientificExecutionIdentity], bool]
 
 
 @dataclass(frozen=True)
@@ -403,6 +406,10 @@ def validate_condition_evidence(
     """Validate exact counts, order, seeds, row hashes, parser outputs, and finiteness."""
     if not isinstance(evidence.condition_id, str) or not evidence.condition_id:
         raise InterventionExperimentError("scientific condition_id is empty")
+    if evidence.condition_id != "B0" and evidence.condition_id not in ARM_IDS:
+        raise InterventionExperimentError(
+            "scientific candidate condition_id is not a canonical arm"
+        )
     if evidence.semantic_manifest_sha256 != manifest.ordered_manifest_sha256:
         raise InterventionExperimentError(
             "scientific evidence manifest identity mismatch"
@@ -449,12 +456,12 @@ def _verify_comparison_identities(
         "model_identity_sha256",
         "runtime_identity_sha256",
     )
-    for base_seed, candidate_seed in zip(
-        baseline.seeds, candidate.seeds, strict=True
-    ):
+    for base_seed, candidate_seed in zip(baseline.seeds, candidate.seeds, strict=True):
         base = base_seed.execution_identity
         active = candidate_seed.execution_identity
-        if any(getattr(base, field) != getattr(active, field) for field in shared_fields):
+        if any(
+            getattr(base, field) != getattr(active, field) for field in shared_fields
+        ):
             raise InterventionExperimentError(
                 "baseline and candidate execution identities differ"
             )
@@ -500,6 +507,34 @@ def _verify_external_receipts(
                     raise InterventionExperimentError(
                         f"external receipt verification failed for {row.stable_id}"
                     )
+
+
+def _verify_execution_plans(
+    baseline: ConditionScientificEvidence,
+    candidate: ConditionScientificEvidence,
+    execution_plan_verifier: ExecutionPlanVerifier,
+) -> None:
+    """Dereference and verify each identity against the finalized plan receipt.
+
+    The callback must independently verify the exact condition, seed, intervention
+    bundle, and effective direction recorded by the finalized execution plan.  A
+    valid identity schema or plan hash alone does not establish that binding.
+    """
+    for evidence in (baseline, candidate):
+        for seed in evidence.seeds:
+            identity = seed.execution_identity
+            try:
+                verified = execution_plan_verifier(identity)
+            except Exception as error:
+                raise InterventionExperimentError(
+                    "finalized execution plan verification failed for "
+                    f"{identity.condition_id}/{identity.seed}"
+                ) from error
+            if verified is not True:
+                raise InterventionExperimentError(
+                    "finalized execution plan verification failed for "
+                    f"{identity.condition_id}/{identity.seed}"
+                )
 
 
 def _mean(values: Sequence[float]) -> float:
@@ -873,6 +908,7 @@ def compute_scientific_outcome(
     baseline: ConditionScientificEvidence,
     candidate: ConditionScientificEvidence,
     receipt_verifier: ReceiptVerifier | None = None,
+    execution_plan_verifier: ExecutionPlanVerifier | None = None,
     bootstrap_draws: int = BOOTSTRAP_DRAWS,
     bootstrap_seed: int = BOOTSTRAP_SEED,
 ) -> dict[str, Any]:
@@ -886,10 +922,15 @@ def compute_scientific_outcome(
             "scientific comparison requires B0 and one candidate"
         )
     _verify_comparison_identities(baseline, candidate)
+    if execution_plan_verifier is None:
+        raise InterventionExperimentError(
+            "scientific outcome requires a finalized execution plan verifier"
+        )
     if receipt_verifier is None:
         raise InterventionExperimentError(
             "scientific outcome requires an external receipt verifier"
         )
+    _verify_execution_plans(baseline, candidate, execution_plan_verifier)
     _verify_external_receipts(baseline, semantic_manifest, receipt_verifier)
     _verify_external_receipts(candidate, semantic_manifest, receipt_verifier)
     behavior_rows = _behavior_pairs(baseline, candidate, semantic_manifest)
