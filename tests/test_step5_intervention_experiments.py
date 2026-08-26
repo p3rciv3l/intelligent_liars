@@ -441,12 +441,8 @@ def test_all_eight_transforms_are_finite_and_obey_direction_contract(
 ) -> None:
     hidden = torch.tensor([[-1.0, 4.0], [2.0, 4.0]])
     initial_scores = hidden @ torch.tensor(direction.vector) + direction.intercept
-    movement_budget = float(
-        contract.intervention_parameters["score_movement_budget"]
-    )
-    deceptive_margin = float(
-        contract.intervention_parameters["M_deceptive_margin"]
-    )
+    movement_budget = float(contract.intervention_parameters["score_movement_budget"])
+    deceptive_margin = float(contract.intervention_parameters["M_deceptive_margin"])
     inverted_targets = movement_budget - (
         initial_scores.clamp(-movement_budget, movement_budget) + movement_budget
     )
