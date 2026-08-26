@@ -18,6 +18,7 @@ wheels/
 .env.*
 !.env.example
 .secrets/
+configs/*_live.json
 
 # Generated experiment artifacts
 data/*
