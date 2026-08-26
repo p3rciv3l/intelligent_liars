@@ -99,6 +99,12 @@ class _InterventionContext(AbstractContextManager["_InterventionContext"]):
             handle.remove()
         self.handles.clear()
 
+    def _register_forward_hook(self, layer: Any, hook: Any) -> None:
+        """Register one hook while preserving evidence about successful registration."""
+        handle = layer.register_forward_hook(hook)
+        self.handles.append(handle)
+        self._registered_count += 1
+
 
 def _hidden_output(output: Any) -> torch.Tensor:
     hidden = output[0] if isinstance(output, tuple) else output
@@ -148,31 +154,38 @@ class MaskedTeacherForcedIntervention(_InterventionContext):
             return self
         layers, direction, spec = runtime
         selected_tokens = int(self.predictor_token_mask.sum().item())
-        for layer_index in spec.layers:
+        try:
+            for layer_index in spec.layers:
 
-            def hook(
-                _module: Any,
-                _inputs: Any,
-                output: Any,
-                *,
-                _layer_index: int = layer_index,
-            ) -> Any:
-                hidden = _hidden_output(output)
-                if tuple(hidden.shape[:2]) != tuple(self.predictor_token_mask.shape):
-                    raise InterventionExperimentError(
-                        "answer token mask does not match hidden output"
+                def hook(
+                    _module: Any,
+                    _inputs: Any,
+                    output: Any,
+                    *,
+                    _layer_index: int = layer_index,
+                ) -> Any:
+                    hidden = _hidden_output(output)
+                    if tuple(hidden.shape[:2]) != tuple(
+                        self.predictor_token_mask.shape
+                    ):
+                        raise InterventionExperimentError(
+                            "answer token mask does not match hidden output"
+                        )
+                    mask = self.predictor_token_mask.to(hidden.device).unsqueeze(-1)
+                    transformed = transform_activations(hidden, direction, spec)
+                    if not torch.isfinite(transformed).all():
+                        raise FloatingPointError(
+                            "intervention produced non-finite activations"
+                        )
+                    self._record(_layer_index, selected_tokens)
+                    return _replace_hidden(
+                        output, torch.where(mask, transformed, hidden)
                     )
-                mask = self.predictor_token_mask.to(hidden.device).unsqueeze(-1)
-                transformed = transform_activations(hidden, direction, spec)
-                if not torch.isfinite(transformed).all():
-                    raise FloatingPointError(
-                        "intervention produced non-finite activations"
-                    )
-                self._record(_layer_index, selected_tokens)
-                return _replace_hidden(output, torch.where(mask, transformed, hidden))
 
-            self.handles.append(layers[layer_index].register_forward_hook(hook))
-        self._registered_count = len(self.handles)
+                self._register_forward_hook(layers[layer_index], hook)
+        except BaseException:
+            self.__exit__()
+            raise
         return self
 
 
@@ -184,30 +197,35 @@ class CachedGenerationLastTokenIntervention(_InterventionContext):
         if runtime is None:
             return self
         layers, direction, spec = runtime
-        for layer_index in spec.layers:
+        try:
+            for layer_index in spec.layers:
 
-            def hook(
-                _module: Any,
-                _inputs: Any,
-                output: Any,
-                *,
-                _layer_index: int = layer_index,
-            ) -> Any:
-                hidden = _hidden_output(output)
-                if hidden.shape[1] < 1:
-                    raise InterventionExperimentError(
-                        "cached generation hidden sequence cannot be empty"
+                def hook(
+                    _module: Any,
+                    _inputs: Any,
+                    output: Any,
+                    *,
+                    _layer_index: int = layer_index,
+                ) -> Any:
+                    hidden = _hidden_output(output)
+                    if hidden.shape[1] < 1:
+                        raise InterventionExperimentError(
+                            "cached generation hidden sequence cannot be empty"
+                        )
+                    transformed = transform_activations(
+                        hidden[:, -1:, :], direction, spec
                     )
-                transformed = transform_activations(hidden[:, -1:, :], direction, spec)
-                if not torch.isfinite(transformed).all():
-                    raise FloatingPointError(
-                        "intervention produced non-finite activations"
-                    )
-                replaced = hidden.clone()
-                replaced[:, -1:, :] = transformed
-                self._record(_layer_index, int(hidden.shape[0]))
-                return _replace_hidden(output, replaced)
+                    if not torch.isfinite(transformed).all():
+                        raise FloatingPointError(
+                            "intervention produced non-finite activations"
+                        )
+                    replaced = hidden.clone()
+                    replaced[:, -1:, :] = transformed
+                    self._record(_layer_index, int(hidden.shape[0]))
+                    return _replace_hidden(output, replaced)
 
-            self.handles.append(layers[layer_index].register_forward_hook(hook))
-        self._registered_count = len(self.handles)
+                self._register_forward_hook(layers[layer_index], hook)
+        except BaseException:
+            self.__exit__()
+            raise
         return self

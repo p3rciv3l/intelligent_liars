@@ -1,5 +1,10 @@
 from __future__ import annotations
 
+import json
+import subprocess
+import sys
+from dataclasses import replace
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -16,6 +21,46 @@ from intelligent_liars.step5_intervention_experiments.runtime import (
     CachedGenerationLastTokenIntervention,
     MaskedTeacherForcedIntervention,
 )
+
+
+def test_public_facade_exports_runtime_api_without_execution_backends() -> None:
+    script = """
+import json
+import sys
+import intelligent_liars.step5_intervention_experiments as api
+
+excluded = [
+    "intelligent_liars.step5_intervention_experiments.qwen_backend",
+    "intelligent_liars.step5_intervention_experiments.scientific_backend",
+    "intelligent_liars.step5_intervention_experiments.runner",
+    "intelligent_liars.step5_intervention_experiments.semantic_materializer",
+    "intelligent_liars.step5_intervention_experiments.watchdog",
+]
+print(json.dumps({
+    "exports": sorted(name for name in api.__all__ if name in {
+        "CachedGenerationLastTokenIntervention",
+        "MaskedTeacherForcedIntervention",
+        "RuntimeExecutionEvidence",
+        "TEACHER_FORCED_MASK_SEMANTICS",
+    }),
+    "excluded_loaded": sorted(name for name in excluded if name in sys.modules),
+}))
+"""
+    completed = subprocess.run(
+        [sys.executable, "-c", script],
+        check=True,
+        capture_output=True,
+        cwd=Path(__file__).parents[1] / "src",
+        text=True,
+    )
+    result = json.loads(completed.stdout)
+    assert result["exports"] == [
+        "CachedGenerationLastTokenIntervention",
+        "MaskedTeacherForcedIntervention",
+        "RuntimeExecutionEvidence",
+        "TEACHER_FORCED_MASK_SEMANTICS",
+    ]
+    assert result["excluded_loaded"] == []
 
 
 class _Layer(nn.Module):
@@ -161,6 +206,38 @@ def test_hooks_are_removed_after_normal_and_error_exit(
             layer(hidden)
     assert not layer._forward_hooks
     assert torch.equal(layer(hidden), hidden)
+
+
+@pytest.mark.parametrize("runtime_kind", ["cached", "teacher_forced"])
+def test_partial_hook_registration_failure_removes_prior_hooks(
+    bundles: list[InterventionBundle],
+    monkeypatch: pytest.MonkeyPatch,
+    runtime_kind: str,
+) -> None:
+    model = _FakeQwen()
+    first_layer, second_layer = model.model.language_model.layers
+    bundle = InterventionBundle(
+        direction=bundles[0].direction,
+        spec=replace(bundles[0].spec, layers=(0, 1)),
+    )
+
+    def fail_registration(_hook: object) -> None:
+        raise RuntimeError("registration failed")
+
+    monkeypatch.setattr(second_layer, "register_forward_hook", fail_registration)
+    if runtime_kind == "cached":
+        runtime = CachedGenerationLastTokenIntervention(model, bundle)
+    else:
+        runtime = MaskedTeacherForcedIntervention(
+            model, bundle, torch.tensor([[False, True]])
+        )
+    with pytest.raises(RuntimeError, match="registration failed"):
+        runtime.__enter__()
+
+    assert not first_layer._forward_hooks
+    assert not second_layer._forward_hooks
+    assert runtime.execution_evidence.hooks_registered == 1
+    assert runtime.execution_evidence.hooks_active == 0
 
 
 def test_teacher_forced_hook_preserves_bfloat16(

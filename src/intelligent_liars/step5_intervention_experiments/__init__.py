@@ -62,7 +62,11 @@ from .manifest import (
     parse_semantic_evaluation_manifest,
     text_sha256,
 )
-from .runtime import MaskedTeacherForcedIntervention
+from .runtime import (
+    CachedGenerationLastTokenIntervention,
+    MaskedTeacherForcedIntervention,
+    RuntimeExecutionEvidence,
+)
 from .scientific_evidence import (
     BOOTSTRAP_DRAWS,
     BOOTSTRAP_SEED,
@@ -113,11 +117,13 @@ __all__ = [
     "ExperimentContract",
     "GateThresholds",
     "InterventionExperimentError",
+    "CachedGenerationLastTokenIntervention",
     "MaskedTeacherForcedIntervention",
     "ModelIdentity",
     "PairObservation",
     "ProbeIdentity",
     "RuntimeIdentity",
+    "RuntimeExecutionEvidence",
     "SemanticManifestIdentity",
     "SemanticEvaluationManifest",
     "SemanticManifestError",
