@@ -1,5 +1,8 @@
 # Handoff: Push repo state to GitHub and make large artifacts durable in DVC/Google Drive
 
+> **Archived snapshot — do not execute.** Paths, credentials guidance,
+> dependencies, and commands reflect July 2026 state and may now be obsolete.
+
 ## Focus for the next session
 
 Avinash wants the current `intelligent_liars` work made durable:

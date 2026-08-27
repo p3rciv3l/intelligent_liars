@@ -1,5 +1,8 @@
 # Probe Sweep Knob Universe
 
+> **Archived snapshot — do not execute.** This records a July 2026 search plan;
+> current code and contracts are authoritative.
+
 Date written: 2026-07-01
 
 This document is the map of everything we can vary before choosing a truth /

@@ -1,5 +1,8 @@
 # Activation Extraction Postmortem
 
+> **Archived snapshot — do not execute.** Hosts, paths, commands, and runtime
+> assumptions record a June 2026 run and are not current instructions.
+
 Date: 2026-06-22
 
 Artifact root: `artifacts/activations/activation_full_20260622`

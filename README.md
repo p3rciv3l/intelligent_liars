@@ -1,40 +1,48 @@
 # Intelligent Liars
 
-Qwen3-VL activation and probe experiments for truth/deception signals.
+Research code for measuring and intervening on truth reporting in language and
+vision-language models. The tracked repository currently contains the Qwen3-VL
+activation/probe pipeline and the software contracts for a simple Step 5
+intervention experiment.
 
-The current project state is: rollout generation, judging, activation extraction,
-HDF5 validation, probe preflight, and simple linear probe training are all wired.
-The canonical all-text activation store is validated and tracked by DVC. Probe
-training is the next experimental phase; the tracked preflight report did not
-train probes.
+## Status
 
-## Current State
+The activation, probe, intervention, contract-validation, and evidence-checking
+paths are covered by software tests. Historical activation and probe artifacts
+are tracked with DVC.
 
-Canonical activation artifact:
+That does **not** establish a causal deception mechanism. A linear probe can
+decode a truth-related direction without that direction controlling deceptive
+behavior. The simple affine, scalar, clamp, projection, and reflection
+interventions are software-ready, but the proposed behavioral experiment
+suite has not yet been completed. Earlier scalar-addition and bounded-clamp arms
+produced negative diagnostic evidence; they were not complete scientific tests
+and do not cover the remaining simple transforms. Treat dry runs, unit tests,
+probe AUROC, training loss, and infrastructure receipts as separate evidence
+classes—not as successful deception results.
 
-```text
-artifacts/activations/activation_all_text_20260624/extracted_feats_all_text_qwen3-vl-8b-thinking.h5
-```
+The project’s current scope, standards, and evidence boundary are defined in
+[PROJECT.md](PROJECT.md).
 
-Tracked evidence:
+## Repository map
 
-- `docs/validation/activation_all_text_20260624.md`
-- `docs/validation/probe_preflight_all_text_20260625.json`
-
-Preflight headline:
-
-- 20 tasks
-- 36 decoder layers
-- hidden dim 4096
-- 76,257 examples
-- 18 trainable tasks
-- 1 eval-only task: `insider_trading__onpolicy`
-- 1 blocked task: `insider_trading__upscale`
-- recommended sparse pilot layers: `3,7,11,15,19,23,27,31,35`
+- `src/intelligent_liars/`: reusable experiment, evaluation, and infrastructure
+  modules.
+- `src/intelligent_liars/step5_intervention_experiments/`: static contracts,
+  manifests, runtime integration, and scientific-evidence records for the simple
+  intervention suite.
+- `scripts/`: activation/probe runners, validators, and artifact tooling.
+- `tests/`: CPU software tests plus explicitly gated model/GPU integration tests.
+- `data/`: source and derived evaluation inputs; large generated data should be
+  represented by DVC pointers.
+- `artifacts/`: generated outputs; large durable files are represented by DVC
+  pointers rather than committed to Git.
+- `docs/`: active protocols, implementation notes, decisions, and historical
+  records.
 
 ## Setup
 
-This repo uses `uv`.
+Python 3.11+ and [`uv`](https://docs.astral.sh/uv/) are required.
 
 ```bash
 uv sync --dev --no-editable
@@ -42,207 +50,71 @@ cp .env.example .env
 uv run --no-sync intelligent-liars check-env
 ```
 
-For judge-backed commands, set `OPENROUTER_API_KEY` in `.env` or the shell.
-`HF_TOKEN` is optional and only needed if Hugging Face requires authentication
-for model downloads.
+Set `OPENROUTER_API_KEY` only for judge-backed workflows. Set `HF_TOKEN` only
+when authenticated model access is required. Do not commit `.env`, local DVC
+credentials, cloud credentials, private keys, signed URLs, or raw private
+rollouts.
 
-On CUDA machines, install hardware-specific packages outside the base lock:
-
-```bash
-uv sync --frozen --dev --no-editable
-uv pip install ninja packaging psutil
-MAX_JOBS=${MAX_JOBS:-4} uv pip install flash-attn --no-build-isolation
-uv run --no-sync intelligent-liars check-env --require-cuda --check-model
-```
-
-## Main Commands
-
-List commands:
+Inspect the supported CLI rather than copying an old run command:
 
 ```bash
 uv run --no-sync intelligent-liars --help
 ```
 
-Useful entrypoints:
+The tracked CLI includes environment checks, rollout generation and grading,
+activation extraction and merging, and probe preflight/training. Long-running
+or paid experiments require a reviewed versioned contract, identity checks,
+budget authority, watchdog, and artifact-preservation procedure; the presence
+of a runnable script is not permission to launch it.
+
+## Development checks
 
 ```bash
-# Environment checks
-uv run --no-sync intelligent-liars check-env --check-processor
-uv run --no-sync intelligent-liars check-env --require-cuda --check-model
-
-# Rollouts and judging
-uv run --no-sync intelligent-liars generate-rollouts --batch-size 1
-uv run --no-sync intelligent-liars grade-rollouts
-uv run --no-sync intelligent-liars run-qwen-sweep --batch-size 1
-
-# Sycophancy source generation
-uv run --no-sync intelligent-liars generate-sycophancy
-
-# Activations
-uv run --no-sync intelligent-liars extract-activations --layers sparse --batch-size 1
-uv run --no-sync intelligent-liars merge-activation-shards --help
-
-# Probe readiness and training
-uv run --no-sync intelligent-liars preflight-probes \
-  --input artifacts/activations/activation_all_text_20260624/extracted_feats_all_text_qwen3-vl-8b-thinking.h5 \
-  --output docs/validation/probe_preflight_all_text_20260625.json
-
-uv run --no-sync intelligent-liars train-probes \
-  --input artifacts/activations/activation_all_text_20260624/extracted_feats_all_text_qwen3-vl-8b-thinking.h5 \
-  --output artifacts/probes/sparse_probe_results.json \
-  --layers 3,7,11,15,19,23,27,31,35 \
-  --general-domain-probe \
-  --task claims__definitional_gemini_600_full \
-  --task claims__evidential_gemini_600_full \
-  --task claims__fictional_gemini_600_full \
-  --task claims__logical_gemini_600_full \
-  --task ethics__commonsense \
-  --task geometry_of_truth__best \
-  --task geometry_of_truth__mixed \
-  --task internal_state__animals \
-  --task internal_state__cities \
-  --task internal_state__companies \
-  --task internal_state__elements \
-  --task internal_state__facts \
-  --task internal_state__inventions \
-  --task repe_honesty__IF_dishonest \
-  --task roleplaying__plain \
-  --task sandbagging_v2__wmdp_mmlu \
-  --task sycophancy__mmlu_stem_same_conf_all
-```
-
-Do not train on `insider_trading__upscale` until the label/data issue is fixed.
-Treat `insider_trading__onpolicy` as eval-only unless the class balance changes.
-For the first no-insider sparse pass, also exclude
-`insider_trading_doubledown__onpolicy`.
-
-Optional pooled-feature cache for repeated probe sweeps:
-
-```bash
-PYTHONPATH=src uv run --no-sync intelligent-liars cache-pooled-features \
-  --input artifacts/activations/activation_all_text_20260624/extracted_feats_all_text_qwen3-vl-8b-thinking.h5 \
-  --output artifacts/probe_features/no_insider_sparse_pooled.h5 \
-  --layers 3,7,11,15,19,23,27,31,35 \
-  --task claims__definitional_gemini_600_full \
-  --task claims__evidential_gemini_600_full \
-  --task claims__fictional_gemini_600_full \
-  --task claims__logical_gemini_600_full \
-  --task ethics__commonsense \
-  --task geometry_of_truth__best \
-  --task geometry_of_truth__mixed \
-  --task internal_state__animals \
-  --task internal_state__cities \
-  --task internal_state__companies \
-  --task internal_state__elements \
-  --task internal_state__facts \
-  --task internal_state__inventions \
-  --task repe_honesty__IF_dishonest \
-  --task roleplaying__plain \
-  --task sandbagging_v2__wmdp_mmlu \
-  --task sycophancy__mmlu_stem_same_conf_all
-
-PYTHONPATH=src uv run --no-sync intelligent-liars train-probes-from-cache \
-  --cache artifacts/probe_features/no_insider_sparse_pooled.h5 \
-  --source artifacts/activations/activation_all_text_20260624/extracted_feats_all_text_qwen3-vl-8b-thinking.h5 \
-  --output artifacts/probes/no_insider_sparse_probe_results.json \
-  --layers 3,7,11,15,19,23,27,31,35 \
-  --general-domain-probe
-```
-
-## Code Map
-
-The code is split by workflow:
-
-- `src/intelligent_liars/cli.py`: Typer entrypoint and compatibility exports.
-- `src/intelligent_liars/cli_*.py`: command groups.
-- `src/intelligent_liars/models.py`: Qwen3-VL model/processor loading.
-- `src/intelligent_liars/rollouts.py`: rollout generation and JSON merge logic.
-- `src/intelligent_liars/activation_types.py`: activation labels and dataclasses.
-- `src/intelligent_liars/activation_loaders.py`: named task and rollout loaders.
-- `src/intelligent_liars/activation_masks.py`: Qwen rendering and token masks.
-- `src/intelligent_liars/activation_extract.py`: extraction runtime.
-- `src/intelligent_liars/activation_hdf5.py`: HDF5 write/merge/validation helpers.
-- `src/intelligent_liars/activations.py`: compatibility facade for activation imports.
-- `src/intelligent_liars/judge_config.py`: judge config and preflight.
-- `src/intelligent_liars/judge_client.py`: OpenRouter/generic judge calls.
-- `src/intelligent_liars/*_grader.py`: roleplaying, sandbagging, and insider graders.
-- `src/intelligent_liars/rollout_grading.py`: rollout grading orchestration.
-- `src/intelligent_liars/judging.py`: compatibility facade for judging imports.
-- `src/intelligent_liars/probes.py`: probe preflight and linear probe training.
-- `src/intelligent_liars/run_control.py`: locks, plan IDs, hashes, signal cleanup.
-- `src/intelligent_liars/dynamic_queue.py`: shared filesystem queue helpers.
-
-Long-running GPU runners:
-
-- `scripts/run_activation_extraction_dynamic.py`
-- `scripts/run_insider_generation_dynamic.py`
-
-Validation and artifact helpers:
-
-- `scripts/validate_activation_hdf5.py`
-- `scripts/validate_insider_generation_json.py`
-- `scripts/safe_fetch_artifact.py`
-- `scripts/plan_activation_hdf5_merge.py`
-
-## Data And Artifacts
-
-Tracked source data lives under `data/`. Large generated files stay out of Git
-and are represented by `.dvc` pointers under `artifacts/`.
-
-The configured DVC remote is:
-
-```text
-gdrive-artifacts -> gdrive://1C7KUkZHCfQXnpkt6debhCcA4YtV8eOHX
-```
-
-Common DVC commands:
-
-```bash
-uvx --from "dvc[gdrive]" dvc status
-uvx --from "dvc[gdrive]" dvc pull
-uvx --from "dvc[gdrive]" dvc push
-```
-
-Keep local OAuth/client secrets out of Git:
-
-```text
-.dvc/config.local
-.secrets/dvc-gdrive-user-credentials.json
-```
-
-To validate the canonical activation store after `dvc pull`:
-
-```bash
-PYTHONPATH=src uv run --no-sync python scripts/validate_activation_hdf5.py \
-  artifacts/activations/activation_all_text_20260624/extracted_feats_all_text_qwen3-vl-8b-thinking.h5 \
-  --expected-task-count 20 \
-  --expected-layer-count 36 \
-  --expected-hidden-dim 4096 \
-  --finite-check sample \
-  --sha256
-```
-
-## Development Checks
-
-Use the repo's current validation gate:
-
-```bash
-PYTHONPATH=src uv run --no-sync python -m pytest tests -q
-PYTHONPATH=src uv run --no-sync ruff check scripts src tests
+uv run --no-sync pytest -q
+uv run --no-sync ruff check scripts src tests
 git diff --check
 ```
 
-`ruff format` is not currently a repo-wide clean gate; many older files would be
-rewrapped by Ruff's formatter. Prefer formatting only files you intentionally
-touch unless the project explicitly decides to do a separate formatting commit.
+Some tests require model weights, CUDA, credentials, or external services and
+must remain opt-in. A passing CPU suite proves software behavior only.
 
-## Run Notes
+## DVC artifacts
 
-Start here for historical context:
+Git tracks `.dvc` pointers for large artifacts. Check and retrieve them from the
+configured Google Drive remote with:
 
-- `docs/vast_qwen_rollouts_20260621.md`
-- `docs/activation_full_20260622.md`
-- `docs/postmortems/moar_activation_extraction_20260625/postmortem.md`
+```bash
+uvx --from "dvc[gdrive]" dvc status -c
+uvx --from "dvc[gdrive]" dvc pull
+```
 
-External Apollo/Truth Spec references are not vendored. If needed, clone them
-under ignored `references/`.
+Before deletion, verify exact remote recovery by size and hash. DVC status is
+not scientific evidence, and it does not protect unrelated Git LFS objects.
+
+## Active documentation
+
+- [Project charter and current evidence](PROJECT.md)
+- [Simple truth-direction protocol](docs/simple_truth_direction_experiment_protocol_20260825.md)
+- [Simple truth-direction run plan](docs/simple_truth_direction_run_plan_20260826.md)
+- [Heretic/Optuna port design](docs/heretic_optuna_port.md)
+- [LLM-judge harness design](docs/llm_judge_harness.md)
+
+Historical reports and receipts document what happened in earlier runs; they do
+not override current code, versioned contracts, or the scientific acceptance
+criteria. See `docs/archive/`, `docs/postmortems/`, and `docs/validation/` when
+reconstructing that history.
+
+## Evidence and safety rules
+
+- Keep training, qualification, inference, grading, and scientific acceptance
+  as distinct stages.
+- Evaluate held-out deceptive triggers alongside truthful, false-trigger,
+  capability, coherence, safety, and control-distribution checks.
+- Preserve exact configs, seeds, source identities, hashes, raw generations,
+  grader records, and terminal-state receipts.
+- Never inspect cross-arm partial scientific outputs before a frozen concurrent
+  block completes.
+- Stop or pause compute on completion, idle, budget exhaustion, identity
+  mismatch, non-finite state, infrastructure corruption, or safety failure.
+- Never delete retained compute or artifacts until recovery and scoring needs are
+  resolved and durable copies are independently verified.

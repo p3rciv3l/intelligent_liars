@@ -1,5 +1,8 @@
 # Vast Qwen Rollout Postmortem
 
+> **Archived snapshot — do not execute.** Hosts, paths, commands, and runtime
+> assumptions record a June 2026 run and are not current instructions.
+
 Date: 2026-06-21
 
 Artifact root: `artifacts/vast-runs/vast-41988240-20260621T184553Z`
