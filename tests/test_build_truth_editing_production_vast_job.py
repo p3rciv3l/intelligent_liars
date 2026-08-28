@@ -972,8 +972,16 @@ def test_canonical_timed_canary_vast_job_packages_only_current_packets() -> None
     ProductionVastConfig.from_mapping(job).validate_repository(repo)
 
 
-def test_timed_canary_builder_rejects_superseded_command_packet() -> None:
-    repo = Path(__file__).parents[1]
+def test_timed_canary_builder_rejects_superseded_command_packet(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    (repo / "configs").mkdir(parents=True)
+    (repo / "configs/truth_editing_timed_canary_v4_r10_7513ee91.json").write_text("{}")
+    (
+        repo
+        / "configs/truth_editing_timed_canary_command_v4_r10_7513ee91.json"
+    ).write_text("{}")
     with pytest.raises(RuntimeError, match="superseded"):
         MODULE.build_timed_canary_job(
             repo,
@@ -986,8 +994,16 @@ def test_timed_canary_builder_rejects_superseded_command_packet() -> None:
         )
 
 
-def test_timed_canary_packaging_rejects_legacy_command_without_explicit_entity() -> None:
-    repo = Path(__file__).parents[1]
+def test_timed_canary_packaging_rejects_legacy_command_without_explicit_entity(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    (repo / "configs").mkdir(parents=True)
+    (repo / "configs/truth_editing_timed_canary_v4_r10_7513ee91.json").write_text("{}")
+    (
+        repo
+        / "configs/truth_editing_timed_canary_command_v4_r10_7513ee91.json"
+    ).write_text("{}")
     with pytest.raises(RuntimeError, match="entity centipawn"):
         MODULE.build_timed_canary_job(
             repo,
