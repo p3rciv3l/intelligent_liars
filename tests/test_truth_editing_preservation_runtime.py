@@ -4,6 +4,7 @@ import copy
 import gc
 import hashlib
 import json
+import sys
 import weakref
 from pathlib import Path
 from types import SimpleNamespace
@@ -14,7 +15,10 @@ import torch
 
 from intelligent_liars.truth_editing_preservation import (
     PRESERVATION_SPEC_FORMAT,
+    PRESERVATION_RECEIPT_FORMAT,
+    PreservationReceipt,
     PreservationSpec,
+    StratumPreservationResult,
     build_cached_baseline,
 )
 from intelligent_liars.truth_editing_preservation_runtime import (
@@ -23,6 +27,8 @@ from intelligent_liars.truth_editing_preservation_runtime import (
     PreservationRuntimeError,
     PreservationRuntimeReceipt,
     TrialPreservationCollector,
+    _hash,
+    _preservation_receipt_mapping,
 )
 
 
@@ -318,6 +324,36 @@ def test_collector_scores_all_strata_inside_the_active_writer_lease(tmp_path: Pa
     assert receipt.recipe_id == "recipe-1"
     assert receipt.model_sha256 == spec.base_model_sha256
     assert receipt.basis_set_sha256 == _sha("d")
+
+
+def test_receipt_weighted_mean_does_not_overflow_for_finite_kl_values() -> None:
+    maximum = sys.float_info.max
+    receipt = PreservationReceipt(
+        format=PRESERVATION_RECEIPT_FORMAT,
+        spec_sha256=_sha("1"),
+        edited_model_sha256=_sha("2"),
+        tier="trial",
+        strata=(
+            StratumPreservationResult("text", 1, 1_884, maximum),
+            StratumPreservationResult("vision", 1, 15, maximum),
+            StratumPreservationResult("recorded_computer_use", 1, 8, maximum),
+        ),
+        aggregate_kl=maximum,
+        vision_tower_byte_identical=True,
+        self_sha256=_sha("3"),
+    )
+
+    mapping = _preservation_receipt_mapping(receipt)
+
+    assert mapping["aggregate_kl"] == maximum
+
+
+def test_canonical_json_failure_names_nonfinite_field_without_value() -> None:
+    with pytest.raises(
+        PreservationRuntimeError,
+        match=r"\$\.preservation_receipt\.aggregate_kl \(non-finite float\)",
+    ):
+        _hash({"preservation_receipt": {"aggregate_kl": float("inf")}})
 
 
 def test_edited_output_validates_production_shaped_logits_in_bounded_chunks(

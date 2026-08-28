@@ -64,7 +64,35 @@ def _canonical_bytes(value: Any) -> bytes:
             sort_keys=True,
         ).encode("utf-8")
     except (TypeError, ValueError) as error:
-        raise PreservationRuntimeError("value is not canonical JSON") from error
+        location = _noncanonical_json_location(value)
+        detail = f" at {location}" if location is not None else ""
+        raise PreservationRuntimeError(
+            f"value is not canonical JSON{detail}"
+        ) from error
+
+
+def _noncanonical_json_location(value: Any, path: str = "$") -> str | None:
+    """Locate a bad JSON leaf without exposing its potentially sensitive value."""
+
+    if value is None or isinstance(value, (bool, int, str)):
+        return None
+    if isinstance(value, float):
+        return None if math.isfinite(value) else f"{path} (non-finite float)"
+    if isinstance(value, Mapping):
+        for key, item in value.items():
+            if not isinstance(key, str):
+                return f"{path} (non-string object key)"
+            found = _noncanonical_json_location(item, f"{path}.{key}")
+            if found is not None:
+                return found
+        return None
+    if isinstance(value, (list, tuple)):
+        for index, item in enumerate(value):
+            found = _noncanonical_json_location(item, f"{path}[{index}]")
+            if found is not None:
+                return found
+        return None
+    return f"{path} (unsupported {type(value).__name__})"
 
 
 def _hash(value: Any) -> str:
@@ -750,10 +778,21 @@ def _preservation_receipt_mapping(receipt: PreservationReceipt) -> dict[str, Any
         for item in receipt.strata
     ]
     total_tokens = sum(item["assistant_token_count"] for item in normalized_strata)
-    aggregate = sum(
-        item["forward_kl"] * item["assistant_token_count"]
-        for item in normalized_strata
-    ) / total_tokens
+    # Reconstruct the weighted mean without forming ``loss * token_count``.
+    # That product can overflow even when every loss and the true mean are
+    # finite.  The incremental mean stays within the range of its inputs.
+    aggregate = 0.0
+    accumulated_tokens = 0
+    for item in normalized_strata:
+        next_tokens = accumulated_tokens + item["assistant_token_count"]
+        aggregate += (item["forward_kl"] - aggregate) * (
+            item["assistant_token_count"] / next_tokens
+        )
+        accumulated_tokens = next_tokens
+    if accumulated_tokens != total_tokens or not math.isfinite(aggregate):
+        raise PreservationRuntimeError(
+            "preservation aggregate cannot be represented as finite JSON"
+        )
     unsigned = {
         "format": receipt.format,
         "spec_sha256": receipt.spec_sha256,
