@@ -55,44 +55,49 @@ class PreservationRuntimeError(RuntimeError):
 
 
 def _canonical_bytes(value: Any) -> bytes:
+    normalized = _canonical_json_value(value)
     try:
         return json.dumps(
-            value,
+            normalized,
             allow_nan=False,
             ensure_ascii=False,
             separators=(",", ":"),
             sort_keys=True,
         ).encode("utf-8")
     except (TypeError, ValueError) as error:
-        location = _noncanonical_json_location(value)
-        detail = f" at {location}" if location is not None else ""
-        raise PreservationRuntimeError(
-            f"value is not canonical JSON{detail}"
-        ) from error
+        raise PreservationRuntimeError("value is not canonical JSON") from error
 
 
-def _noncanonical_json_location(value: Any, path: str = "$") -> str | None:
-    """Locate a bad JSON leaf without exposing its potentially sensitive value."""
+def _canonical_json_value(value: Any, path: str = "$") -> Any:
+    """Own accepted Mapping containers and identify bad leaves without values."""
 
     if value is None or isinstance(value, (bool, int, str)):
-        return None
+        return value
     if isinstance(value, float):
-        return None if math.isfinite(value) else f"{path} (non-finite float)"
+        if not math.isfinite(value):
+            raise PreservationRuntimeError(
+                f"value is not canonical JSON at {path} (non-finite float)"
+            )
+        return value
     if isinstance(value, Mapping):
+        owned: dict[str, Any] = {}
         for key, item in value.items():
             if not isinstance(key, str):
-                return f"{path} (non-string object key)"
-            found = _noncanonical_json_location(item, f"{path}.{key}")
-            if found is not None:
-                return found
-        return None
+                raise PreservationRuntimeError(
+                    f"value is not canonical JSON at {path} "
+                    "(non-string object key)"
+                )
+            owned[key] = _canonical_json_value(item, f"{path}.{key}")
+        return owned
     if isinstance(value, (list, tuple)):
-        for index, item in enumerate(value):
-            found = _noncanonical_json_location(item, f"{path}[{index}]")
-            if found is not None:
-                return found
-        return None
-    return f"{path} (unsupported {type(value).__name__})"
+        return [
+            _canonical_json_value(item, f"{path}[{index}]")
+            for index, item in enumerate(value)
+        ]
+    raise PreservationRuntimeError(
+        f"value is not canonical JSON at {path} "
+        f"(unsupported {type(value).__name__})"
+    )
 
 
 def _hash(value: Any) -> str:

@@ -668,6 +668,9 @@ def test_runtime_receipt_round_trips_and_rejects_tampering(tmp_path: Path) -> No
 
     assert PreservationRuntimeReceipt.from_mapping(evidence).to_mapping() == evidence
     parsed = PreservationRuntimeReceipt.from_mapping(evidence)
+    reparsed_input = dict(evidence)
+    reparsed_input["preservation_receipt"] = parsed.preservation_receipt
+    assert PreservationRuntimeReceipt.from_mapping(reparsed_input).to_mapping() == evidence
     with pytest.raises(TypeError):
         parsed.preservation_receipt["strata"][0]["forward_kl"] = 9.0
     tampered = copy.deepcopy(evidence)
