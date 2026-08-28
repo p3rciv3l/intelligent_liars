@@ -211,12 +211,16 @@ def topk_preservation_kl_loss(
     )
     log_normalizer: torch.Tensor | None = None
     for start in range(0, student_logits.shape[-1], chunk_width):
-        chunk = student_logits[..., start : start + chunk_width]
+        # Convert before the reduction.  Casting the BF16/FP16 result after
+        # logsumexp is too late: a large common logit offset can round away the
+        # normalization term and produce positive log-probabilities (and even
+        # a negative mathematical KL).  Float32 also matches the precision of
+        # the frozen target distributions; accumulation across chunks remains
+        # float64 below.
+        chunk = student_logits[..., start : start + chunk_width].float()
         if temperature != 1.0:
             chunk = chunk / temperature
-        chunk_normalizer = torch.logsumexp(
-            chunk, dim=-1, keepdim=True
-        ).double()
+        chunk_normalizer = torch.logsumexp(chunk, dim=-1, keepdim=True).double()
         log_normalizer = (
             chunk_normalizer
             if log_normalizer is None

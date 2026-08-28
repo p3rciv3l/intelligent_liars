@@ -121,6 +121,26 @@ def test_topk_preservation_kl_stays_finite_for_extreme_finite_bfloat16_logits():
     assert loss.item() > 1e38
 
 
+def test_topk_preservation_kl_normalizes_large_offset_bfloat16_logits_in_float64():
+    """A common BF16 offset must not turn a mathematical KL negative."""
+
+    torch.manual_seed(7)
+    base = torch.randn((1, 2, 80), dtype=torch.float32)
+    indices, probabilities = topk_preservation_targets(base, top_k=64)
+    student = torch.full((1, 2, 80), 10_000.0, dtype=torch.bfloat16)
+    mask = torch.ones((1, 2), dtype=torch.bool)
+
+    loss = topk_preservation_kl_loss(
+        student,
+        indices,
+        probabilities,
+        mask,
+    )
+
+    assert torch.isfinite(loss)
+    assert loss.item() >= 0.0
+
+
 def test_topk_preservation_keeps_required_target_token():
     logits = torch.tensor([[[4.0, 3.0, 2.0, 1.0]]])
     required = torch.tensor([[3]])
