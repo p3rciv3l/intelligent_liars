@@ -57,7 +57,7 @@ def test_call_judge_uses_openrouter_client(monkeypatch):
     )
 
     assert response == "Reasoning.\n<judgement>4</judgement>"
-    assert captured["name"] == "glm-5.2"
+    assert captured["name"] == "glm-5.3-flash"
     assert captured["kwargs"]["max_tokens"] == 123
     assert captured["kwargs"]["timeout"] == 9.5
     assert captured["messages"] == [
@@ -67,7 +67,7 @@ def test_call_judge_uses_openrouter_client(monkeypatch):
     assert captured["session"] == "session"
 
 
-def test_call_judge_enables_response_healing_for_structured_outputs(monkeypatch):
+def test_call_judge_uses_explicit_response_healing_for_structured_outputs(monkeypatch):
     captured = {}
 
     class FakeClient:
@@ -90,7 +90,7 @@ def test_call_judge_enables_response_healing_for_structured_outputs(monkeypatch)
     response = call_judge(
         system_prompt=None,
         user_prompt="Grade this.",
-        config=JudgeConfig(),
+        config=JudgeConfig(json_response_healing=True),
         response_format=response_format,
         provider_routing={"require_parameters": True},
     )
@@ -99,6 +99,45 @@ def test_call_judge_enables_response_healing_for_structured_outputs(monkeypatch)
     assert captured["kwargs"]["response_format"] == response_format
     assert captured["kwargs"]["provider"] == {"require_parameters": True}
     assert captured["kwargs"]["plugins"] == [{"id": "response-healing"}]
+
+
+def test_call_judge_can_disable_response_healing_as_a_distinct_json_policy(monkeypatch):
+    captured = {}
+
+    class FakeClient:
+        def generate(self, messages, session=None):
+            return {
+                "choices": [
+                    {"message": {"content": '{"reasoning":"ok","judgement":"yes"}'}}
+                ]
+            }
+
+    def fake_get_model_client(name, **kwargs):
+        captured["kwargs"] = kwargs
+        return FakeClient()
+
+    monkeypatch.setattr(
+        "intelligent_liars.judging.get_model_client", fake_get_model_client
+    )
+    monkeypatch.setattr(
+        "intelligent_liars.judging._get_openrouter_session", lambda: "session"
+    )
+
+    call_judge(
+        system_prompt=None,
+        user_prompt="Grade this.",
+        config=JudgeConfig(json_response_healing=False),
+        response_format={
+            "type": "json_schema",
+            "json_schema": {
+                "name": "judge_result",
+                "strict": True,
+                "schema": {"type": "object"},
+            },
+        },
+    )
+
+    assert captured["kwargs"]["plugins"] == []
 
 
 def test_roleplaying_structured_judge_retries_parse_failures(tmp_path, monkeypatch):

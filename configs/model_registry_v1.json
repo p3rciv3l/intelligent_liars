@@ -1,0 +1,19 @@
+{
+  "base_model_cache": {
+    "content_sha256": "bbca6a8b09a56f0c538887b82b9594b0c0945c5fbcde54f39eda153a9f64eda8",
+    "file_count": 14,
+    "notes": "The v1 model-cache receipt verifies this content identity and byte count. Historical v2 URLs use the same content digest but their embedded manifest points to v1; do not accept v2 as canonical until an independent exact-key round-trip receipt is captured.",
+    "repo_id": "Qwen/Qwen3-VL-8B-Thinking",
+    "revision": "92f3c4b4feadd3a016ef468d103bb5f58b2a2c6b",
+    "s3_prefix": "model-cache/v1/qwen--qwen3-vl-8b-thinking/92f3c4b4feadd3a016ef468d103bb5f58b2a2c6b/bbca6a8b09a56f0c538887b82b9594b0c0945c5fbcde54f39eda153a9f64eda8",
+    "s3_prefix_status": "unresolved_manifest_prefix_mismatch",
+    "total_bytes": 17545907058,
+    "verified_receipt_path": "artifacts/step5-prereq-lora-r3-v1/fetched/input_hydration_receipt.json"
+  },
+  "format": "intelligent_liars_model_registry_config_v1",
+  "registry": {
+    "base_prefix": "model-registry/v1",
+    "bucket": "intelligent-liars-osworld-29a36b2b927f4078b2ac95ca83ec9c21"
+  },
+  "schema_version": 1
+}

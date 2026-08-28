@@ -1,0 +1,65 @@
+{
+  "format": "truth_editing_vast_prerequisite_job_v1",
+  "image": "pytorch/pytorch:2.5.1-cuda12.4-cudnn9-devel@sha256:14611869895df612b7b07227d5925f30ec3cd6673bad58ce3d84ed107950e014",
+  "runtime_id": "truth-editing-cu124-torch251-transformers4571-fa274post1-optuna490-wandb0290-r2",
+  "model": {
+    "repository": "Qwen/Qwen3-VL-8B-Thinking",
+    "revision": "92f3c4b4feadd3a016ef468d103bb5f58b2a2c6b"
+  },
+  "resources": {
+    "disk_gib": 120,
+    "minimum_gpu_vram_gib": 24,
+    "maximum_elapsed_seconds": 14400,
+    "maximum_cost_usd": 1.0,
+    "maximum_download_gib": 25.0,
+    "maximum_upload_gib": 1.0
+  },
+  "paths": {
+    "remote_workdir": "/workspace/intelligent_liars",
+    "remote_output_dir": "/workspace/outputs"
+  },
+  "commands": {
+    "bootstrap": [
+      "bash",
+      "scripts/bootstrap_truth_editing_prerequisite_worker.sh"
+    ],
+    "workload": [
+      "bash",
+      "scripts/run_truth_editing_preservation_capture_worker.sh"
+    ]
+  },
+  "expected_outputs": [
+    "cache-hydration-receipt.json",
+    "capture-identity.json",
+    "repeat-plan.json",
+    "preservation-thresholds/calibration.json",
+    "preservation-capture-terminal.json"
+  ],
+  "bundle_paths": [
+    "artifacts/truth-editing/vast/preservation-capture-v2-r4-inputs/osworld-source-v2-r4.tar.gz",
+    "artifacts/truth-editing/vast/preservation-capture-v2-r4-inputs/vision-media.tar.gz",
+    "configs/truth_editing_preservation_capture_v2_r4.json",
+    "corpora/tinylora_deception_action_v1/step5_v1/preservation_development_text.jsonl",
+    "corpora/tinylora_deception_action_v1/step5_v1/preservation_development_vision.jsonl",
+    "docker/truth-editing/Dockerfile",
+    "docker/truth-editing/requirements.in",
+    "docker/truth-editing/requirements.lock",
+    "docker/truth-editing/runtime-manifest.json",
+    "docker/truth-editing/validate_runtime.py",
+    "scripts/bootstrap_truth_editing_prerequisite_worker.sh",
+    "scripts/build_tinylora_model_cache.py",
+    "scripts/run_truth_editing_preservation_capture_worker.py",
+    "scripts/run_truth_editing_preservation_capture_worker.sh",
+    "src/intelligent_liars/__init__.py",
+    "src/intelligent_liars/model_cache.py",
+    "src/intelligent_liars/models.py",
+    "src/intelligent_liars/tinylora_pilot.py",
+    "src/intelligent_liars/truth_editing_preservation.py",
+    "src/intelligent_liars/truth_editing_preservation_capture.py",
+    "src/intelligent_liars/truth_editing_preservation_materialization.py",
+    "src/intelligent_liars/truth_editing_preservation_plan.py",
+    "src/intelligent_liars/truth_editing_preservation_runtime.py",
+    "src/intelligent_liars/truth_editing_preservation_thresholds.py",
+    "src/intelligent_liars/truth_editing_weight_editor.py"
+  ]
+}

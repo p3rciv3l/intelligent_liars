@@ -1,0 +1,3 @@
+# Use preservation-lane KL and behavioral capability gates
+
+Collateral damage is minimized with baseline-relative KL only on frozen non-target text, visual, and recorded computer-use prompts, never on direct-report targets whose distribution is intentionally changed. Routine trials use cached base distributions and tiered preservation subsets; OSWorld specifically follows the fit/validation/capability-test roles frozen in ADR-0014. Exact vision-tower identity, visual-task behavior, recorded action behavior, and post-freeze OSWorld evaluation remain separate evidence so an unchanged encoder cannot conceal decoder-level capability loss.

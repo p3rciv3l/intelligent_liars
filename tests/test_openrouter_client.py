@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from intelligent_liars.clients.openrouter_client import (
@@ -114,10 +116,11 @@ def test_fetch_openrouter_key_metadata_validates_configured_key(monkeypatch):
     assert fake_requests.calls == [
         {
             "url": "https://openrouter.ai/api/v1/key",
-            "headers": {
-                "Authorization": "Bearer sk-test",
-                "X-OpenRouter-Title": "intelligent-liars",
-            },
+                "headers": {
+                    "Authorization": "Bearer sk-test",
+                    "User-Agent": "OpenAI File Downloader, XaiImageApiFetch/1.0",
+                    "X-OpenRouter-Title": "intelligent-liars",
+                },
             "timeout": 9.0,
         }
     ]
@@ -190,6 +193,33 @@ models:
     assert payload["provider"]["sort"] == "price"
     assert session.calls[0]["timeout"] == 3.0
     assert client.provider_config["sort"] == "price"
+
+
+def test_project_glm_flash_judge_contract_is_frozen():
+    yaml_path = Path(__file__).resolve().parents[1] / "model_deployments.yaml"
+    session = FakeSession()
+
+    client = get_model_client(
+        "glm-5.3-flash",
+        api_key="sk-test",
+        yaml_path=yaml_path,
+    )
+    client.generate([{"role": "user", "content": "grade"}], session=session)
+
+    payload = session.calls[0]["json"]
+    assert client.model == "z-ai/glm-5.3-flash"
+    assert payload["temperature"] == 0.0
+    assert payload["top_p"] == 1.0
+    assert payload["max_tokens"] == 2048
+    assert payload["reasoning"] == {"effort": "high", "exclude": True}
+    assert payload["provider"] == {
+        "order": ["z-ai/fp8"],
+        "only": ["z-ai/fp8"],
+        "quantizations": ["fp8"],
+        "allow_fallbacks": False,
+        "require_parameters": True,
+        "data_collection": "deny",
+    }
 
 
 def test_get_model_client_merges_provider_with_call_site_winning(tmp_path):

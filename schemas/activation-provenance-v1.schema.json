@@ -1,0 +1,134 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "activation-provenance-v1.schema.json",
+  "title": "Activation provenance sidecar and inventory v1",
+  "oneOf": [
+    { "$ref": "#/$defs/sidecar" },
+    { "$ref": "#/$defs/inventory" }
+  ],
+  "$defs": {
+    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "revision": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+    "nonempty": { "type": "string", "minLength": 1, "pattern": "^\\S(?:.*\\S)?$" },
+    "optionalSha256": {
+      "anyOf": [ { "$ref": "#/$defs/sha256" }, { "type": "null" } ]
+    },
+    "optionalRevision": {
+      "anyOf": [ { "$ref": "#/$defs/revision" }, { "type": "null" } ]
+    },
+    "optionalCount": {
+      "anyOf": [ { "type": "integer", "minimum": 0 }, { "type": "null" } ]
+    },
+    "artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path", "byte_size", "dvc_pointer_path", "dvc_hash_algorithm",
+        "dvc_hash", "dvc_size", "dvc_pointer_sha256", "direct_sha256",
+        "direct_hash_evidence"
+      ],
+      "properties": {
+        "path": { "$ref": "#/$defs/nonempty", "pattern": "^(?!/)(?!.*(^|/)\\.\\.?(/|$))(?!.*(?:^|/)\\.\\.(?:/|$)).+$" },
+        "byte_size": { "anyOf": [ { "type": "integer", "minimum": 0 }, { "type": "null" } ] },
+        "dvc_pointer_path": { "anyOf": [ { "$ref": "#/$defs/nonempty" }, { "type": "null" } ] },
+        "dvc_hash_algorithm": { "enum": ["md5", "sha256", null] },
+        "dvc_hash": {
+          "anyOf": [
+            { "type": "string", "pattern": "^[0-9a-f]{32}$" },
+            { "$ref": "#/$defs/sha256" },
+            { "type": "null" }
+          ]
+        },
+        "dvc_size": { "anyOf": [ { "type": "integer", "minimum": 0 }, { "type": "null" } ] },
+        "dvc_pointer_sha256": { "$ref": "#/$defs/optionalSha256" },
+        "direct_sha256": { "$ref": "#/$defs/optionalSha256" },
+        "direct_hash_evidence": { "enum": ["local_read", "historical_validation_receipt", "not_checked"] }
+      }
+    },
+    "hdf5Inventory": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["validator_format", "tasks", "task_rows", "example_counts", "layers", "hidden_dim", "storage_dtype", "finite_check", "validator_revision"],
+      "properties": {
+        "validator_format": { "$ref": "#/$defs/nonempty" },
+        "tasks": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/nonempty" }, "uniqueItems": true },
+        "task_rows": { "type": "object", "additionalProperties": { "$ref": "#/$defs/optionalCount" } },
+        "example_counts": { "type": "object", "additionalProperties": { "$ref": "#/$defs/optionalCount" } },
+        "layers": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/nonempty" }, "uniqueItems": true },
+        "hidden_dim": { "anyOf": [ { "type": "integer", "minimum": 1 }, { "type": "null" } ] },
+        "storage_dtype": { "enum": ["float16", "float32", "bfloat16", null] },
+        "finite_check": { "enum": ["none", "sample", "full"] },
+        "validator_revision": { "$ref": "#/$defs/optionalRevision" }
+      }
+    },
+    "model": {
+      "type": "object", "additionalProperties": false,
+      "required": ["repository", "revision", "content_sha256"],
+      "properties": { "repository": { "$ref": "#/$defs/nonempty" }, "revision": { "$ref": "#/$defs/optionalRevision" }, "content_sha256": { "$ref": "#/$defs/optionalSha256" } }
+    },
+    "processor": {
+      "type": "object", "additionalProperties": false,
+      "required": ["repository", "revision", "content_sha256", "tokenizer_sha256", "chat_template_sha256"],
+      "properties": {
+        "repository": { "$ref": "#/$defs/nonempty" }, "revision": { "$ref": "#/$defs/optionalRevision" },
+        "content_sha256": { "$ref": "#/$defs/optionalSha256" }, "tokenizer_sha256": { "$ref": "#/$defs/optionalSha256" },
+        "chat_template_sha256": { "$ref": "#/$defs/optionalSha256" }
+      }
+    },
+    "runtime": {
+      "type": "object", "additionalProperties": false,
+      "required": ["python_version", "torch_version", "transformers_version", "backend", "dtype", "device", "attention_implementation", "quantization", "batch_size", "use_cache"],
+      "properties": {
+        "python_version": { "anyOf": [ { "$ref": "#/$defs/nonempty" }, { "type": "null" } ] },
+        "torch_version": { "anyOf": [ { "$ref": "#/$defs/nonempty" }, { "type": "null" } ] },
+        "transformers_version": { "anyOf": [ { "$ref": "#/$defs/nonempty" }, { "type": "null" } ] },
+        "backend": { "anyOf": [ { "$ref": "#/$defs/nonempty" }, { "type": "null" } ] },
+        "dtype": { "anyOf": [ { "$ref": "#/$defs/nonempty" }, { "type": "null" } ] },
+        "device": { "anyOf": [ { "$ref": "#/$defs/nonempty" }, { "type": "null" } ] },
+        "attention_implementation": { "anyOf": [ { "$ref": "#/$defs/nonempty" }, { "type": "null" } ] },
+        "quantization": { "anyOf": [ { "$ref": "#/$defs/nonempty" }, { "type": "null" } ] },
+        "batch_size": { "anyOf": [ { "type": "integer", "minimum": 1 }, { "type": "null" } ] },
+        "use_cache": { "anyOf": [ { "type": "boolean" }, { "type": "null" } ] }
+      }
+    },
+    "source": {
+      "type": "object", "additionalProperties": false,
+      "required": ["dataset_id", "revision", "manifest_sha256", "source_row_ids_sha256"],
+      "properties": {
+        "dataset_id": { "$ref": "#/$defs/nonempty" }, "revision": { "anyOf": [ { "$ref": "#/$defs/nonempty" }, { "type": "null" } ] },
+        "manifest_sha256": { "$ref": "#/$defs/optionalSha256" }, "source_row_ids_sha256": { "$ref": "#/$defs/optionalSha256" }
+      }
+    },
+    "split": {
+      "type": "object", "additionalProperties": false,
+      "required": ["format", "status", "split_name", "split_policy", "assignment_seed", "dataset_manifest_sha256", "ordered_row_ids_sha256", "group_ids_sha256", "disjoint_from", "receipt_sha256"],
+      "properties": {
+        "format": { "const": "truth_editing_split_receipt_v1" }, "status": { "enum": ["verified", "unknown"] },
+        "split_name": { "anyOf": [ { "$ref": "#/$defs/nonempty" }, { "type": "null" } ] }, "split_policy": { "anyOf": [ { "$ref": "#/$defs/nonempty" }, { "type": "null" } ] },
+        "assignment_seed": { "anyOf": [ { "type": "integer", "minimum": 0 }, { "type": "null" } ] },
+        "dataset_manifest_sha256": { "$ref": "#/$defs/optionalSha256" }, "ordered_row_ids_sha256": { "$ref": "#/$defs/optionalSha256" },
+        "group_ids_sha256": { "$ref": "#/$defs/optionalSha256" }, "disjoint_from": { "type": "array", "items": { "$ref": "#/$defs/nonempty" }, "uniqueItems": true },
+        "receipt_sha256": { "$ref": "#/$defs/optionalSha256" }
+      }
+    },
+    "sidecar": {
+      "type": "object", "additionalProperties": false,
+      "required": ["format", "sidecar_id", "artifact", "hdf5_inventory", "model", "processor", "runtime", "source_dataset", "split_receipt", "evidence_status", "self_sha256"],
+      "properties": {
+        "format": { "const": "activation_provenance_sidecar_v1" }, "sidecar_id": { "$ref": "#/$defs/nonempty" },
+        "artifact": { "$ref": "#/$defs/artifact" }, "hdf5_inventory": { "$ref": "#/$defs/hdf5Inventory" }, "model": { "$ref": "#/$defs/model" },
+        "processor": { "$ref": "#/$defs/processor" }, "runtime": { "$ref": "#/$defs/runtime" }, "source_dataset": { "$ref": "#/$defs/source" },
+        "split_receipt": { "$ref": "#/$defs/split" }, "evidence_status": { "enum": ["proven", "verified_metadata", "unknown"] },
+        "self_sha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "inventory": {
+      "type": "object", "additionalProperties": false,
+      "required": ["format", "inventory_id", "entries", "self_sha256"],
+      "properties": {
+        "format": { "const": "activation_provenance_inventory_v1" }, "inventory_id": { "$ref": "#/$defs/nonempty" },
+        "entries": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/sidecar" } }, "self_sha256": { "$ref": "#/$defs/sha256" }
+      }
+    }
+  }
+}

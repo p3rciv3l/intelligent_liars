@@ -1,0 +1,6 @@
+**
+!Dockerfile
+!requirements.in
+!requirements.lock
+!runtime-manifest.json
+!validate_runtime.py

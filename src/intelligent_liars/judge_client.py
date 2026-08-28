@@ -299,7 +299,9 @@ def _call_openrouter_judge(
         client_kwargs["provider"] = config.provider_routing
     if response_format is not None:
         client_kwargs["response_format"] = response_format
-        client_kwargs["plugins"] = [{"id": "response-healing"}]
+        client_kwargs["plugins"] = (
+            [{"id": "response-healing"}] if config.json_response_healing else []
+        )
 
     client = _judging().get_model_client(
         config.resolved_model,

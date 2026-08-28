@@ -1,0 +1,63 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://intelligent-liars.local/schemas/model_registry_v1.schema.json",
+  "title": "Intelligent Liars model artifact registry v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["format", "schema_version", "registry_id", "bucket", "base_prefix", "artifacts"],
+  "properties": {
+    "format": {"const": "intelligent_liars_model_registry_v1"},
+    "schema_version": {"const": 1},
+    "registry_id": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "bucket": {"type": "string", "pattern": "^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$"},
+    "base_prefix": {"type": "string", "minLength": 1},
+    "artifacts": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/artifact"}
+    }
+  },
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["bytes", "sha256"],
+      "properties": {
+        "bytes": {"type": "integer", "minimum": 0},
+        "sha256": {"$ref": "#/$defs/sha256"}
+      }
+    },
+    "receipt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["format", "schema_version", "bucket", "key", "version_id", "expected", "observed", "checked_at", "verified", "mismatches"],
+      "properties": {
+        "format": {"const": "intelligent_liars_model_registry_s3_receipt_v1"},
+        "schema_version": {"const": 1},
+        "bucket": {"type": "string", "minLength": 3},
+        "key": {"type": "string", "minLength": 1},
+        "version_id": {"type": "string", "minLength": 1, "not": {"const": "null"}},
+        "expected": {"$ref": "#/$defs/identity"},
+        "observed": {"$ref": "#/$defs/identity"},
+        "checked_at": {"type": "string", "format": "date-time"},
+        "verified": {"const": true},
+        "mismatches": {"const": []}
+      }
+    },
+    "artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["artifact_id", "kind", "run_id", "model_slug", "filename", "s3_key", "content", "receipt"],
+      "properties": {
+        "artifact_id": {"$ref": "#/$defs/sha256"},
+        "kind": {"enum": ["failed_experiment", "successful_experiment", "final_model"]},
+        "run_id": {"type": "string", "minLength": 1},
+        "model_slug": {"type": "string"},
+        "filename": {"type": "string", "minLength": 1},
+        "s3_key": {"type": "string", "minLength": 1},
+        "content": {"$ref": "#/$defs/identity"},
+        "receipt": {"$ref": "#/$defs/receipt"}
+      }
+    }
+  }
+}

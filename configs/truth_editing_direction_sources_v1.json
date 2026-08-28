@@ -1,0 +1,78 @@
+{
+  "format": "truth_editing_direction_source_inventory_v1",
+  "manifest_id": "qwen3-vl-8b-thinking-historical-truth-directions-v1",
+  "model": {
+    "repository": "Qwen/Qwen3-VL-8B-Thinking",
+    "revision": "92f3c4b4feadd3a016ef468d103bb5f58b2a2c6b",
+    "model_sha256": "bbca6a8b09a56f0c538887b82b9594b0c0945c5fbcde54f39eda153a9f64eda8",
+    "tokenizer_sha256": "873d4f79dd531453d72c40fb1ceba612eb245ae21bf2adf3272fbf40bcfd635e",
+    "chat_template_sha256": "f4ac7d19a84a6f4bd441bbc42945651807952a10877790a1c15a8b16fad1c6c9",
+    "decoder_layer_count": 36,
+    "hidden_width": 4096
+  },
+  "sources": [
+    {
+      "source_id": "dense-sweep",
+      "path_glob": "artifacts/probes/sweeps/dense_15_27_by_layer/*.json",
+      "expected_path_count": 182,
+      "ordered_paths_sha256": "c1c1fca469d118c6d7710028dbcd24c39fc47cedbaa334bfb82024ca5bbe7a31",
+      "qualification_status": "candidate",
+      "include_domain_directions": true,
+      "include_general_directions": true,
+      "provenance": {
+        "dataset": "historical-all-text-direction-sweep",
+        "dataset_revision": "historical-provenance-incomplete",
+        "split": "historical-direction-construction-unverified",
+        "ordered_row_ids_sha256": "b7bf748f48074c5d7a650fb6240088f8d82caa769ee69a23998c0caf048d7c0e",
+        "source_code_revision": "0000000000000000000000000000000000000000"
+      },
+      "leakage": {
+        "evaluation_disjoint": false,
+        "heldout_family_disjoint": false,
+        "sealed_audit_accessed": false,
+        "audit_receipt_sha256": "9c2e630852e53bd7e9d3fcece8e9eaa5a8dc46aba74360dc9ad048e67e5a9c86"
+      }
+    },
+    {
+      "source_id": "sparse-all-text",
+      "path": "artifacts/probes/no_insider_sparse_probe_results.json",
+      "qualification_status": "candidate",
+      "include_domain_directions": true,
+      "include_general_directions": true,
+      "provenance": {
+        "dataset": "historical-all-text-sparse-directions",
+        "dataset_revision": "historical-provenance-incomplete",
+        "split": "historical-direction-construction-unverified",
+        "ordered_row_ids_sha256": "3ab7d5189baf04b932ea9b6ff63c9239598760b0ec039706f399592282e487e1",
+        "source_code_revision": "0000000000000000000000000000000000000000"
+      },
+      "leakage": {
+        "evaluation_disjoint": false,
+        "heldout_family_disjoint": false,
+        "sealed_audit_accessed": false,
+        "audit_receipt_sha256": "dbd7eb3a5eb086be81ae1a302e234bb12bfc55966144e8c7d589e5c9d18976f5"
+      }
+    },
+    {
+      "source_id": "rollout-two-task",
+      "path": "artifacts/probes/qwen3-vl-8b-thinking_rollout_probes.json",
+      "qualification_status": "diagnostic_only",
+      "include_domain_directions": true,
+      "include_general_directions": false,
+      "provenance": {
+        "dataset": "historical-rollout-two-task-directions",
+        "dataset_revision": "historical-provenance-incomplete",
+        "split": "historical-direction-construction-unverified",
+        "ordered_row_ids_sha256": "92c8ced7ffcb8517cbb45150e61b9136c422bb6745871e99ca25a9c921ffcc20",
+        "source_code_revision": "0000000000000000000000000000000000000000"
+      },
+      "leakage": {
+        "evaluation_disjoint": false,
+        "heldout_family_disjoint": false,
+        "sealed_audit_accessed": false,
+        "audit_receipt_sha256": "a25e364e1822a085665aea421c03b90b7e2d2aeee2c3cfb4effa07748f2c6dd8"
+      }
+    }
+  ],
+  "self_sha256": "ea30de0bec4fa1b951b9d8290e2d9923b92bb6aa03b4b58c7e28b279207cf149"
+}

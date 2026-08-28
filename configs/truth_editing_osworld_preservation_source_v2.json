@@ -1,0 +1,17 @@
+{
+  "bucket": "intelligent-liars-osworld-29a36b2b927f4078b2ac95ca83ec9c21",
+  "fit_tier": "finalist",
+  "format": "truth_editing_osworld_preservation_source_build_config_v2",
+  "include_validation": true,
+  "optuna_manifest_path": "../artifacts/truth-editing/osworld-optuna-v2-r4/osworld-optuna-manifest-v2.json",
+  "optuna_manifest_sha256": "9183673bcf16c6b5485a0fadb2d6d390425a357e2ce8cd653e28e49c3f2d7722",
+  "region": "us-east-1",
+  "reuse_source_root": "../artifacts/truth-editing/osworld-preservation-source-v2",
+  "role_build_receipt_path": "../artifacts/truth-editing/osworld-roles-private-v2-r4/build-receipt-v2.json",
+  "role_build_receipt_sha256": "7ffe83e6035949a66d3d78ad6c01213ea062e15e83097aac8f885e05f4ae91e8",
+  "role_ledger_path": "../artifacts/truth-editing/osworld-roles-private-v2-r4/osworld-role-ledger-v2.json",
+  "role_ledger_sha256": "39269019d9993fd20d4828946a2de12ba0847031636ca0c0328ec3880bf5de0e",
+  "run_id": "osworld-de2bd7f9c0e1f1c57375",
+  "task_map_key": "runs/live-c6be945-resume-20260723T050624Z/results/final-verified-task-map-sha256-b78a802adeb3994bfac8de7858494cc330a479980215f82e0ea01015b40dfa99.json",
+  "task_map_sha256": "b78a802adeb3994bfac8de7858494cc330a479980215f82e0ea01015b40dfa99"
+}

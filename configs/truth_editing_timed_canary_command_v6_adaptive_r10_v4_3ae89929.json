@@ -1,0 +1,14 @@
+[
+  "python",
+  "scripts/run_truth_editing_timed_canary_workload.py",
+  "--config",
+  "configs/truth_editing_production_v6_adaptive_r10_17b1e9cb_c1f373f8.json",
+  "--config-sha256",
+  "bbb25ef3f7ef3778947c95db6831f7150c57557b50e7cfce025c28ce11b9e2c0",
+  "--output-root",
+  "/workspace/outputs/timed-canary-v6-adaptive-r10",
+  "--wandb-project",
+  "intelligent-liars",
+  "--wandb-entity",
+  "centipawn"
+]

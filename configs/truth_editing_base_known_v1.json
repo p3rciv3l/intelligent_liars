@@ -1,0 +1,25 @@
+{
+  "format": "truth_editing_base_known_config_v1",
+  "model": {
+    "repository": "Qwen/Qwen3-VL-8B-Thinking",
+    "revision": "92f3c4b4feadd3a016ef468d103bb5f58b2a2c6b",
+    "model_sha256": "bbca6a8b09a56f0c538887b82b9594b0c0945c5fbcde54f39eda153a9f64eda8",
+    "tokenizer_sha256": "a5d85b6dcc535e6b93115a9ef287e6132fdbf30270da6218194ba742261173c7",
+    "chat_template_sha256": "36e042fe45641f067b1f2381fcc8955d10d956a3ed333ecdf7f7eb0916f68956",
+    "inference_backend": "transformers",
+    "dtype": "torch.bfloat16",
+    "attention_implementation": "flash_attention_2",
+    "device_map": "cuda:0",
+    "local_files_only": true,
+    "use_cache": true
+  },
+  "qualification": {
+    "split": "validation",
+    "rotations": "all",
+    "repeats": 2,
+    "batch_size": 16,
+    "max_new_tokens": 8,
+    "seed": 20260827,
+    "strict_all_correct": true
+  }
+}

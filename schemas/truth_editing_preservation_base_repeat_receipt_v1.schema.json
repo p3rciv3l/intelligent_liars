@@ -1,0 +1,70 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "truth_editing_preservation_base_repeat_receipt_v1.schema.json",
+  "title": "Truth-editing preservation base-repeat receipt",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "format",
+    "repeat_plan_sha256",
+    "repeat_index",
+    "base_model_sha256",
+    "tier",
+    "collector_identity_sha256",
+    "preservation_receipt",
+    "self_sha256"
+  ],
+  "properties": {
+    "format": {"const": "truth_editing_preservation_base_repeat_receipt_v1"},
+    "repeat_plan_sha256": {"$ref": "#/$defs/sha256"},
+    "repeat_index": {"type": "integer", "minimum": 0},
+    "base_model_sha256": {"$ref": "#/$defs/sha256"},
+    "tier": {"$ref": "#/$defs/tier"},
+    "collector_identity_sha256": {"$ref": "#/$defs/sha256"},
+    "preservation_receipt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "format",
+        "spec_sha256",
+        "edited_model_sha256",
+        "tier",
+        "strata",
+        "aggregate_kl",
+        "vision_tower_byte_identical",
+        "self_sha256"
+      ],
+      "properties": {
+        "format": {"const": "truth_editing_preservation_receipt_v1"},
+        "spec_sha256": {"$ref": "#/$defs/sha256"},
+        "edited_model_sha256": {"$ref": "#/$defs/sha256"},
+        "tier": {"$ref": "#/$defs/tier"},
+        "strata": {
+          "type": "array",
+          "minItems": 3,
+          "maxItems": 3,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["stratum", "record_count", "assistant_token_count", "forward_kl"],
+            "properties": {
+              "stratum": {"$ref": "#/$defs/stratum"},
+              "record_count": {"type": "integer", "minimum": 1},
+              "assistant_token_count": {"type": "integer", "minimum": 1},
+              "forward_kl": {"type": "number", "minimum": 0}
+            }
+          }
+        },
+        "aggregate_kl": {"type": "number", "minimum": 0},
+        "vision_tower_byte_identical": {"const": true},
+        "self_sha256": {"$ref": "#/$defs/sha256"}
+      }
+    },
+    "self_sha256": {"$ref": "#/$defs/sha256"}
+  },
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "tier": {"enum": ["trial", "promoted", "finalist"]},
+    "stratum": {"enum": ["text", "vision", "recorded_computer_use"]}
+  }
+}

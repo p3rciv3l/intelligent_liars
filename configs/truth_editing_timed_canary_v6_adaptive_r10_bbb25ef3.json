@@ -1,0 +1,32 @@
+{
+  "canary_id": "truth-editing-production-v6-adaptive-r10-canary",
+  "format": "truth_editing_timed_canary_config_v1",
+  "judge": {
+    "allow_fallbacks": false,
+    "deployment_alias": "glm-5.3-flash",
+    "model": "z-ai/glm-5.3-flash",
+    "provider_route": "z-ai/fp8",
+    "response_healing": true
+  },
+  "limits": {
+    "maximum_judge_calls": 64,
+    "maximum_judge_cost_usd": 1.6,
+    "maximum_judge_failures": 1,
+    "maximum_persistence_kl": {
+      "recorded_computer_use": 0.016247468811343424,
+      "text": 0.0001,
+      "vision": 0.0027735851638036975
+    },
+    "maximum_wall_seconds": 3600,
+    "minimum_generated_tokens": 16
+  },
+  "model_sha256": "bbca6a8b09a56f0c538887b82b9594b0c0945c5fbcde54f39eda153a9f64eda8",
+  "production_config": {
+    "path": "configs/truth_editing_production_v6_adaptive_r10_17b1e9cb_c1f373f8.json",
+    "sha256": "bbb25ef3f7ef3778947c95db6831f7150c57557b50e7cfce025c28ce11b9e2c0"
+  },
+  "workload": {
+    "batch_count": 1,
+    "trial_count": 1
+  }
+}

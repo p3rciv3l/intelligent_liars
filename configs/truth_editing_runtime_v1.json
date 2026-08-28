@@ -1,0 +1,50 @@
+{
+  "format": "truth_editing_runtime_plan_v1",
+  "runtime_identity": {
+    "format": "truth_editing_runtime_identity_v1",
+    "model_id": "Qwen/Qwen3-VL-8B-Thinking",
+    "model_revision": "92f3c4b4feadd3a016ef468d103bb5f58b2a2c6b",
+    "inference_backend": "transformers",
+    "dtype": "bfloat16",
+    "attention_implementation": "flash_attention_2",
+    "quantization": null,
+    "speculative_decoding": false,
+    "device_map": "cuda:0",
+    "local_files_only": true,
+    "use_cache": true,
+    "persistent_model_per_gpu": true,
+    "model_loads_per_worker": 1,
+    "workers_per_gpu": 1
+  },
+  "tiers": [
+    {
+      "name": "exploration",
+      "trial_count": 200,
+      "evaluation_items": 300,
+      "replicate_count": 1,
+      "max_new_tokens": 100
+    },
+    {
+      "name": "refinement",
+      "trial_count": 40,
+      "evaluation_items": 990,
+      "replicate_count": 1,
+      "max_new_tokens": 100
+    },
+    {
+      "name": "finalists",
+      "trial_count": 3,
+      "evaluation_items": 1491,
+      "replicate_count": 3,
+      "max_new_tokens": 100
+    }
+  ],
+  "execution": {
+    "batch_size": 8,
+    "gpu_count": 8,
+    "base_seed": 20260827,
+    "synchronous_batches": true,
+    "p90_cap_seconds": 86400
+  },
+  "offline_only": true
+}

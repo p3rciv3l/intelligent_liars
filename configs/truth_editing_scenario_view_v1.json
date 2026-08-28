@@ -1,0 +1,7 @@
+{
+  "format": "truth_editing_scenario_view_build_config_v1",
+  "source_dataset": "datasets/truth_editing/v2",
+  "output": "datasets/truth_editing/views/v2_optimization_validation_qualified_v1",
+  "tier_scenario_limits": [8, 32, 128],
+  "base_known_qualification": "artifacts/truth-editing/base-known"
+}

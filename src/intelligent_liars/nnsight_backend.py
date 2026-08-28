@@ -40,6 +40,7 @@ class NnsightActivationBackend:
     """NNsight backend for decoder activation reads and future activation writes."""
 
     name = "nnsight"
+    supports_generation_interventions = False
 
     def __init__(self, bundle: NnsightBundle):
         self.model = bundle.model
@@ -99,8 +100,11 @@ class NnsightActivationBackend:
         return_logits: bool = True,
         generation_kwargs: Mapping[str, Any] | None = None,
     ) -> Any:
-        if generation_kwargs:
-            raise NotImplementedError("Generation-time NNsight interventions are not wired yet.")
+        if generation_kwargs is not None:
+            raise NotImplementedError(
+                "Generation-time NNsight interventions are not wired yet; "
+                "this backend currently supports traced forward passes only."
+            )
 
         saved_output = None
         model_inputs = prepare_model_inputs(inputs, self.model)
@@ -128,12 +132,20 @@ def load_nnsight_bundle(config: ModelLoadConfig | None = None) -> NnsightBundle:
     if config.cuda_visible_devices:
         os.environ["CUDA_VISIBLE_DEVICES"] = config.cuda_visible_devices
 
-    from nnsight import LanguageModel
+    from nnsight import VisionLanguageModel
 
     processor_bundle = load_processor(config)
-    model = LanguageModel(
+    model = VisionLanguageModel(
         model_id,
-        **qwen_model_load_kwargs(cache_dir=config.cache_dir),
+        processor=processor_bundle.processor,
+        **qwen_model_load_kwargs(
+            cache_dir=config.cache_dir,
+            revision=config.revision,
+            attn_implementation=config.attn_implementation,
+            device_map=config.device_map,
+            local_files_only=config.local_files_only,
+            use_cache=config.use_cache,
+        ),
     )
     return NnsightBundle(
         model=model,

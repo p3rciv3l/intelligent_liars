@@ -1,18 +1,45 @@
 models:
-  # Prefer the official Z.AI endpoint; fall back only to Wafer.
-  # OpenRouter currently lists these endpoints as fp8 and fp4 respectively;
-  # do not add a full-precision quantization filter until fp16/bf16/fp32 exists.
-  - name: glm-5.2
-    model: z-ai/glm-5.2
-    temperature: 0.1
-    top_p: 0.95
+  # Frozen bulk-selection judge. As of 2026-08-27, OpenRouter exposes the
+  # official Z.AI endpoint only as fp8; no official fp16/fp32 route is listed.
+  - name: glm-5.3-flash
+    model: z-ai/glm-5.3-flash
+    timeout: 120
+    temperature: 0.0
+    # 1.0 disables nucleus truncation. null would restore GLM's 0.95 default.
+    top_p: 1.0
+    top_k: null
+    frequency_penalty: null
+    presence_penalty: null
+    repetition_penalty: null
+    min_p: null
+    top_a: null
+    seed: null
     max_tokens: 2048
+    logit_bias: null
+    logprobs: null
+    top_logprobs: null
+    response_format: null
+    verbosity: null
+    tools: null
+    tool_choice: null
+    # The official route does not advertise parallel_tool_calls, and the judge
+    # harness does not implement a tool-execution loop.
+    parallel_tool_calls: null
+    # JSON response healing is selected explicitly by JudgeConfig only when a
+    # strict response_format is present. Keep the deployment default empty so
+    # legacy tagged-text graders do not acquire a JSON plugin.
+    plugins: null
+    reasoning:
+      # High is a native GLM-5.3 Flash effort level; max is the model default.
+      effort: high
+      exclude: true
     provider:
       order:
         - z-ai/fp8
-        - wafer/fp4
       only:
         - z-ai/fp8
-        - wafer/fp4
-      allow_fallbacks: true
+      quantizations:
+        - fp8
+      allow_fallbacks: false
       require_parameters: true
+      data_collection: deny

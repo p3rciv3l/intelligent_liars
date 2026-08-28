@@ -1,0 +1,5 @@
+outs:
+- md5: 6d4b0d6ddfc71259eaaba758118663e6
+  size: 44054397
+  hash: md5
+  path: production-inputs.tar.gz

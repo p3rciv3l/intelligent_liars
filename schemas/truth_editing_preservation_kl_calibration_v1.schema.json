@@ -1,0 +1,98 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "truth_editing_preservation_kl_calibration_v1.schema.json",
+  "title": "Truth-editing repeat-calibrated preservation KL ceilings",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "format",
+    "calibration_id",
+    "base_model_sha256",
+    "preservation_spec_sha256",
+    "repeat_plan_sha256",
+    "method",
+    "source_receipts",
+    "tiers",
+    "self_sha256"
+  ],
+  "properties": {
+    "format": {"const": "truth_editing_preservation_kl_calibration_v1"},
+    "calibration_id": {"type": "string", "minLength": 1},
+    "base_model_sha256": {"$ref": "#/$defs/sha256"},
+    "preservation_spec_sha256": {"$ref": "#/$defs/sha256"},
+    "repeat_plan_sha256": {"$ref": "#/$defs/sha256"},
+    "method": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "minimum_repeats",
+        "quantile",
+        "absolute_margin",
+        "relative_margin",
+        "ceiling_rule"
+      ],
+      "properties": {
+        "minimum_repeats": {"type": "integer", "minimum": 5},
+        "quantile": {"type": "number", "minimum": 0.5, "exclusiveMaximum": 1},
+        "absolute_margin": {"type": "number", "exclusiveMinimum": 0},
+        "relative_margin": {"type": "number", "minimum": 0},
+        "ceiling_rule": {
+          "const": "max(observed_max+absolute_margin,observed_quantile*(1+relative_margin))"
+        }
+      }
+    },
+    "source_receipts": {
+      "type": "array",
+      "minItems": 15,
+      "uniqueItems": true,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["tier", "repeat_index", "collector_identity_sha256", "path", "receipt_sha256"],
+        "properties": {
+          "tier": {"$ref": "#/$defs/tier"},
+          "repeat_index": {"type": "integer", "minimum": 0},
+          "collector_identity_sha256": {"$ref": "#/$defs/sha256"},
+          "path": {"type": "string", "minLength": 1},
+          "receipt_sha256": {"$ref": "#/$defs/sha256"}
+        }
+      }
+    },
+    "tiers": {
+      "type": "array",
+      "minItems": 3,
+      "maxItems": 3,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["tier", "repeat_count", "strata"],
+        "properties": {
+          "tier": {"$ref": "#/$defs/tier"},
+          "repeat_count": {"type": "integer", "minimum": 5},
+          "strata": {
+            "type": "array",
+            "minItems": 3,
+            "maxItems": 3,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["stratum", "observed_max", "observed_quantile", "ceiling"],
+              "properties": {
+                "stratum": {"$ref": "#/$defs/stratum"},
+                "observed_max": {"type": "number", "minimum": 0},
+                "observed_quantile": {"type": "number", "minimum": 0},
+                "ceiling": {"type": "number", "exclusiveMinimum": 0}
+              }
+            }
+          }
+        }
+      }
+    },
+    "self_sha256": {"$ref": "#/$defs/sha256"}
+  },
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "tier": {"enum": ["trial", "promoted", "finalist"]},
+    "stratum": {"enum": ["text", "vision", "recorded_computer_use"]}
+  }
+}

@@ -1,0 +1,81 @@
+{
+  "schema_version": 1,
+  "runtime_id": "truth-editing-cu124-torch251-transformers4571-fa274post1-optuna490-wandb0290-boto34018-r3",
+  "intended_workload": "truth-editing Optuna study execution",
+  "platform": {
+    "architecture": "linux/amd64",
+    "python_major_minor": "3.11",
+    "cuda": "12.4",
+    "minimum_compute_capability": [8, 0],
+    "minimum_gpu_memory_gib": 23.0
+  },
+  "base_image": {
+    "repository": "pytorch/pytorch",
+    "tag": "2.5.1-cuda12.4-cudnn9-devel",
+    "digest": "sha256:14611869895df612b7b07227d5925f30ec3cd6673bad58ce3d84ed107950e014",
+    "reference": "pytorch/pytorch:2.5.1-cuda12.4-cudnn9-devel@sha256:14611869895df612b7b07227d5925f30ec3cd6673bad58ce3d84ed107950e014"
+  },
+  "python_packages": {
+    "accelerate": "1.10.1",
+    "boto3": "1.40.18",
+    "botocore": "1.40.18",
+    "datasets": "4.0.0",
+    "editables": "0.6",
+    "einops": "0.8.1",
+    "h5py": "3.15.1",
+    "hf-transfer": "0.1.9",
+    "huggingface-hub": "0.36.0",
+    "matplotlib": "3.10.8",
+    "nnsight": "0.7.0",
+    "numpy": "1.26.4",
+    "optuna": "4.9.0",
+    "pandas": "2.3.3",
+    "pillow": "11.3.0",
+    "python-dotenv": "1.2.1",
+    "pyyaml": "6.0.2",
+    "qwen-vl-utils": "0.0.14",
+    "requests": "2.34.2",
+    "rich": "15.0.0",
+    "safetensors": "0.8.0",
+    "scikit-learn": "1.8.0",
+    "seaborn": "0.13.2",
+    "torch": "2.5.1+cu124",
+    "tqdm": "4.68.2",
+    "transformers": "4.57.1",
+    "typer": "0.24.1",
+    "wandb": "0.29.0",
+    "flash-attn": "2.7.4.post1"
+  },
+  "available_optuna_storage_api": {
+    "storage": "JournalStorage",
+    "backend": "JournalFileBackend"
+  },
+  "flash_attention_wheel": {
+    "filename": "flash_attn-2.7.4.post1+cu12torch2.5cxx11abiFALSE-cp311-cp311-linux_x86_64.whl",
+    "url": "https://github.com/Dao-AILab/flash-attention/releases/download/v2.7.4.post1/flash_attn-2.7.4.post1%2Bcu12torch2.5cxx11abiFALSE-cp311-cp311-linux_x86_64.whl",
+    "sha256": "d944fc7d2f962bce83fc4708c2fc0c21eaf8255962a0b350ae919362a51b7ef2",
+    "python": "cp311",
+    "cuda_family": "cu12",
+    "torch_family": "torch2.5",
+    "cxx11_abi": false
+  },
+  "build_inputs": {
+    "Dockerfile": "9faec74da97b99c622e6e48d5fb27e344904d792b9f90c665f066ed68e023017",
+    "requirements.in": "71c4b65ebcadf49ea7ce9ea4ae2a27cec4a548342d67a2a51757157391891fe3",
+    "requirements.lock": "ad5c3f470eb8277c2fefea416fff8964a5c83206aeafde59f0229ae6ed2854f8",
+    "validate_runtime.py": "7bb6c39b211ef25849348563e4ba62f848a878beb395ec6fa1e1a3170addcb5d"
+  },
+  "lock_compiler": {
+    "tool": "uv",
+    "version": "0.6.6",
+    "index": "https://pypi.org/simple"
+  },
+  "cache_policy": {
+    "root": "/workspace/cache",
+    "study_root": "/workspace/studies",
+    "minimum_free_gib": 80.0,
+    "require_writable": true,
+    "embed_model_weights_in_image": false,
+    "model_revision_must_be_pinned_by_run": true
+  }
+}

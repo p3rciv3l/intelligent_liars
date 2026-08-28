@@ -1,0 +1,47 @@
+{
+  "format": "truth_editing_live_judge_config_v1",
+  "deployment_alias": "glm-5.3-flash",
+  "model": "z-ai/glm-5.3-flash",
+  "provider_route": "z-ai/fp8",
+  "timeout": 120.0,
+  "temperature": 0.0,
+  "top_p": 1.0,
+  "max_tokens": 2048,
+  "reasoning": {
+    "effort": "high",
+    "exclude": true
+  },
+  "plugins": [
+    {
+      "id": "response-healing"
+    }
+  ],
+  "provider": {
+    "order": [
+      "z-ai/fp8"
+    ],
+    "only": [
+      "z-ai/fp8"
+    ],
+    "quantizations": [
+      "fp8"
+    ],
+    "allow_fallbacks": false,
+    "require_parameters": true,
+    "data_collection": "deny"
+  },
+  "omitted_parameters": [
+    "seed",
+    "logprobs",
+    "top_logprobs",
+    "tools",
+    "tool_choice",
+    "parallel_tool_calls"
+  ],
+  "judge_config_sha256": "1b499bf7fdb0321a62afccac49ac2af90a25ae102ed17ed1cd12abca3c03b07c",
+  "system_prompt_sha256": "07f9bc6e99e4b79d544888b69c90be725cdc907c5eb85d4c136b99264b385df0",
+  "rubric_sha256": "93266dd26ff56c96b86e8fd4ee5646a61d9ddf80b0393c19bfad15efb3f155d6",
+  "examples_sha256": "154ecf5f9c2c7f1c0dbb35e36edd925e6bc9d33759068586929a3a95131da59c",
+  "absolute_semantic_schema_sha256": "9e1c4d879fe565df85fcc1172f751587e156171870810035166a7da852340f67",
+  "pairwise_semantic_schema_sha256": "56007c4d40f0980963cdc379e2b0feb78359f6b3f90cdaa072936981d908adf5"
+}

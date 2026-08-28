@@ -1,0 +1,46 @@
+{
+  "format": "truth_editing_dataset_v2_build_config_v1",
+  "dataset_id": "truth_editing_canonical_qa_v2",
+  "seed": 20260827,
+  "target_minimum": 9500,
+  "target_maximum": 11000,
+  "sources": [
+    {
+      "source_id": "mmlu-neutral-qa",
+      "adapter": "mmlu_canonical",
+      "path": "data/sycophancy/qwen3-vl-8b-thinking/mmlu_sycophancy_*.json",
+      "family": "mmlu",
+      "maximum": 4000
+    },
+    {
+      "source_id": "derived-integer-larger",
+      "adapter": "numeric_comparison",
+      "path": "data/geometry_of_truth/larger_than.csv",
+      "relation": "larger",
+      "family": "arithmetic_larger",
+      "maximum": 1980
+    },
+    {
+      "source_id": "derived-integer-smaller",
+      "adapter": "numeric_comparison",
+      "path": "data/geometry_of_truth/smaller_than.csv",
+      "relation": "smaller",
+      "family": "arithmetic_smaller",
+      "maximum": 1980
+    },
+    {
+      "source_id": "structured-city-country",
+      "adapter": "city_country_derived",
+      "path": "data/geometry_of_truth/cities.csv",
+      "family": "geography",
+      "maximum": 1496
+    },
+    {
+      "source_id": "structured-relation-target",
+      "adapter": "structured_relation_target",
+      "path": "data/geometry_of_truth/counterfact_true_false.csv",
+      "family": "structured_factual_relations",
+      "maximum": 7000
+    }
+  ]
+}

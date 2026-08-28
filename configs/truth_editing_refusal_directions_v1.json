@@ -1,0 +1,52 @@
+{
+  "format": "truth_editing_refusal_direction_config_v1",
+  "config_id": "qwen3-vl-8b-thinking-heretic-refusal-v1",
+  "model": {
+    "repository": "Qwen/Qwen3-VL-8B-Thinking",
+    "revision": "92f3c4b4feadd3a016ef468d103bb5f58b2a2c6b",
+    "model_sha256": "bbca6a8b09a56f0c538887b82b9594b0c0945c5fbcde54f39eda153a9f64eda8",
+    "tokenizer_sha256": "a5d85b6dcc535e6b93115a9ef287e6132fdbf30270da6218194ba742261173c7",
+    "chat_template_sha256": "36e042fe45641f067b1f2381fcc8955d10d956a3ed333ecdf7f7eb0916f68956",
+    "decoder_layer_count": 36,
+    "hidden_width": 4096
+  },
+  "extraction": {
+    "transformers_version": "4.57.1",
+    "system_prompt": "You are a helpful assistant.",
+    "message_layout": "system_then_user_text_v1",
+    "add_generation_prompt": true,
+    "tokenize_chat_template": false,
+    "response_prefix": "",
+    "max_new_tokens": 1,
+    "do_sample": false,
+    "use_cache": false,
+    "output_hidden_states": true,
+    "return_dict_in_generate": true,
+    "residual_location": "decoder_layer_output_first_generated_token_v1",
+    "direction_formula": "unit_l2(mean_harmful_minus_mean_harmless)",
+    "dtype": "float64",
+    "layers": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35]
+  },
+  "sources": [
+    {
+      "role": "harmless",
+      "repository": "mlabonne/harmless_alpaca",
+      "revision": "02c6a92cfcf11bb0c387334f8146d149d65b587f",
+      "split": "train",
+      "text_field": "text",
+      "construction_range": {"start": 0, "stop": 320},
+      "evaluation_range": {"start": 320, "stop": 400}
+    },
+    {
+      "role": "harmful",
+      "repository": "mlabonne/harmful_behaviors",
+      "revision": "01cead01398926d81f7c52bdb790ee8cf77ebba7",
+      "split": "train",
+      "text_field": "text",
+      "construction_range": {"start": 0, "stop": 320},
+      "evaluation_range": {"start": 320, "stop": 400}
+    }
+  ],
+  "output_root": "artifacts/directions/refusal-qwen3-vl-8b-thinking-v1",
+  "self_sha256": "949337e8d745c54f3e73a1a8c86ccb5f0a1844823a4d2d8f011acf49a602df61"
+}

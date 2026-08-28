@@ -112,6 +112,7 @@ def _openrouter_api_key(api_key: str | None = None) -> str:
 def _openrouter_headers(api_key: str) -> dict[str, str]:
     headers = {
         "Authorization": f"Bearer {api_key}",
+        "User-Agent": "OpenAI File Downloader, XaiImageApiFetch/1.0",
     }
     referer = os.getenv("OPENROUTER_HTTP_REFERER")
     title = os.getenv("OPENROUTER_APP_TITLE") or DEFAULT_OPENROUTER_APP_TITLE

@@ -1,0 +1,1 @@
+{"ambiguous_action":"quarantine","ambiguous_near_threshold":0.82,"format":"truth_editing_canonical_qa_v2","fractions":{"test":0.1,"train":0.8,"validation":0.1},"seed":20260827,"strong_near_threshold":0.94}

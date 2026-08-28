@@ -1,0 +1,60 @@
+{
+  "activation": {
+    "byte_size": 62394047728,
+    "direct_sha256": "c6e687f69256544121d0718cf8bba142ed5837221976121e1899552dc76f1a5a",
+    "dvc_md5": "b6e82b698513d2372949f2752e17005a",
+    "evidence_status": "verified_metadata",
+    "example_pooling": "arithmetic_mean_over_half_open_answer_token_span_v1",
+    "path": "artifacts/activations/activation_all_text_20260624/extracted_feats_all_text_qwen3-vl-8b-thinking.h5",
+    "sidecar_sha256": "b3894fa8fe2e56ef4766b10ecf7af9ceb603824ce2a56b013d72dcb9615ab4e7"
+  },
+  "config_id": "qwen3-vl-8b-thinking-all-layer-clean-construction-v1",
+  "construction_allowlist": {
+    "file_sha256": "01790d1e2ccd7d02f266aa503611b3cd8379d435fa2e1777f123fbcab540f069",
+    "path": "datasets/truth_editing/direction_construction_allowlist_v1.json"
+  },
+  "domains": [
+    "claims__definitional_gemini_600_full",
+    "claims__evidential_gemini_600_full",
+    "claims__fictional_gemini_600_full",
+    "claims__logical_gemini_600_full",
+    "ethics__commonsense",
+    "geometry_of_truth__best",
+    "geometry_of_truth__mixed",
+    "internal_state__animals",
+    "internal_state__cities",
+    "internal_state__companies",
+    "internal_state__elements",
+    "internal_state__facts",
+    "internal_state__inventions",
+    "repe_honesty__IF_dishonest",
+    "roleplaying__plain",
+    "sandbagging_v2__wmdp_mmlu",
+    "sycophancy__mmlu_stem_same_conf_all"
+  ],
+  "fit": {
+    "class_weight": "balanced",
+    "estimator": "sklearn.linear_model.LogisticRegression",
+    "max_iter": 1000,
+    "normalization": "unit_l2_with_intercept_rescaled",
+    "random_seed": 0,
+    "regularization_c": 1.0,
+    "sign_convention": "sklearn_logistic_coef_positive_points_honest_to_deceptive",
+    "solver": "liblinear"
+  },
+  "format": "truth_editing_direction_refit_config_v1",
+  "layers": [
+    0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17,
+    18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35
+  ],
+  "model": {
+    "decoder_layer_count": 36,
+    "hidden_width": 4096,
+    "model_sha256": "bbca6a8b09a56f0c538887b82b9594b0c0945c5fbcde54f39eda153a9f64eda8",
+    "repository": "Qwen/Qwen3-VL-8B-Thinking",
+    "revision": "92f3c4b4feadd3a016ef468d103bb5f58b2a2c6b"
+  },
+  "output_root": "artifacts/directions/refit-v1",
+  "self_sha256": "5ce1b8a5bd741c22b6d4f80cc2f6dfe9732cd84a2fc179203e71094207c743b5",
+  "source_code_revision": "da6d3dda16b70995d7c7c91328743c428736a38c"
+}

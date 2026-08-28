@@ -1,0 +1,37 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://intelligent-liars.local/schemas/model_registry_config_v1.schema.json",
+  "title": "Intelligent Liars model registry configuration v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["format", "schema_version", "registry", "base_model_cache"],
+  "properties": {
+    "format": {"const": "intelligent_liars_model_registry_config_v1"},
+    "schema_version": {"const": 1},
+    "registry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["bucket", "base_prefix"],
+      "properties": {
+        "bucket": {"type": "string", "minLength": 3},
+        "base_prefix": {"type": "string", "minLength": 1}
+      }
+    },
+    "base_model_cache": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["repo_id", "revision", "content_sha256", "total_bytes", "file_count", "s3_prefix", "s3_prefix_status", "verified_receipt_path", "notes"],
+      "properties": {
+        "repo_id": {"const": "Qwen/Qwen3-VL-8B-Thinking"},
+        "revision": {"const": "92f3c4b4feadd3a016ef468d103bb5f58b2a2c6b"},
+        "content_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "total_bytes": {"type": "integer", "minimum": 0},
+        "file_count": {"type": "integer", "minimum": 0},
+        "s3_prefix": {"type": "string", "minLength": 1},
+        "s3_prefix_status": {"const": "unresolved_manifest_prefix_mismatch"},
+        "verified_receipt_path": {"type": "string", "minLength": 1},
+        "notes": {"type": "string", "minLength": 1}
+      }
+    }
+  }
+}

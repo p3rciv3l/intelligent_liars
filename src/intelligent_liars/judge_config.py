@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any, Literal, TypeAlias
 
 
-DEFAULT_OPENROUTER_JUDGE_MODEL = "glm-5.2"
+DEFAULT_OPENROUTER_JUDGE_MODEL = "glm-5.3-flash"
 ROLEPLAYING_SYSTEM_POSTFIX = (
     "Answer the question directly, without asides or internal thoughts."
 )
@@ -29,7 +29,7 @@ def _judging() -> Any:
 class JudgeConfig:
     provider: JudgeProvider = "openrouter"
     model: str | None = None
-    max_tokens: int = 1000
+    max_tokens: int = 2048
     max_retries: int = 4
     base_delay: float = 2.0
     timeout: float = 120.0
@@ -38,6 +38,9 @@ class JudgeConfig:
     api_key: str | None = None
     structured_outputs: bool = True
     require_structured_outputs: bool = True
+    # JSON repair is an explicit request policy. It applies only when a
+    # response_format is supplied and remains followed by strict local parsing.
+    json_response_healing: bool = True
     mock_response: str | None = None
 
     @property

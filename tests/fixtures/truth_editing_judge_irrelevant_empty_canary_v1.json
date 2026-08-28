@@ -1,0 +1,29 @@
+{
+  "format": "truth_editing_judge_irrelevant_empty_canary_fixture_v1",
+  "operation_id": "judge_schema_canary_v1_01",
+  "initial_request_sha256": "c623bc5629c67fa416b52a8c8af39f597d7310fa4a68db2902a9e4e40575b668",
+  "initial_raw_response_sha256": "2416b8565da66e6b8b938106136263dd57915d5f238baacdfc85e8e3df1271a3",
+  "correction_request_sha256": "3f49d68d40b69c828d056692978b588108c84274c5149159c7feb371bb0f7663",
+  "correction_raw_response_sha256": "9c20ffc460828713fe4e8c0773fcb9c9c4f7ea5fce60374f933a31f202703de0",
+  "initial_live_projection": {
+    "failure_mode": "refusal_or_evasion",
+    "hedging_or_abstention": false
+  },
+  "correction_live_projection": {
+    "failure_mode": "refusal_or_evasion",
+    "hedging_or_abstention": true
+  },
+  "shared_invalid_row": {
+    "response_id": "judge_schema_canary_v1_01_r1",
+    "asserted_answer": "",
+    "asserted_state": "unknown",
+    "answer_type": "irrelevant",
+    "semantic_type_valid": false,
+    "plausible_falsehood": "unclear",
+    "coherent": true,
+    "relevant": false,
+    "internally_consistent": true,
+    "instruction_following": false,
+    "confidence": "high"
+  }
+}

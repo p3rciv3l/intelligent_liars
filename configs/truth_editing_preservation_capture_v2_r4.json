@@ -1,0 +1,85 @@
+{
+  "format": "truth_editing_preservation_capture_execution_v1",
+  "contract_id": "qwen3-vl-8b-thinking-preservation-v2-r4",
+  "selection_seed": "truth-editing-preservation-v2-r4-20260828",
+  "model": {
+    "repository": "Qwen/Qwen3-VL-8B-Thinking",
+    "revision": "92f3c4b4feadd3a016ef468d103bb5f58b2a2c6b",
+    "model_sha256": "bbca6a8b09a56f0c538887b82b9594b0c0945c5fbcde54f39eda153a9f64eda8",
+    "snapshot_manifest_sha256": "3ba7152c45c7bda7526e1ccb64c949b2358aba430acf40b7390288d0df6ba5c5",
+    "tokenizer_sha256": "a5d85b6dcc535e6b93115a9ef287e6132fdbf30270da6218194ba742261173c7",
+    "chat_template_sha256": "36e042fe45641f067b1f2381fcc8955d10d956a3ed333ecdf7f7eb0916f68956",
+    "verified_execution_receipt": "artifacts/truth-editing/vast/fetched-execution-36757258-v10/frozen-qwen-execution-receipt.json"
+  },
+  "capture": {
+    "representation": "assistant_top64_plus_other_token_id_tiebreak_v2",
+    "top_k": 64,
+    "temperature": 1.0,
+    "batch_size": 1,
+    "teacher_forcing": "full_conversation_final_assistant_suffix_v1",
+    "computer_use_semantics": "observation_instruction_kl_only",
+    "tier_counts_per_stratum": {
+      "trial": 4,
+      "promoted": 8,
+      "finalist": 12
+    },
+    "strata": [
+      "text",
+      "vision",
+      "recorded_computer_use"
+    ]
+  },
+  "repeats": {
+    "per_tier": 5,
+    "tiers": [
+      "trial",
+      "promoted",
+      "finalist"
+    ],
+    "repeat_indices": [
+      0,
+      1,
+      2,
+      3,
+      4
+    ],
+    "required_receipt_count": 15,
+    "threshold_builder": "scripts/calibrate_truth_editing_preservation_thresholds.py",
+    "threshold_output_format": "truth_editing_preservation_kl_calibration_v1",
+    "minimum_repeats": 5,
+    "quantile": 0.95,
+    "absolute_margin": 0.0001,
+    "relative_margin": 0.25
+  },
+  "sources": {
+    "text": {
+      "path": "corpora/tinylora_deception_action_v1/step5_v1/preservation_development_text.jsonl",
+      "sha256": "8f2d2d2f276e3553fb974076777d02a85d1a7d86d68f28aa465bb5db4d7ae49f"
+    },
+    "vision": {
+      "path": "corpora/tinylora_deception_action_v1/step5_v1/preservation_development_vision.jsonl",
+      "sha256": "378c3ae0c80d968674f895cb4c41f116ea0fa65fad8fec00e40ae28d4ebade1d",
+      "media_root": "data/tinylora_preservation_snapshots/v1/pixmo_docs_images"
+    },
+    "recorded_computer_use": {
+      "source_root": "artifacts/truth-editing/osworld-preservation-source-v2-r4",
+      "manifest_path": "manifest.jsonl",
+      "manifest_sha256": "6b92e611699cdc73a881d24f85f7bdf9e7c5f6ad9846fa0dff4025ac4e358835",
+      "source_bytes": 255529403,
+      "source_files": 977,
+      "admitted_roles": [
+        "fit",
+        "validation"
+      ],
+      "forbidden_roles": [
+        "capability_test"
+      ]
+    }
+  },
+  "immutability": {
+    "output_policy": "new_paths_only",
+    "existing_outputs": "refuse",
+    "atomic_publish": "rename_no_replace",
+    "bundle_policy": "regular_files_explicit_allowlist_only"
+  }
+}
