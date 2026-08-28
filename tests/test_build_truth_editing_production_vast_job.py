@@ -28,7 +28,7 @@ MODULE = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(MODULE)
 PRODUCTION_CONFIG = "configs/truth_editing_production_v4_fixture_deadbeef.json"
 CANONICAL_PRODUCTION_CONFIG = (
-    "configs/truth_editing_production_v4_r10_17b1e9cb_c1f373f8.json"
+    "configs/truth_editing_production_v6_adaptive_r10_17b1e9cb_c1f373f8.json"
 )
 FLEET_CONFIG = "configs/truth_editing_vast_fleet_adaptive_fixture.json"
 
@@ -350,11 +350,14 @@ def test_canonical_bundle_opens_all_production_inputs_after_clean_extraction(
     tmp_path: Path,
 ) -> None:
     repo = SCRIPT.parents[1]
-    raw = MODULE.build_production_job(
+    raw = MODULE.build_timed_canary_job(
         repo,
-        production_config=CANONICAL_PRODUCTION_CONFIG,
-        phase="discovery",
-        optuna_study_name="canonical-clean-extraction-proof",
+        canary_config=(
+            "configs/truth_editing_timed_canary_v6_adaptive_r10_bbb25ef3.json"
+        ),
+        command_config=(
+            "configs/truth_editing_timed_canary_command_v6_adaptive_r10_v4_3ae89929.json"
+        ),
     )
     config = ProductionVastConfig.from_mapping(raw)
     archive = tmp_path / "canonical-production-bundle.tar.gz"
@@ -717,22 +720,25 @@ def test_builder_rejects_infrastructure_ceiling_or_production_budget_drift(
         )
 
 
-def test_canonical_v4_strict_opens_and_bundles_r10_runtime_inputs() -> None:
+def test_canonical_v6_timed_canary_opens_and_bundles_r10_runtime_inputs() -> None:
     repo = Path(__file__).parents[1]
-    production = "configs/truth_editing_production_v4_r10_17b1e9cb_c1f373f8.json"
-    raw = MODULE.build_production_job(
+    production = CANONICAL_PRODUCTION_CONFIG
+    raw = MODULE.build_timed_canary_job(
         repo,
-        production_config=production,
-        phase="discovery",
-        optuna_study_name="canonical-v4-test",
+        canary_config=(
+            "configs/truth_editing_timed_canary_v6_adaptive_r10_bbb25ef3.json"
+        ),
+        command_config=(
+            "configs/truth_editing_timed_canary_command_v6_adaptive_r10_v4_3ae89929.json"
+        ),
     )
     parsed = ProductionVastConfig.from_mapping(raw)
     paths = set(raw["base_job"]["bundle_paths"])
 
     assert parsed.production_config_path == production
     assert parsed.production_config_sha256 == MODULE.file_sha256(repo / production)
-    assert "configs/truth_editing_study_v3_r10_c1f373f8.json" in paths
-    assert "configs/truth_editing_evaluator_v4_r10_c1f373f8.json" in paths
+    assert "configs/truth_editing_study_v5_adaptive_r10_c1f373f8.json" in paths
+    assert "configs/truth_editing_evaluator_v6_adaptive_r10_c1f373f8.json" in paths
     assert sum(
         path.startswith("artifacts/directions/refit-v1/") and path.endswith(".npy")
         for path in paths

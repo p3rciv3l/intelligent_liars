@@ -27,10 +27,15 @@ The fresh judge holdout completed with 120/120 schema-valid responses and passed
 
 The current operational boundary is:
 
-1. Commit and publish the production truth-editing code/config/data closure without D1, unrelated Step 5 machinery, secrets, local receipts, model weights, or temporary artifacts.
-2. Hydrate the exact ignored production inputs through content-addressed DVC/cloud storage and prove the same bundle can be rebuilt from a fresh clone.
-3. Run the timed real GPU canary, verify W&B readback, and derive the adaptive capacity receipt from measured TPS, duration, judge latency, and cost.
-4. Generate the immutable eight-GPU adaptive fleet/job packet, then run the 200-minimum/800-maximum time-and-budget study.
+1. Run the timed real GPU canary, verify W&B readback, and derive the adaptive capacity receipt from measured TPS, duration, judge latency, and cost.
+2. Generate the immutable eight-GPU adaptive fleet/job packet, then run the 200-minimum/800-maximum time-and-budget study.
+
+The production truth-editing closure is published on `main`. The exact ignored
+inputs are also published as the private GitHub release asset
+`truth-editing-production-inputs-v1/production-inputs.tar.gz`; DVC remains a
+secondary durable copy. Four superseded pull requests were closed and their
+branch tips were preserved under `archive/*-20260828` tags before the obsolete
+remote branches were deleted.
 
 The qualified direction bank contains general and domain-specific directions. `mixed` is a composition recipe using both; there is no separately fitted intermediate family in the current frozen bank.
 
@@ -38,13 +43,17 @@ From a fresh clone, hydrate the immutable production inputs before rebuilding th
 
 ```bash
 uv sync --frozen --extra study
-uv run --no-sync dvc pull artifacts/truth-editing/production-inputs/v1/production-inputs.tar.gz.dvc
+mkdir -p artifacts/truth-editing/production-inputs/v1
+gh release download truth-editing-production-inputs-v1 \
+  --repo p3rciv3l/intelligent_liars \
+  --pattern production-inputs.tar.gz \
+  --dir artifacts/truth-editing/production-inputs/v1
 PYTHONPATH=src .venv/bin/python scripts/hydrate_truth_editing_production_inputs.py hydrate \
   --manifest configs/truth_editing_production_inputs_v1.json \
   --repo-root .
 ```
 
-The committed manifest binds 1,499 files to archive SHA-256 `b35c5cb22054f936f44d816220b3d5875cec3cebe8d880fc8757b3f708920c40`. The archive is stored through DVC, not ordinary Git. Hydration rejects missing, extra, changed, linked, unsafe, oversized, or non-canonical members.
+The committed manifest binds 1,499 files to archive SHA-256 `b35c5cb22054f936f44d816220b3d5875cec3cebe8d880fc8757b3f708920c40`. The archive is stored as a private GitHub release asset and through DVC, not ordinary Git. Hydration rejects missing, extra, changed, linked, unsafe, oversized, or non-canonical members.
 
 ## Read these first
 
