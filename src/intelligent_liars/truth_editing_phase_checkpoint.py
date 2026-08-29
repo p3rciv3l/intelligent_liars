@@ -1306,6 +1306,7 @@ def _validate_optuna_journal(
         raise PhaseCheckpointError("Optuna journal cannot be resumed") from error
 
     expected: dict[int, tuple[str, str]] = {}
+    required_ordinals: set[int] = set()
     for trial in journal_trials:
         ordinal = int(trial["ordinal"])
         proposal = trial.get("proposal")
@@ -1328,6 +1329,12 @@ def _validate_optuna_journal(
         if state_name is None:
             raise PhaseCheckpointError("study journal outcome is invalid")
         expected[ordinal] = (proposal_sha, state_name)
+        # Operational failures remain authoritative in the controller journal,
+        # but broad-coverage and replay failures are deliberately absent from
+        # Optuna so they cannot affect its sampler. Older compatible checkpoints
+        # may still contain an explicit FAIL row, which remains valid audit data.
+        if state_name != "FAIL":
+            required_ordinals.add(ordinal)
 
     seen: set[int] = set()
     for trial in optuna_trials:
@@ -1353,7 +1360,7 @@ def _validate_optuna_journal(
         ):
             raise PhaseCheckpointError("Optuna objective values differ from study journal")
         seen.add(ordinal)
-    if seen != set(expected):
+    if not required_ordinals.issubset(seen):
         raise PhaseCheckpointError("Optuna journal is missing TPE-observed study trials")
 
 

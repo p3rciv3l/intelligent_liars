@@ -36,6 +36,7 @@ def _write_state(
     wandb_run_id: str = "ab12cd34",
     matched_control_ordinals: frozenset[int] = frozenset(),
     operational_failure_ordinals: frozenset[int] = frozenset(),
+    omit_operational_failures_from_optuna: bool = False,
 ) -> None:
     (root / "study").mkdir(parents=True)
     trials = [
@@ -99,6 +100,11 @@ def _write_state(
     for trial in trials:
         if trial["ordinal"] in matched_control_ordinals:
             continue
+        if (
+            omit_operational_failures_from_optuna
+            and trial["ordinal"] in operational_failure_ordinals
+        ):
+            continue
         common = {
             "user_attrs": {
                 "study_ordinal": trial["ordinal"],
@@ -136,6 +142,28 @@ def test_optuna_checkpoint_accepts_matched_control_omitted_from_tpe_journal(
         completed=8,
         matched_control_ordinals=frozenset({0}),
         operational_failure_ordinals=frozenset(range(8)),
+    )
+    journal = json.loads((source / "study/study-journal.json").read_text())
+    journal_trials = [
+        trial for batch in journal["batches"] for trial in batch["trials"]
+    ]
+
+    _validate_optuna_journal(
+        (source / "study/study-journal.json.optuna.log").read_bytes(),
+        journal_trials,
+        expected_study_name=OPTUNA_STUDY_NAME,
+    )
+
+
+def test_optuna_checkpoint_accepts_audit_only_operational_failures(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "source"
+    _write_state(
+        source,
+        completed=8,
+        operational_failure_ordinals=frozenset({0, 3}),
+        omit_operational_failures_from_optuna=True,
     )
     journal = json.loads((source / "study/study-journal.json").read_text())
     journal_trials = [

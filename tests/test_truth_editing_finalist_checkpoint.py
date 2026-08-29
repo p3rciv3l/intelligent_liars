@@ -210,6 +210,46 @@ def test_pareto_selection_never_compares_lower_fidelity_tiers() -> None:
     assert receipt["selection_record_count"] == 2
 
 
+def test_selection_accepts_audited_failure_after_exact_scored_replay() -> None:
+    report = _report([("trial-replay", (0.9, 0.6, 0.7))])
+    successful = report["trials"][0]
+    failed = json.loads(json.dumps(successful))
+    failed["trial_id"] = "trial-failed"
+    failed["ordinal"] = 0
+    failed["result"] = {
+        "outcome_kind": "operational_failure",
+        "metrics": {},
+        "detail": "judge transport timeout",
+    }
+    successful["ordinal"] = 1
+    report["trials"] = [failed, successful]
+    report["completed_trials"] = 2
+    report["operational_failures"] = 1
+
+    receipt = select_pareto_finalists(report)
+
+    assert [item["trial_id"] for item in receipt["finalists"]] == ["trial-replay"]
+
+
+def test_selection_rejects_unresolved_audited_failure() -> None:
+    report = _report([("trial-success", (0.9, 0.6, 0.7))])
+    failed = json.loads(json.dumps(report["trials"][0]))
+    failed["trial_id"] = "trial-failed"
+    failed["ordinal"] = 1
+    failed["proposal"] = _proposal(strength=0.25).to_dict()
+    failed["result"] = {
+        "outcome_kind": "operational_failure",
+        "metrics": {},
+        "detail": "judge transport timeout",
+    }
+    report["trials"].append(failed)
+    report["completed_trials"] = 2
+    report["operational_failures"] = 1
+
+    with pytest.raises(FinalistCheckpointError, match="unresolved"):
+        select_pareto_finalists(report)
+
+
 def test_selection_fails_closed_on_unready_or_tampered_report(tmp_path: Path) -> None:
     report = _report([("trial-a", (0.9, 0.6, 0.7))])
     report["selection_ready"] = False

@@ -280,6 +280,9 @@ def test_monitoring_wrapper_preserves_search_identity_and_logs_after_observation
         def observe(self, trials):
             order.append("authoritative_observe")
 
+        def complete_history_replay(self):
+            order.append("history_replay_complete")
+
     run = _FakeRun()
     monitor = CoordinatorMonitor(
         run_id="run-wrapper",
@@ -313,10 +316,15 @@ def test_monitoring_wrapper_preserves_search_identity_and_logs_after_observation
             }
         ),
     )
+    wrapper.complete_history_replay()
     wrapper.observe((trial,))
 
     assert wrapper.identity == Driver.identity
-    assert order == ["authoritative_observe", "monitor"]
+    assert order == [
+        "history_replay_complete",
+        "authoritative_observe",
+        "monitor",
+    ]
     assert [step for _values, step in run.logged if step is not None][0] == 0
 
 

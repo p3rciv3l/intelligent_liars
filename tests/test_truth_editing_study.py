@@ -21,6 +21,7 @@ from intelligent_liars.truth_editing_study import (
     PreparedStudyContext,
     StudyError,
     SearchProposal,
+    STUDY_ORCHESTRATOR_SEMANTICS_SHA256,
     schedule_finalist_basis_controls,
     TruthEditingStudy,
     load_truth_editing_study_config,
@@ -28,6 +29,12 @@ from intelligent_liars.truth_editing_study import (
 )
 
 from test_truth_editing_contracts import _manifest
+
+
+def test_study_orchestrator_identity_preserves_launched_checkpoint_lineage() -> None:
+    assert STUDY_ORCHESTRATOR_SEMANTICS_SHA256 == (
+        "5e6392c5975d04006e5a1ef32ba93896750a7ec8916ff85c23fcb4ec94a960b1"
+    )
 
 
 def _config(tmp_path, **changes):
@@ -888,6 +895,181 @@ def test_optuna_restart_uses_native_journal_and_exact_pending_proposal(tmp_path)
     )
     assert report.trials[-1].proposal.to_dict() == pending
     assert (tmp_path / "journal.json.optuna.log").is_file()
+
+
+@pytest.mark.skipif(importlib.util.find_spec("optuna") is None, reason="Optuna is optional")
+def test_optuna_replays_unresolved_operational_failures_fifo_and_exactly(
+    tmp_path,
+) -> None:
+    class FailFirstTwo(OfflineSyntheticEvaluator):
+        def evaluate(self, proposal, *, trial_id, record_ids, objective_names):
+            if trial_id in {"trial-0000", "trial-0001"}:
+                return EvaluationResult.operational_failure("worker unavailable")
+            return super().evaluate(
+                proposal,
+                trial_id=trial_id,
+                record_ids=record_ids,
+                objective_names=objective_names,
+            )
+
+    config = _config(
+        tmp_path,
+        batch_size=8,
+        max_trials=16,
+        evaluation_tiers=[
+            {"name": "all", "record_limit": 2, "through_trial": 16}
+        ],
+    )
+    bank = _direction_bank()
+    journal = tmp_path / "operational-replay.json"
+    first_driver = OptunaSearchDriver(seed=17)
+    first = TruthEditingStudy(config, bank).run(
+        driver=first_driver,
+        evaluator=FailFirstTwo(),
+        journal_path=journal,
+        stop_after_trials=8,
+    )
+
+    import optuna
+
+    storage = optuna.storages.JournalStorage(
+        optuna.storages.journal.JournalFileBackend(str(journal) + ".optuna.log")
+    )
+    persisted = optuna.load_study(
+        study_name=first_driver.persistent_study_name,
+        storage=storage,
+    )
+    persisted_ordinals = {
+        int(item.user_attrs["study_ordinal"])
+        for item in persisted.get_trials(deepcopy=False)
+    }
+    expected_persisted_ordinals = {
+        item.ordinal
+        for item in first.trials
+        if item.result.outcome_kind != "operational_failure"
+        and item.proposal.matched_basis_control == "none"
+    }
+    assert persisted_ordinals == expected_persisted_ordinals
+
+    resumed = TruthEditingStudy(config, bank).run(
+        driver=OptunaSearchDriver(seed=17),
+        evaluator=OfflineSyntheticEvaluator(),
+        journal_path=journal,
+    )
+
+    assert resumed.trials[8].proposal.to_dict() == first.trials[0].proposal.to_dict()
+    assert resumed.trials[9].proposal.to_dict() == first.trials[1].proposal.to_dict()
+    assert resumed.trials[8].ordinal == 8
+    assert resumed.trials[9].ordinal == 9
+    assert resumed.trials[8].result.outcome_kind == "successful"
+    assert resumed.trials[9].result.outcome_kind == "successful"
+    assert resumed.operational_failures == 2
+    assert resumed.unresolved_operational_failures == 0
+
+
+@pytest.mark.skipif(importlib.util.find_spec("optuna") is None, reason="Optuna is optional")
+def test_optuna_requeues_a_replay_that_operationally_fails_again(tmp_path) -> None:
+    class FailOrdinal(OfflineSyntheticEvaluator):
+        def __init__(self, ordinal: int) -> None:
+            self.trial_id = f"trial-{ordinal:04d}"
+
+        def evaluate(self, proposal, *, trial_id, record_ids, objective_names):
+            if trial_id == self.trial_id:
+                return EvaluationResult.operational_failure("worker unavailable")
+            return super().evaluate(
+                proposal,
+                trial_id=trial_id,
+                record_ids=record_ids,
+                objective_names=objective_names,
+            )
+
+    config = _config(
+        tmp_path,
+        batch_size=8,
+        max_trials=24,
+        evaluation_tiers=[
+            {"name": "all", "record_limit": 2, "through_trial": 24}
+        ],
+    )
+    bank = _direction_bank()
+    journal = tmp_path / "repeated-operational-replay.json"
+    first = TruthEditingStudy(config, bank).run(
+        driver=OptunaSearchDriver(seed=17),
+        evaluator=FailOrdinal(0),
+        journal_path=journal,
+        stop_after_trials=8,
+    )
+    second = TruthEditingStudy(config, bank).run(
+        driver=OptunaSearchDriver(seed=17),
+        evaluator=FailOrdinal(8),
+        journal_path=journal,
+        stop_after_trials=16,
+    )
+    final = TruthEditingStudy(config, bank).run(
+        driver=OptunaSearchDriver(seed=17),
+        evaluator=OfflineSyntheticEvaluator(),
+        journal_path=journal,
+    )
+
+    failed = first.trials[0].proposal.to_dict()
+    assert second.trials[8].proposal.to_dict() == failed
+    assert second.trials[8].result.outcome_kind == "operational_failure"
+    assert second.unresolved_operational_failures == 2
+    assert final.trials[16].proposal.to_dict() == failed
+    assert final.trials[16].result.outcome_kind == "successful"
+    assert final.operational_failures == 2
+    assert final.unresolved_operational_failures == 0
+
+
+@pytest.mark.skipif(importlib.util.find_spec("optuna") is None, reason="Optuna is optional")
+def test_optuna_defers_failure_replay_until_saved_incomplete_batch_finishes(
+    tmp_path,
+) -> None:
+    class FailThenInterrupt(OfflineSyntheticEvaluator):
+        def evaluate(self, proposal, *, trial_id, record_ids, objective_names):
+            if trial_id == "trial-0000":
+                return EvaluationResult.operational_failure("worker unavailable")
+            if trial_id == "trial-0008":
+                raise KeyboardInterrupt
+            return super().evaluate(
+                proposal,
+                trial_id=trial_id,
+                record_ids=record_ids,
+                objective_names=objective_names,
+            )
+
+    config = _config(
+        tmp_path,
+        batch_size=8,
+        max_trials=24,
+        evaluation_tiers=[
+            {"name": "all", "record_limit": 2, "through_trial": 24}
+        ],
+    )
+    bank = _direction_bank()
+    journal = tmp_path / "incomplete-before-replay.json"
+    with pytest.raises(KeyboardInterrupt):
+        TruthEditingStudy(config, bank).run(
+            driver=OptunaSearchDriver(seed=17),
+            evaluator=FailThenInterrupt(),
+            journal_path=journal,
+            stop_after_trials=16,
+        )
+    saved = json.loads(journal.read_text())
+    failed = saved["batches"][0]["trials"][0]["proposal"]
+    pending = saved["batches"][1]["trials"][0]["proposal"]
+
+    resumed = TruthEditingStudy(config, bank).run(
+        driver=OptunaSearchDriver(seed=17),
+        evaluator=OfflineSyntheticEvaluator(),
+        journal_path=journal,
+    )
+
+    assert resumed.trials[8].proposal.to_dict() == pending
+    assert pending == failed
+    assert sum(
+        item.proposal.to_dict() == failed for item in resumed.trials
+    ) == 2
 
 
 @pytest.mark.skipif(importlib.util.find_spec("optuna") is None, reason="Optuna is optional")

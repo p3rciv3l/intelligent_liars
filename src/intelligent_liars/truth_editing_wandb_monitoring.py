@@ -1142,6 +1142,11 @@ class MonitoredSearchDriver:
         # was atomically committed to its authoritative journal.
         self._monitor.record_trials(trials)
 
+    def complete_history_replay(self) -> None:
+        """Forward the journal/new-work boundary without changing monitoring."""
+
+        self._driver.complete_history_replay()
+
 
 class CoordinatorTelemetryPump:
     """Poll coordinator-owned GPU telemetry without blocking optimization."""

@@ -141,8 +141,6 @@ def _report_mapping(report: Any) -> dict[str, Any]:
     _hash(result["study_identity_sha256"], "study_identity_sha256")
     if result["coverage_complete"] is not True or result["selection_ready"] is not True:
         raise FinalistCheckpointError("study report is not selection-ready")
-    if result["operational_failures"] != 0:
-        raise FinalistCheckpointError("selection-ready report cannot contain operational failures")
     trials = result["trials"]
     if isinstance(trials, (str, bytes)) or not isinstance(trials, Sequence):
         raise FinalistCheckpointError("study report trials must be an array")
@@ -169,6 +167,25 @@ def _report_mapping(report: Any) -> dict[str, Any]:
             raise FinalistCheckpointError("study trial outcome kind is unsupported")
     if any(result[name] != count for name, count in counts.items()):
         raise FinalistCheckpointError("study report outcome counts differ")
+    resolved_proposals: set[str] = set()
+    unresolved_failures = 0
+    for trial in reversed(trials):
+        assert isinstance(trial, Mapping)
+        trial_result = trial["result"]
+        assert isinstance(trial_result, Mapping)
+        proposal = trial.get("proposal")
+        if not isinstance(proposal, Mapping):
+            raise FinalistCheckpointError("study trial proposal must be an object")
+        proposal_sha256 = _sha_value(proposal)
+        if trial_result["outcome_kind"] == "operational_failure":
+            if proposal_sha256 not in resolved_proposals:
+                unresolved_failures += 1
+        else:
+            resolved_proposals.add(proposal_sha256)
+    if unresolved_failures:
+        raise FinalistCheckpointError(
+            "selection-ready report contains unresolved operational failures"
+        )
     _canonical(result)
     return result
 

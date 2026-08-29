@@ -57,6 +57,14 @@ ADAPTIVE_STUDY_CONFIG_FORMAT = "truth_editing_study_config_v2"
 ADAPTIVE_SEARCH_POLICY_FORMAT = "truth_editing_adaptive_search_policy_v1"
 STUDY_JOURNAL_FORMAT = "truth_editing_study_journal_v1"
 STUDY_REPORT_FORMAT = "truth_editing_study_report_v1"
+# Stable semantic identity of the production orchestrator lineage first launched
+# on 2026-08-29. Failure replay changes recovery behavior without changing the
+# frozen search space, evaluator, or scientific meaning of a successful trial.
+# Pinning this value preserves the checkpoint-48 lineage instead of coupling
+# resumability to unrelated source-file byte changes.
+STUDY_ORCHESTRATOR_SEMANTICS_SHA256 = (
+    "5e6392c5975d04006e5a1ef32ba93896750a7ec8916ff85c23fcb4ec94a960b1"
+)
 _HEX = frozenset("0123456789abcdef")
 _WRITER_POLICIES = ("attention", "mlp", "both")
 _BASIS_METHODS = ("qr", "svd")
@@ -862,6 +870,7 @@ class SearchDriver(Protocol):
     ) -> None: ...
     def suggest(self, request: SearchRequest) -> SearchProposal: ...
     def observe(self, trials: Sequence["StudyTrial"]) -> None: ...
+    def complete_history_replay(self) -> None: ...
 
 
 class BatchAdmission(Protocol):
@@ -977,6 +986,14 @@ class PreparedStudyContext:
 
 
 AfterPrepareBeforeFirstAdmission = Callable[[PreparedStudyContext], None]
+
+
+def _complete_driver_history_replay(driver: SearchDriver) -> None:
+    """Notify replay-aware drivers while preserving simple custom adapters."""
+
+    complete = getattr(driver, "complete_history_replay", None)
+    if callable(complete):
+        complete()
 
 
 class OfflineDeterministicSearchDriver:
@@ -1293,6 +1310,9 @@ class OfflineDeterministicSearchDriver:
         self.observed_batch_sizes.append(len(trials))
         self._reserved.clear()
 
+    def complete_history_replay(self) -> None:
+        """Mark the boundary between journal replay and new suggestions."""
+
 
 class OptunaSearchDriver(OfflineDeterministicSearchDriver):
     """Optional adapter; imports Optuna only when explicitly selected.
@@ -1327,6 +1347,10 @@ class OptunaSearchDriver(OfflineDeterministicSearchDriver):
         self._pending_proposals: dict[int, SearchProposal] = {}
         self._persistent_study: Any | None = None
         self._persisted_ordinals: set[int] = set()
+        self._history_replay_is_complete = False
+        self._unresolved_operational_failures: dict[str, SearchProposal] = {}
+        self._failure_replay_queue: list[str] = []
+        self._failure_replays_inflight: dict[int, str] = {}
 
     @property
     def identity(self) -> Mapping[str, Any]:
@@ -1404,6 +1428,16 @@ class OptunaSearchDriver(OfflineDeterministicSearchDriver):
         return "::".join((base, *(str(item) for item in context)))
 
     def suggest(self, request: SearchRequest) -> SearchProposal:
+        if self._history_replay_is_complete:
+            while self._failure_replay_queue:
+                proposal_sha256 = self._failure_replay_queue.pop(0)
+                proposal = self._unresolved_operational_failures.get(proposal_sha256)
+                if proposal is None:
+                    continue
+                self._pending_proposals[request.ordinal] = proposal
+                self._failure_replays_inflight[request.ordinal] = proposal_sha256
+                self._reserved.append(proposal)
+                return proposal
         if not self._coverage_complete(request):
             proposal = super().suggest(request)
             self._pending_proposals[request.ordinal] = proposal
@@ -1779,15 +1813,34 @@ class OptunaSearchDriver(OfflineDeterministicSearchDriver):
             raise StudyError("Optuna driver was not prepared with the frozen search space")
         for item in trials:
             if item.ordinal not in self._pending_proposals:
-                regenerated = self.suggest(
-                    SearchRequest(item.ordinal, self._config, self._directions, coverage)
-                )
+                proposal_sha256 = _sha(item.proposal.to_dict())
+                if (
+                    not self._history_replay_is_complete
+                    and proposal_sha256 in self._unresolved_operational_failures
+                ):
+                    # A saved incomplete batch may already contain retries that
+                    # were proposed before the process stopped. Reconstructing
+                    # such a retry must not advance either deterministic or TPE
+                    # sampler state.
+                    regenerated = item.proposal
+                    self._pending_proposals[item.ordinal] = regenerated
+                    self._failure_replays_inflight[item.ordinal] = proposal_sha256
+                    self._reserved.append(regenerated)
+                else:
+                    regenerated = self.suggest(
+                        SearchRequest(
+                            item.ordinal, self._config, self._directions, coverage
+                        )
+                    )
                 if regenerated.to_dict() != item.proposal.to_dict():
                     raise StudyError("Optuna resume suggestion differs from journal")
             elif self._pending_proposals[item.ordinal].to_dict() != item.proposal.to_dict():
                 raise StudyError("Optuna observed proposal differs from pending suggestion")
+        live_tpe_ordinals: set[int] = set()
         for item in trials:
             live = self._live_trials.pop(item.ordinal, None)
+            if live is not None:
+                live_tpe_ordinals.add(item.ordinal)
             if item.proposal.matched_basis_control != "none":
                 if live is not None:
                     raise StudyError(
@@ -1798,7 +1851,8 @@ class OptunaSearchDriver(OfflineDeterministicSearchDriver):
                 # not attributed to the parent truth-direction parameters.
                 continue
             if live is None:
-                self._study.add_trial(self._frozen_trial(item))
+                if item.result.outcome_kind != "operational_failure":
+                    self._study.add_trial(self._frozen_trial(item))
             elif item.result.outcome_kind == "operational_failure":
                 self._study.tell(live, state=self._optuna.trial.TrialState.FAIL)
             elif item.result.outcome_kind == "scientifically_infeasible":
@@ -1814,12 +1868,46 @@ class OptunaSearchDriver(OfflineDeterministicSearchDriver):
             if (
                 item.proposal.matched_basis_control == "none"
                 and item.ordinal not in self._persisted_ordinals
+                and (
+                    item.result.outcome_kind != "operational_failure"
+                    or item.ordinal in live_tpe_ordinals
+                )
             ):
                 self._persistent_study.add_trial(self._frozen_trial(item))
                 self._persisted_ordinals.add(item.ordinal)
         for item in trials:
+            proposal_sha256 = _sha(item.proposal.to_dict())
+            self._failure_replays_inflight.pop(item.ordinal, None)
+            if item.result.outcome_kind == "operational_failure":
+                if proposal_sha256 not in self._unresolved_operational_failures:
+                    self._unresolved_operational_failures[proposal_sha256] = item.proposal
+                if (
+                    self._history_replay_is_complete
+                    and proposal_sha256 not in self._failure_replay_queue
+                    and proposal_sha256 not in self._failure_replays_inflight.values()
+                ):
+                    self._failure_replay_queue.append(proposal_sha256)
+            else:
+                self._unresolved_operational_failures.pop(proposal_sha256, None)
+                self._failure_replay_queue = [
+                    queued_sha256
+                    for queued_sha256 in self._failure_replay_queue
+                    if queued_sha256 != proposal_sha256
+                ]
             self._pending_proposals.pop(item.ordinal, None)
         self._reserved.clear()
+
+    def complete_history_replay(self) -> None:
+        """Enable exact FIFO retries after all saved proposals are reconstructed."""
+
+        if self._history_replay_is_complete:
+            return
+        self._history_replay_is_complete = True
+        self._failure_replay_queue.extend(
+            proposal_sha256
+            for proposal_sha256 in self._unresolved_operational_failures
+            if proposal_sha256 not in self._failure_replay_queue
+        )
 
 
 OutcomeKind = Literal["successful", "scientifically_infeasible", "operational_failure"]
@@ -1921,10 +2009,22 @@ class StudyReport:
     @property
     def successful_trials(self) -> int: return sum(t.result.outcome_kind == "successful" for t in self.trials)
     @property
+    def unresolved_operational_failures(self) -> int:
+        resolved_proposals: set[str] = set()
+        unresolved = 0
+        for trial in reversed(self.trials):
+            proposal_sha256 = _sha(trial.proposal.to_dict())
+            if trial.result.outcome_kind == "operational_failure":
+                if proposal_sha256 not in resolved_proposals:
+                    unresolved += 1
+            else:
+                resolved_proposals.add(proposal_sha256)
+        return unresolved
+    @property
     def selection_ready(self) -> bool:
         """Whether this journal can safely feed scientific model selection."""
 
-        return self.coverage_complete and self.operational_failures == 0
+        return self.coverage_complete and self.unresolved_operational_failures == 0
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -1967,7 +2067,6 @@ class TruthEditingStudy:
     def _identity(
         self, driver: SearchDriver, evaluator: Evaluator
     ) -> tuple[str, dict[str, Any]]:
-        module_sha256 = hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
         batch_module_path = Path(__file__).with_name("truth_editing_batch_execution.py")
         batch_module_sha256 = hashlib.sha256(batch_module_path.read_bytes()).hexdigest()
         broad_module_path = Path(__file__).with_name("truth_editing_broad_coverage.py")
@@ -1978,7 +2077,7 @@ class TruthEditingStudy:
             "dataset_manifest_sha256": self.config.dataset_manifest_sha256,
             "search_driver": dict(driver.identity),
             "evaluator": dict(evaluator.identity),
-            "orchestrator_module_sha256": module_sha256,
+            "orchestrator_module_sha256": STUDY_ORCHESTRATOR_SEMANTICS_SHA256,
             "batch_scheduler_module_sha256": batch_module_sha256,
             "broad_coverage_module_sha256": broad_module_sha256,
         }
@@ -2403,6 +2502,7 @@ class TruthEditingStudy:
         completed_by_ordinal = {item.ordinal: item for item in completed}
         observed_batch_ordinals: set[int] = set()
         delivered_batch_ordinals: set[int] = set()
+        incomplete_history_batch_ordinal: int | None = None
         # Replay only whole batches into the search adapter. A partially completed
         # batch remains invisible until all of its suggestions have outcomes.
         for batch in journal["batches"]:
@@ -2417,6 +2517,12 @@ class TruthEditingStudy:
                     delivered_batch_ordinals.add(batch["ordinal"])
             elif batch["ordinal"] != len(journal["batches"]) - 1:
                 raise StudyError("only the final journal batch may be incomplete")
+            else:
+                incomplete_history_batch_ordinal = batch["ordinal"]
+
+        history_replay_completed = incomplete_history_batch_ordinal is None
+        if history_replay_completed:
+            _complete_driver_history_replay(driver)
 
         if after_prepare_before_first_admission is not None:
             committed_trials = tuple(
@@ -2585,6 +2691,12 @@ class TruthEditingStudy:
             if batch_ordinal not in observed_batch_ordinals:
                 driver.observe(batch_trials)
                 observed_batch_ordinals.add(batch_ordinal)
+            if (
+                not history_replay_completed
+                and batch_ordinal == incomplete_history_batch_ordinal
+            ):
+                _complete_driver_history_replay(driver)
+                history_replay_completed = True
             completed = sorted(completed_by_ordinal.values(), key=lambda item: item.ordinal)
             if batch_ordinal not in delivered_batch_ordinals:
                 callback = after_complete_batch
