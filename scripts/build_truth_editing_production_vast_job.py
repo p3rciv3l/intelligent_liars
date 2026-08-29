@@ -77,7 +77,7 @@ CANONICAL_ADAPTIVE_CAPACITY_RECEIPT = (
 )
 CANONICAL_MODEL_REGISTRY_CONFIG = "configs/model_registry_v1.json"
 CANONICAL_ADAPTIVE_OFFHOST_KEY_PREFIX = (
-    "model-registry/v1/truth-editing/adaptive-main-r10"
+    "model-registry/v1/truth-editing/adaptive-main-r11"
 )
 CANONICAL_FINAL_MODEL_SLUG = "qwen3-vl-8b-truth-edited"
 MAXIMUM_INFRASTRUCTURE_SPEND_USD = 45.0

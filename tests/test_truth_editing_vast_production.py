@@ -105,7 +105,7 @@ def _adaptive_raw() -> dict[str, object]:
         "--model-registry-config",
         "configs/model_registry_v1.json",
         "--offhost-key-prefix",
-        "model-registry/v1/truth-editing/adaptive-main-r10",
+        "model-registry/v1/truth-editing/adaptive-main-r11",
         "--final-model-slug",
         "qwen3-vl-8b-truth-edited",
     ]

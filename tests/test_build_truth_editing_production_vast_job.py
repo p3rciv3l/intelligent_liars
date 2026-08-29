@@ -498,7 +498,7 @@ def test_builder_emits_adaptive_24_hour_job_without_a_fixed_trial_barrier(
         "configs/model_registry_v1.json"
     )
     assert workload[workload.index("--offhost-key-prefix") + 1] == (
-        "model-registry/v1/truth-editing/adaptive-main-r10"
+        "model-registry/v1/truth-editing/adaptive-main-r11"
     )
     assert workload[workload.index("--final-model-slug") + 1] == (
         "qwen3-vl-8b-truth-edited"

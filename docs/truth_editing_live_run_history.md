@@ -157,3 +157,7 @@ This table covers every completed truth-editing Vast lifecycle receipt currently
 ### Judge dev-v4 replacement construction
 
 - The first offline packet build wrote the content-addressed JSON files, then stopped before writing `execution-commands.json` because relative CLI paths were compared directly with the absolute repository root. The builder now resolves paths first and accepts an existing file only when its bytes exactly match the deterministic rebuild. No network call or spend occurred.
+
+### Adaptive full-run attempt r10
+
+- Instance `49079886` hydrated and verified the exact pinned Qwen checkpoint, then failed closed before GPU workers or judge calls because the corrected study identity encountered an older incompatible `adaptive-main-r10` S3 latest pointer. The lifecycle destroyed the instance after 1,338 seconds; estimated compute was `$0.4014746502`. The incompatible namespace remains historical evidence. The corrected study uses the new immutable `adaptive-main-r11` namespace; the static-identity check is unchanged.
