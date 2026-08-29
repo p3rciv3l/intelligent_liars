@@ -1028,6 +1028,54 @@ def test_rolling_capacity_signs_conservative_observation_when_telemetry_is_missi
     assert rolling_path.read_bytes() == rolling_bytes
 
 
+def test_rolling_capacity_rounds_fractional_batch_judge_elapsed_up(
+    tmp_path: Path,
+) -> None:
+    judge_path = tmp_path / "judge-ledger"
+    judge_path.mkdir()
+    judge_state = {
+        "receipt": _judge_receipt(),
+        "snapshot": _judge_snapshot(),
+    }
+    judge = SimpleNamespace(
+        path=judge_path,
+        receipt=lambda: dict(judge_state["receipt"]),
+        monitoring_snapshot=lambda: dict(judge_state["snapshot"]),
+    )
+    rolling_path = tmp_path / "rolling.json"
+    controller = MODULE._RollingCapacityController(
+        policy=_policy(),
+        initial_receipt=_receipt(),
+        rolling_receipt_path=rolling_path,
+        spend_reader=lambda: _spend(),
+        judge_budget=judge,
+        clock=lambda: NOW,
+    )
+    judge_state["receipt"] = _judge_receipt(actual="0.01", completed=1)
+    judge_state["snapshot"] = _judge_snapshot(
+        calls=1,
+        elapsed_ms=741754.3856198245,
+    )
+    commit = SimpleNamespace(
+        batch_ordinal=0,
+        batch_sha256="e" * 64,
+        batch_size=8,
+        completed_trials=8,
+        trials=tuple(
+            SimpleNamespace(trial_id=f"trial-{index:04d}")
+            for index in range(8)
+        ),
+    )
+
+    controller.reforecast(commit)
+
+    rolling = json.loads(rolling_path.read_text())
+    assert (
+        Decimal(str(rolling["measured"]["judge_latency_seconds"])) * 8
+        >= Decimal("741.7543856198245")
+    )
+
+
 def test_rolling_capacity_measures_dispatch_to_journal_wall_time_not_worker_only(
     tmp_path: Path,
 ) -> None:

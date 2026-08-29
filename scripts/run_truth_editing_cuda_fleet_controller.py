@@ -904,9 +904,17 @@ class _RollingCapacityController:
         before_elapsed = float(self._judge_snapshot_before["elapsed_ms"]) / 1000.0
         after_elapsed = float(after_snapshot["elapsed_ms"]) / 1000.0
         judge_elapsed_total = max(0.0, after_elapsed - before_elapsed)
+        judge_elapsed_per_trial_upper_bound = (
+            math.nextafter(
+                judge_elapsed_total / commit.batch_size,
+                math.inf,
+            )
+            if judge_elapsed_total > 0
+            else 0.0
+        )
         judge_elapsed = max(
             judge_elapsed,
-            judge_elapsed_total / commit.batch_size,
+            judge_elapsed_per_trial_upper_bound,
         )
         wall_seconds = max(wall_seconds, generation_seconds + float(judge_elapsed))
         judge_cost_upper = max(
