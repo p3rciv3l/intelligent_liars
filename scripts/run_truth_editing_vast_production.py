@@ -54,6 +54,14 @@ def main() -> int:
         help="Private shared credentials file; requires --aws-profile.",
     )
     parser.add_argument("--aws-cli", default="aws")
+    parser.add_argument(
+        "--aws-minimum-validity-seconds",
+        type=int,
+        help=(
+            "Explicit lower bound for a refreshable AWS session. The default still "
+            "requires credentials for the entire adaptive lease."
+        ),
+    )
     args = parser.parse_args()
 
     config = ProductionVastConfig.from_mapping(json.loads(args.config.read_text()))
@@ -82,7 +90,17 @@ def main() -> int:
             raise SystemExit("--execute requires --confirmed-cost-approval")
         aws_credentials = None
         if config.phase == "adaptive":
-            required_validity = config.base_job.maximum_elapsed_seconds + 300
+            full_lease_validity = config.base_job.maximum_elapsed_seconds + 300
+            required_validity = (
+                full_lease_validity
+                if args.aws_minimum_validity_seconds is None
+                else args.aws_minimum_validity_seconds
+            )
+            if not 600 <= required_validity <= full_lease_validity:
+                raise SystemExit(
+                    "--aws-minimum-validity-seconds must be between 600 seconds "
+                    "and the adaptive lease plus cleanup window"
+                )
             if args.aws_profile is not None and args.aws_credentials_file is None:
                 aws_credentials = resolve_aws_cli_profile_credentials(
                     profile_name=args.aws_profile,
