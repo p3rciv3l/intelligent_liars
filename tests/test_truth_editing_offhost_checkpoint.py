@@ -16,6 +16,7 @@ from intelligent_liars.truth_editing_offhost_checkpoint import (
     OffHostCheckpointTarget,
     S3VersionedObjectStore,
     SnapshotBinding,
+    materialize_offhost_partial_snapshot,
     hydrate_offhost_partial_snapshot,
     hydrate_offhost_snapshot,
     materialize_offhost_snapshot,
@@ -593,6 +594,29 @@ def test_materializer_copies_only_resume_state_and_rejects_symlinks(
             judge_cache_dir=bad / "judge-cache",
             judge_budget_ledger_dir=bad / "judge-budget-ledger",
         )
+
+
+def test_partial_materializer_ignores_runtime_transient_staging_directories(
+    tmp_path: Path,
+) -> None:
+    host = tmp_path / "host"
+    events = _pending_runtime(host, (0,))
+    transient = host / "runtime/.batch.staging-314-123"
+    transient.mkdir()
+    (transient / "incomplete.bin").write_bytes(b"not durable")
+
+    snapshot, _binding_value = materialize_offhost_partial_snapshot(
+        tmp_path / "partial-snapshot",
+        committed_binding=_binding(0),
+        durable_event=events[0],
+        adaptive_state_root=host / "adaptive-state",
+        fleet_receipt_dir=host / "fleet-receipts",
+        runtime_output_dir=host / "runtime",
+        judge_cache_dir=host / "judge-cache",
+        judge_budget_ledger_dir=host / "judge-budget-ledger",
+    )
+
+    assert not (snapshot / "runtime" / transient.name).exists()
 
 
 def test_clean_host_hydration_atomically_reconstructs_canonical_runtime_layout(

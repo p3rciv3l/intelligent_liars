@@ -1138,6 +1138,53 @@ def _snapshot_files(
     return files
 
 
+_TRANSIENT_ENTRY_MARKERS = (".staging-", ".tmp-", ".partial-", ".part")
+
+
+def _is_transient_entry(name: str) -> bool:
+    """Identify writer-owned temporary entries that are never resume state."""
+
+    return name.startswith(".") and any(
+        marker in name for marker in _TRANSIENT_ENTRY_MARKERS
+    )
+
+
+def _ignore_transient_entries(
+    _directory: str, names: list[str]
+) -> list[str]:
+    """Keep concurrent atomic-writer staging paths out of copied snapshots."""
+
+    return [name for name in names if _is_transient_entry(name)]
+
+
+def _copy_resume_tree(
+    source: Path, destination: Path, *, source_label: str
+) -> None:
+    """Copy a mutable resume tree while excluding ephemeral writer staging."""
+
+    if source.is_symlink() or not source.is_dir():
+        raise OffHostCheckpointError(
+            f"{source_label} source is missing or unsafe: {source.name}"
+        )
+    for directory, dirnames, filenames in os.walk(source, topdown=True):
+        # Prune temporary directories before checking symlinks. They may be
+        # created and removed by a concurrent worker while the snapshot runs.
+        dirnames[:] = [
+            name for name in dirnames if not _is_transient_entry(name)
+        ]
+        for name in (*dirnames, *filenames):
+            if (Path(directory) / name).is_symlink():
+                raise OffHostCheckpointError(
+                    f"{source_label} source contains a symlink: {source.name}"
+                )
+    shutil.copytree(
+        source,
+        destination,
+        symlinks=False,
+        ignore=_ignore_transient_entries,
+    )
+
+
 def _validate_fleet_receipts(root: Path, binding: SnapshotBinding) -> None:
     directory = root / "fleet-receipts"
     expected = {f"trial-{ordinal:04d}.json" for ordinal in range(binding.completed_trials)}
@@ -1437,11 +1484,7 @@ def materialize_offhost_snapshot(
             ("judge-budget-ledger", judge_budget_ledger_dir),
         ):
             source = Path(source_value)
-            if source.is_symlink() or not source.is_dir():
-                raise OffHostCheckpointError(f"snapshot source is missing or unsafe: {name}")
-            if any(path.is_symlink() for path in source.rglob("*")):
-                raise OffHostCheckpointError(f"snapshot source contains a symlink: {name}")
-            shutil.copytree(source, staging / name, symlinks=False)
+            _copy_resume_tree(source, staging / name, source_label="snapshot")
         _validate_snapshot(staging, binding)
         os.rename(staging, target)
         _fsync_directory(target.parent)
@@ -1507,11 +1550,7 @@ def materialize_offhost_partial_snapshot(
             ("judge-budget-ledger", judge_budget_ledger_dir),
         ):
             source = Path(source_value)
-            if source.is_symlink() or not source.is_dir():
-                raise OffHostCheckpointError(f"partial source is missing or unsafe: {name}")
-            if any(path.is_symlink() for path in source.rglob("*")):
-                raise OffHostCheckpointError(f"partial source contains a symlink: {name}")
-            shutil.copytree(source, staging / name, symlinks=False)
+            _copy_resume_tree(source, staging / name, source_label="partial")
         _, binding = _derive_partial_snapshot(staging, committed_binding)
         ordinal = durable_event.get("ordinal")
         event_receipt = next(
