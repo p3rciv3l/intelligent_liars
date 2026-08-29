@@ -614,15 +614,23 @@ def _is_derivative_budget_circuit_failure(receipt: JudgeCacheReceipt) -> bool:
     )
 
 
-def _is_schema_terminal_superseded_by_current_adapter(
+def _is_terminal_superseded_by_current_adapter(
     receipt: JudgeCacheReceipt,
 ) -> bool:
     failure = receipt.operational_failure
     return bool(
         receipt.code_sha256 != _code_sha256()
-        and receipt.operational_status == "schema_error"
         and failure is not None
-        and failure.code == "schema_validation_error"
+        and (
+            (
+                receipt.operational_status == "schema_error"
+                and failure.code == "schema_validation_error"
+            )
+            or (
+                receipt.operational_status == "invalid_json"
+                and failure.code == "empty_response"
+            )
+        )
     )
 
 
@@ -661,7 +669,7 @@ class MemoryJudgeCache:
             if receipt is not None
             and (
                 _is_derivative_budget_circuit_failure(receipt)
-                or _is_schema_terminal_superseded_by_current_adapter(receipt)
+                or _is_terminal_superseded_by_current_adapter(receipt)
             )
             else receipt
         )
@@ -676,7 +684,7 @@ class MemoryJudgeCache:
         if _is_derivative_budget_circuit_failure(parsed):
             return parsed
         prior = self._terminal_failures.get(key)
-        if prior is None or _is_schema_terminal_superseded_by_current_adapter(prior):
+        if prior is None or _is_terminal_superseded_by_current_adapter(prior):
             self._terminal_failures[key] = parsed
         return self._terminal_failures[key]
 
@@ -819,7 +827,7 @@ class FileJudgeCache:
             return (
                 None
                 if inferred is not None
-                and _is_schema_terminal_superseded_by_current_adapter(inferred)
+                and _is_terminal_superseded_by_current_adapter(inferred)
                 else inferred
             )
         try:
@@ -853,7 +861,7 @@ class FileJudgeCache:
         return (
             None
             if _is_derivative_budget_circuit_failure(receipt)
-            or _is_schema_terminal_superseded_by_current_adapter(receipt)
+            or _is_terminal_superseded_by_current_adapter(receipt)
             else receipt
         )
 

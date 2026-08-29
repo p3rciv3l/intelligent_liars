@@ -1375,6 +1375,37 @@ def test_prior_adapter_schema_terminal_is_reprocessed_but_preserved(
     assert receipt in cache.failure_receipts(receipt.cache_key_sha256)
 
 
+def test_prior_adapter_empty_correction_terminal_is_reprocessed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    invalid = _absolute_response()
+    invalid["unexpected"] = True
+    empty = _transport_response(_absolute_response())
+    empty["content"] = ""
+    cache = FileJudgeCache(tmp_path / "judge-cache")
+    with pytest.raises(OperationalJudgeFailure) as first:
+        TruthEditingLiveJudge(
+            transport=StoredJudgeTransport([_transport_response(invalid), empty]),
+            cache=cache,
+        ).judge(_record())
+    receipt = first.value.receipt
+    assert receipt.operational_failure is not None
+    assert receipt.operational_failure.code == "empty_response"
+    monkeypatch.setattr(live_judge_module, "_code_sha256", lambda: "f" * 64)
+    monkeypatch.setattr(
+        live_judge_module,
+        "_COMPATIBLE_ADAPTER_CODE_SHA256S",
+        {*live_judge_module._COMPATIBLE_ADAPTER_CODE_SHA256S, receipt.code_sha256},
+    )
+
+    valid = StoredJudgeTransport([_transport_response(_absolute_response())])
+    evidence = TruthEditingLiveJudge(transport=valid, cache=cache).judge(_record())
+
+    assert evidence.result.operational_status == "succeeded"
+    assert len(valid.requests) == 1
+    assert receipt in cache.failure_receipts(receipt.cache_key_sha256)
+
+
 def test_budget_ledger_remains_authoritative_for_exact_ambiguous_request(
     tmp_path: Path,
 ) -> None:
