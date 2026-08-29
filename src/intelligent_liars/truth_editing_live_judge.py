@@ -55,6 +55,10 @@ from intelligent_liars.truth_editing_pairwise_reconciliation import (
 
 _PROVIDER_ROUTE = "z-ai/fp8"
 _COMPATIBLE_ADAPTER_CODE_SHA256S = {
+    # Same frozen requests and strict parsers before the paid OpenRouter seam
+    # preserved a provider response with known usage/cost but missing text.
+    # Existing receipts remain valid; only response accounting was hardened.
+    "693a136e661c0ad9d5daf4318649ceb16fd66e6d731ed85e6b376baece0e71f2",
     # Same frozen provider, prompts, schemas, and local parsers before routine
     # Z.AI requests moved from unsupported json_schema transport enforcement to
     # response-healed json_object with the strict schema embedded in the prompt.

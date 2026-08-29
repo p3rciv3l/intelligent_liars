@@ -1027,6 +1027,7 @@ def test_openrouter_transport_binds_every_frozen_parameter_before_generate(monke
     assert observed["plugins"] == [{"id": "response-healing"}]
     assert observed["response_format"] == {"type": "json_object"}
     assert observed["provider"] == FROZEN_GLM_FLASH_JUDGE_REQUEST["provider"]
+    assert result["content"] == json.dumps(_absolute_response())
     assert result["provider_route"] == "z-ai/fp8"
 
 
