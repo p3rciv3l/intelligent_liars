@@ -258,6 +258,17 @@ def test_replayed_batch_reuses_already_recorded_progress_node(
     )
 
 
+def test_replayed_batch_reuses_already_published_offhost_boundary() -> None:
+    binding = SimpleNamespace(completed_trials=48, identity="same")
+
+    assert MODULE.offhost_boundary_is_already_published(binding, binding)
+    assert not MODULE.offhost_boundary_is_already_published(None, binding)
+    assert not MODULE.offhost_boundary_is_already_published(
+        binding,
+        SimpleNamespace(completed_trials=56, identity="same"),
+    )
+
+
 def test_replayed_batch_progress_check_fails_closed_on_drift(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

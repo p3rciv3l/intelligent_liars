@@ -207,6 +207,15 @@ def adaptive_progress_boundary_is_already_recorded(
     return True
 
 
+def offhost_boundary_is_already_published(
+    latest_binding: object | None,
+    requested_binding: object,
+) -> bool:
+    """Recognize an exact committed boundary during at-least-once replay."""
+
+    return latest_binding is not None and latest_binding == requested_binding
+
+
 DEFAULT_CAPACITY_POLICY = Path("configs/truth_editing_adaptive_capacity_policy_v1.json")
 _OUTPUT_FIELDS = {
     "journal_path": "study/study-journal.json",
@@ -1302,6 +1311,7 @@ def main(argv: list[str] | None = None) -> int:
         completed_trials: int,
         staging_identity_sha256: str,
     ) -> None:
+        nonlocal latest_binding
         publish_adaptive_checkpoint(
             args.output_root.resolve(),
             args.checkpoint_publication_root.resolve(),
@@ -1318,6 +1328,8 @@ def main(argv: list[str] | None = None) -> int:
             wandb_run_id=monitor.run_id,
             completed_trials=completed_trials,
         )
+        if offhost_boundary_is_already_published(latest_binding, binding):
+            return
         snapshot_path = (
             args.output_root.resolve()
             / "checkpoint-staging"
@@ -1334,6 +1346,7 @@ def main(argv: list[str] | None = None) -> int:
                 judge_budget_ledger_dir=production.judge_budget_ledger_dir,
             )
         offhost_repository.publish(snapshot_path, binding)
+        latest_binding = binding
         shutil.rmtree(snapshot_path, ignore_errors=True)
 
     def record_and_publish(commit: CompletedBatchCommit) -> None:
