@@ -430,7 +430,7 @@ def _validated_progress(progress: AdaptiveRunProgress) -> None:
         raise WandbCheckpointError("adaptive progress trial counts are inconsistent")
     if progress.stage not in _STAGES:
         raise WandbCheckpointError("adaptive progress stage is invalid")
-    if progress.stage != "broad_coverage" and any(
+    if progress.stage == "adaptive_search" and any(
         completed != required for completed, required in progress.coverage.values()
     ):
         raise WandbCheckpointError(

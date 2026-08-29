@@ -102,6 +102,44 @@ def test_controller_price_environment_accepts_only_explicit_host_total_unit() ->
         )
 
 
+def test_controller_recovers_orphaned_judge_reservations_before_replay() -> None:
+    tree = ast.parse(SCRIPT.read_text())
+    main = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "main"
+    )
+    recovery_call = next(
+        node
+        for node in ast.walk(main)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and isinstance(node.func.value, ast.Name)
+        and node.func.value.id == "judge_budget"
+        and node.func.attr == "recover_orphaned_reservations"
+    )
+    spend_reader_assignment = next(
+        node
+        for node in main.body
+        if isinstance(node, ast.Assign)
+        and any(
+            isinstance(target, ast.Name) and target.id == "spend_reader"
+            for target in node.targets
+        )
+    )
+    study_run = next(
+        node
+        for node in ast.walk(main)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and isinstance(node.func.value, ast.Name)
+        and node.func.value.id == "run"
+        and node.func.attr == "run"
+    )
+
+    assert recovery_call.lineno < spend_reader_assignment.lineno < study_run.lineno
+
+
 def test_real_main_publishes_committed_batch_before_next_batch_admission() -> None:
     """A completed paid batch must be off-host before more work is authorized."""
 
@@ -171,7 +209,6 @@ def test_real_main_publishes_committed_batch_before_next_batch_admission() -> No
     # above returns, so authorization cannot precede verified publication.
     assert isinstance(keyword_values["batch_admission"], ast.Name)
     assert keyword_values["batch_admission"].id == "durable_batch_admission"
-
     prepared = next(
         node
         for node in main.body
@@ -751,6 +788,120 @@ def test_rolling_capacity_measures_dispatch_to_journal_wall_time_not_worker_only
 
     rolling = json.loads(rolling_path.read_text())
     assert rolling["measured"]["trial_wall_seconds"] >= 120.0
+
+
+def test_rolling_capacity_resume_excludes_offline_repair_time_but_keeps_spend(
+    tmp_path: Path,
+) -> None:
+    judge_path = tmp_path / "judge-ledger"
+    judge_path.mkdir()
+    judge_receipt = _judge_receipt()
+    judge_snapshot = _judge_snapshot()
+    judge = SimpleNamespace(
+        path=judge_path,
+        receipt=lambda: dict(judge_receipt),
+        monitoring_snapshot=lambda: dict(judge_snapshot),
+    )
+    rolling_path = tmp_path / "rolling.json"
+    now = [NOW]
+    controller = MODULE._RollingCapacityController(
+        policy=_policy(),
+        initial_receipt=_receipt(),
+        rolling_receipt_path=rolling_path,
+        spend_reader=lambda: _spend(infrastructure="2"),
+        judge_budget=judge,
+        clock=lambda: now[0],
+    )
+    controller.record_batch_admission(completed_trials=0)
+
+    now[0] = NOW + timedelta(hours=2)
+    resumed = MODULE._RollingCapacityController(
+        policy=_policy(),
+        initial_receipt=_receipt(),
+        rolling_receipt_path=rolling_path,
+        spend_reader=lambda: _spend(infrastructure="2"),
+        judge_budget=judge,
+        clock=lambda: now[0],
+    )
+    for index in range(8):
+        resumed.record_trial(
+            index,
+            f"trial-{index:04d}",
+            {
+                "evaluation_seconds": 1.0,
+                "generated_tokens": 120.0,
+                "generated_tokens_per_second": 120.0,
+            },
+        )
+    now[0] += timedelta(seconds=10)
+    resumed.reforecast(SimpleNamespace(
+        batch_ordinal=0,
+        batch_sha256="e" * 64,
+        batch_size=8,
+        completed_trials=8,
+        trials=tuple(
+            SimpleNamespace(trial_id=f"trial-{index:04d}")
+            for index in range(8)
+        ),
+    ))
+
+    rolling = json.loads(rolling_path.read_text())
+    assert rolling["measured"]["trial_wall_seconds"] < 60.0
+    assert rolling["budget"]["actual_infrastructure_usd"] == "2"
+
+
+def test_rolling_capacity_clock_accumulates_only_explicit_active_intervals(
+    tmp_path: Path,
+) -> None:
+    judge_path = tmp_path / "judge-ledger"
+    judge_path.mkdir()
+    judge_receipt = _judge_receipt()
+    judge_snapshot = _judge_snapshot()
+    judge = SimpleNamespace(
+        path=judge_path,
+        receipt=lambda: dict(judge_receipt),
+        monitoring_snapshot=lambda: dict(judge_snapshot),
+    )
+    rolling_path = tmp_path / "rolling.json"
+    now = [NOW]
+    controller = MODULE._RollingCapacityController(
+        policy=_policy(),
+        initial_receipt=_receipt(),
+        rolling_receipt_path=rolling_path,
+        spend_reader=lambda: _spend(),
+        judge_budget=judge,
+        clock=lambda: now[0],
+    )
+    controller.record_batch_admission(completed_trials=0)
+    now[0] += timedelta(seconds=12)
+    controller.pause_batch_clock(completed_trials=0)
+    now[0] += timedelta(hours=3)
+    controller.record_batch_admission(completed_trials=0)
+    now[0] += timedelta(seconds=18)
+
+    for index in range(8):
+        controller.record_trial(
+            index,
+            f"trial-{index:04d}",
+            {
+                "evaluation_seconds": 1.0,
+                "generated_tokens": 120.0,
+                "generated_tokens_per_second": 120.0,
+            },
+        )
+    controller.reforecast(SimpleNamespace(
+        batch_ordinal=0,
+        batch_sha256="e" * 64,
+        batch_size=8,
+        completed_trials=8,
+        trials=tuple(
+            SimpleNamespace(trial_id=f"trial-{index:04d}")
+            for index in range(8)
+        ),
+    ))
+
+    rolling = json.loads(rolling_path.read_text())
+    assert rolling["measured"]["trial_wall_seconds"] == pytest.approx(30.0)
 
 
 def test_rolling_capacity_persists_infeasible_projection_before_typed_abort(

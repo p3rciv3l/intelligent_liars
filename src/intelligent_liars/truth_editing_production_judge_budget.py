@@ -80,6 +80,21 @@ def _sha(value: Any) -> str:
     return hashlib.sha256(_canonical(value)).hexdigest()
 
 
+def _is_sha256(value: Any) -> bool:
+    return isinstance(value, str) and len(value) == 64 and all(
+        character in "0123456789abcdef" for character in value
+    )
+
+
+def _retry_request_sha(canonical_request_sha: str, attempt_number: int) -> str:
+    return _sha(
+        {
+            "canonical_request_sha256": canonical_request_sha,
+            "attempt_number": attempt_number,
+        }
+    )
+
+
 def _money(value: Any, label: str) -> Decimal:
     if isinstance(value, bool):
         raise ProductionJudgeBudgetError(f"{label} must be finite nonnegative money")
@@ -189,8 +204,10 @@ class ProductionJudgeBudget:
                 # re-check replay/circuit state before touching the provider.
                 with ledger._transport_locked():
                     request_copy = copy.deepcopy(dict(request))
-                    request_sha = _sha(request_copy)
-                    replay = ledger._reserve_or_replay(request_sha, request_copy)
+                    canonical_request_sha = _sha(request_copy)
+                    request_sha, replay = ledger._reserve_or_replay(
+                        canonical_request_sha, request_copy
+                    )
                     if replay is not None:
                         return replay
                     try:
@@ -211,6 +228,71 @@ class ProductionJudgeBudget:
                         ) from error
 
         return BudgetedTransport()
+
+    def recover_orphaned_reservations(self) -> tuple[dict[str, Any], ...]:
+        """Fully account crashed calls and make their exact requests retryable.
+
+        The transport lock proves that no paid call is still active when a
+        reservation is classified as orphaned.  Recovery is append-only: the
+        original reservation remains charged at its full authorization, and a
+        content-bound event points canonical replay to a fresh attempt identity.
+        """
+
+        recovered: list[dict[str, Any]] = []
+        with self._transport_locked(), self._locked():
+            for call_dir in sorted((self.path / "calls").iterdir()):
+                if call_dir.is_symlink() or not call_dir.is_dir():
+                    raise ProductionJudgeBudgetError(
+                        "judge budget call entry is invalid"
+                    )
+                reservation = self._read_event(
+                    call_dir / "reservation.json", "reservation"
+                )
+                terminal_paths = (
+                    call_dir / "completed.json",
+                    call_dir / "ambiguous.json",
+                    call_dir / "overrun.json",
+                )
+                if any(path.exists() for path in terminal_paths):
+                    continue
+                existing_recovery = self._read_optional_event(
+                    call_dir / "orphan-recovery.json", "orphan_recovery"
+                )
+                if existing_recovery is not None:
+                    self._validated_orphan_recovery(
+                        call_dir, reservation, existing_recovery
+                    )
+                    continue
+                request_sha = call_dir.name
+                canonical_sha = str(
+                    reservation.get("canonical_request_sha256", request_sha)
+                )
+                attempt_number = reservation.get("attempt_number", 0)
+                if (
+                    not _is_sha256(canonical_sha)
+                    or isinstance(attempt_number, bool)
+                    or not isinstance(attempt_number, int)
+                    or attempt_number < 0
+                ):
+                    raise ProductionJudgeBudgetError(
+                        "judge budget retry identity differs"
+                    )
+                retry_number = attempt_number + 1
+                retry_sha = _retry_request_sha(canonical_sha, retry_number)
+                unsigned = self._event(
+                    "orphan_recovery",
+                    request_sha,
+                    canonical_request_sha256=canonical_sha,
+                    attempt_number=attempt_number,
+                    retry_attempt_number=retry_number,
+                    retry_request_sha256=retry_sha,
+                    reservation_event_sha256=str(reservation["content_sha256"]),
+                    reason="orphaned_reservation_fully_accounted",
+                )
+                path = call_dir / "orphan-recovery.json"
+                self._write_once(path, unsigned)
+                recovered.append(self._read_event(path, "orphan_recovery"))
+        return tuple(copy.deepcopy(recovered))
 
     def receipt(self) -> dict[str, Any]:
         with self._locked():
@@ -319,13 +401,15 @@ class ProductionJudgeBudget:
 
     def _reserve_or_replay(
         self, request_sha: str, request: Mapping[str, Any]
-    ) -> dict[str, Any] | None:
+    ) -> tuple[str, dict[str, Any] | None]:
         estimate = _maximum_request_cost(request)
         if estimate > self.config.per_call_reservation_usd:
             raise ProductionJudgeBudgetError(
                 "request exceeds the configured per-call reservation"
             )
         with self._locked():
+            canonical_request_sha = request_sha
+            request_sha = self._current_attempt_sha(canonical_request_sha)
             call_dir = self.path / "calls" / request_sha
             completed = (
                 self._read_optional_event(call_dir / "completed.json", "completed")
@@ -338,7 +422,7 @@ class ProductionJudgeBudget:
                     raise ProductionJudgeBudgetError(
                         "completed judge budget event has no response"
                     )
-                return copy.deepcopy(dict(response))
+                return request_sha, copy.deepcopy(dict(response))
             ambiguous = (
                 self._read_optional_event(call_dir / "ambiguous.json", "ambiguous")
                 if call_dir.exists()
@@ -371,9 +455,75 @@ class ProductionJudgeBudget:
                 request_sha,
                 authorized_usd=_money_text(self.config.per_call_reservation_usd),
                 request_sha256=request_sha,
+                **(
+                    {}
+                    if request_sha == canonical_request_sha
+                    else {
+                        "canonical_request_sha256": canonical_request_sha,
+                        "attempt_number": self._attempt_number(
+                            canonical_request_sha, request_sha
+                        ),
+                    }
+                ),
             )
             self._write_once(reservation_path, unsigned)
-            return None
+            return request_sha, None
+
+    def _current_attempt_sha(self, canonical_request_sha: str) -> str:
+        request_sha = canonical_request_sha
+        seen: set[str] = set()
+        while True:
+            if request_sha in seen:
+                raise ProductionJudgeBudgetError("judge budget retry chain is cyclic")
+            seen.add(request_sha)
+            recovery_path = self.path / "calls" / request_sha / "orphan-recovery.json"
+            if not recovery_path.exists():
+                return request_sha
+            recovery = self._read_event(recovery_path, "orphan_recovery")
+            call_dir = recovery_path.parent
+            reservation = self._read_event(call_dir / "reservation.json", "reservation")
+            retry_sha = self._validated_orphan_recovery(
+                call_dir, reservation, recovery
+            )
+            if recovery["canonical_request_sha256"] != canonical_request_sha:
+                raise ProductionJudgeBudgetError("judge budget retry identity differs")
+            request_sha = str(retry_sha)
+
+    def _validated_orphan_recovery(
+        self,
+        call_dir: Path,
+        reservation: Mapping[str, Any],
+        recovery: Mapping[str, Any],
+    ) -> str:
+        request_sha = call_dir.name
+        canonical_sha = reservation.get("canonical_request_sha256", request_sha)
+        attempt_number = reservation.get("attempt_number", 0)
+        retry_number = recovery.get("retry_attempt_number")
+        retry_sha = recovery.get("retry_request_sha256")
+        if (
+            recovery.get("request_sha256") != request_sha
+            or not _is_sha256(canonical_sha)
+            or isinstance(attempt_number, bool)
+            or not isinstance(attempt_number, int)
+            or attempt_number < 0
+            or recovery.get("canonical_request_sha256") != canonical_sha
+            or recovery.get("attempt_number") != attempt_number
+            or retry_number != attempt_number + 1
+            or retry_sha != _retry_request_sha(str(canonical_sha), attempt_number + 1)
+            or recovery.get("reservation_event_sha256")
+            != reservation.get("content_sha256")
+            or recovery.get("reason") != "orphaned_reservation_fully_accounted"
+        ):
+            raise ProductionJudgeBudgetError("judge budget retry identity differs")
+        return str(retry_sha)
+
+    def _attempt_number(self, canonical_request_sha: str, request_sha: str) -> int:
+        attempt = 1
+        while attempt < 1_000_000:
+            if _retry_request_sha(canonical_request_sha, attempt) == request_sha:
+                return attempt
+            attempt += 1
+        raise ProductionJudgeBudgetError("judge budget retry identity differs")
 
     def _record_ambiguous(self, request_sha: str, error: Exception) -> None:
         failure = _safe_transport_failure(error)
@@ -447,7 +597,17 @@ class ProductionJudgeBudget:
             completed = self._read_optional_event(call_dir / "completed.json", "completed")
             ambiguous = self._read_optional_event(call_dir / "ambiguous.json", "ambiguous")
             overrun = self._read_optional_event(call_dir / "overrun.json", "overrun")
-            terminal_count = sum(item is not None for item in (completed, ambiguous, overrun))
+            orphan_recovery = self._read_optional_event(
+                call_dir / "orphan-recovery.json", "orphan_recovery"
+            )
+            if orphan_recovery is not None:
+                self._validated_orphan_recovery(
+                    call_dir, reservation, orphan_recovery
+                )
+            terminal_count = sum(
+                item is not None
+                for item in (completed, ambiguous, overrun, orphan_recovery)
+            )
             if terminal_count > 1:
                 raise ProductionJudgeBudgetError("judge budget call has conflicting outcomes")
             if completed is not None:
@@ -463,7 +623,7 @@ class ProductionJudgeBudget:
             else:
                 amount = _money(reservation.get("authorized_usd"), "authorized price")
                 reserved += amount
-                if ambiguous is not None:
+                if ambiguous is not None or orphan_recovery is not None:
                     ambiguous_count += 1
                 else:
                     pending_count += 1

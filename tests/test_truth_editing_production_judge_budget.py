@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import multiprocessing
 import os
 import threading
@@ -149,7 +150,16 @@ def _process_crash_inside_transport(root: str, entered: object) -> None:
 def test_reserves_before_call_reconciles_actual_and_replays_without_second_call(
     tmp_path: Path,
 ) -> None:
-    transport = _Transport(price=0.01)
+    class RecordingTransport(_Transport):
+        def __init__(self) -> None:
+            super().__init__(price=0.01)
+            self.request: object | None = None
+
+        def complete(self, request: object) -> dict[str, object]:
+            self.request = request
+            return super().complete(request)
+
+    transport = RecordingTransport()
     budget = ProductionJudgeBudget(tmp_path / "ledger", config=_config())
     wrapped = budget.transport(transport)
 
@@ -158,6 +168,7 @@ def test_reserves_before_call_reconciles_actual_and_replays_without_second_call(
 
     assert first == second
     assert transport.calls == 1
+    assert transport.request == _request(0)
     receipt = parse_production_judge_budget_receipt(budget.receipt())
     assert receipt["actual_spend_usd"] == "0.01"
     assert receipt["reserved_or_spent_usd"] == "0.01"
@@ -468,6 +479,133 @@ def test_paid_transport_gate_is_released_when_worker_crashes(tmp_path: Path) -> 
         _Transport()
     ).complete(_request(1))
     assert result["price_usd"] == 0.01
+
+
+def test_orphaned_reservation_is_fully_charged_and_exact_request_can_retry(
+    tmp_path: Path,
+) -> None:
+    context = multiprocessing.get_context("fork")
+    root = tmp_path / "ledger"
+    entered = context.Event()
+    process = context.Process(
+        target=_process_crash_inside_transport,
+        args=(str(root), entered),
+    )
+    process.start()
+    assert entered.wait(timeout=5)
+    process.join(timeout=5)
+    assert process.exitcode == 7
+
+    budget = ProductionJudgeBudget(root, config=_config())
+    recovery = budget.recover_orphaned_reservations()
+
+    class RecordingRetryTransport(_Transport):
+        def __init__(self) -> None:
+            super().__init__(price=0.01)
+            self.request: object | None = None
+
+        def complete(self, request: object) -> dict[str, object]:
+            self.request = request
+            return super().complete(request)
+
+    transport = RecordingRetryTransport()
+    first = budget.transport(transport).complete(_request(0))
+    reopened = ProductionJudgeBudget(root, config=_config())
+    assert reopened.recover_orphaned_reservations() == ()
+    second = reopened.transport(transport).complete(_request(0))
+
+    assert len(recovery) == 1
+    assert recovery[0]["status"] == "orphan_recovery"
+    assert recovery[0]["reason"] == "orphaned_reservation_fully_accounted"
+    assert first == second
+    assert transport.calls == 1
+    assert transport.request == _request(0)
+    receipt = reopened.receipt()
+    assert receipt["actual_spend_usd"] == "0.01"
+    assert receipt["reserved_or_spent_usd"] == "0.035"
+    assert receipt["completed_call_count"] == 1
+    assert receipt["ambiguous_call_count"] == 1
+    assert receipt["pending_call_count"] == 0
+    assert not (root / "circuit.json").exists()
+
+    original = next(root.glob("calls/*/orphan-recovery.json"))
+    event = json.loads(original.read_text())
+    assert event["canonical_request_sha256"] == original.parent.name
+    retry_dir = root / "calls" / event["retry_request_sha256"]
+    assert (retry_dir / "completed.json").exists()
+    assert (original.parent / "reservation.json").exists()
+
+
+def test_repeated_orphan_recovery_charges_every_attempt_once(tmp_path: Path) -> None:
+    context = multiprocessing.get_context("fork")
+    root = tmp_path / "ledger"
+
+    for expected_attempt in (1, 2):
+        entered = context.Event()
+        process = context.Process(
+            target=_process_crash_inside_transport,
+            args=(str(root), entered),
+        )
+        process.start()
+        assert entered.wait(timeout=5)
+        process.join(timeout=5)
+        assert process.exitcode == 7
+        recovered = ProductionJudgeBudget(
+            root, config=_config()
+        ).recover_orphaned_reservations()
+        assert len(recovered) == 1
+        assert recovered[0]["retry_attempt_number"] == expected_attempt
+
+    transport = _Transport(price=0.01)
+    budget = ProductionJudgeBudget(root, config=_config())
+    budget.transport(transport).complete(_request(0))
+    budget.transport(transport).complete(_request(0))
+
+    assert transport.calls == 1
+    receipt = budget.receipt()
+    assert receipt["actual_spend_usd"] == "0.01"
+    assert receipt["reserved_or_spent_usd"] == "0.06"
+    assert receipt["ambiguous_call_count"] == 2
+    assert receipt["completed_call_count"] == 1
+
+
+def test_orphan_recovery_retry_identity_fails_closed_on_tampering(
+    tmp_path: Path,
+) -> None:
+    context = multiprocessing.get_context("fork")
+    root = tmp_path / "ledger"
+    entered = context.Event()
+    process = context.Process(
+        target=_process_crash_inside_transport,
+        args=(str(root), entered),
+    )
+    process.start()
+    assert entered.wait(timeout=5)
+    process.join(timeout=5)
+    assert process.exitcode == 7
+    budget = ProductionJudgeBudget(root, config=_config())
+    budget.recover_orphaned_reservations()
+
+    recovery_path = next(root.glob("calls/*/orphan-recovery.json"))
+    recovery = json.loads(recovery_path.read_text())
+    recovery["retry_request_sha256"] = "a" * 64
+    unsigned = dict(recovery)
+    unsigned.pop("content_sha256")
+    recovery["content_sha256"] = hashlib.sha256(
+        json.dumps(
+            unsigned,
+            allow_nan=False,
+            ensure_ascii=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode()
+    ).hexdigest()
+    recovery_path.write_text(
+        json.dumps(recovery, separators=(",", ":"), sort_keys=True) + "\n"
+    )
+
+    with pytest.raises(ProductionJudgeBudgetError, match="retry identity"):
+        budget.transport(_Transport()).complete(_request(0))
 
 
 def test_eight_process_workers_share_the_same_locked_ledger(tmp_path: Path) -> None:

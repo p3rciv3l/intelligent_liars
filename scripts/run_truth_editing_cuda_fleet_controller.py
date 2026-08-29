@@ -505,6 +505,7 @@ class _RollingCapacityController:
             self._judge_before = live_judge_receipt
             self._judge_snapshot_before = live_judge_snapshot
             self._save_judge_state()
+        self._resume_batch_clock_after_controller_restart()
 
     def _save_judge_state(self) -> None:
         unsigned = {
@@ -541,30 +542,41 @@ class _RollingCapacityController:
         if expected_completed > self._policy.maximum_trials:
             raise CapacityPlanningError("batch admission exceeds the trial ceiling")
         if self._batch_clock_path.exists():
-            current = _read_object(self._batch_clock_path, "batch wall clock")
-            unsigned = dict(current)
-            claimed = unsigned.pop("self_sha256", None)
-            if (
-                set(unsigned)
-                != {"format", "expected_completed_trials", "started_at_utc"}
-                or unsigned.get("format")
-                != "truth_editing_controller_batch_wall_clock_v1"
-                or claimed != canonical_sha256(unsigned)
-            ):
-                raise CapacityPlanningError("batch wall clock is invalid")
+            current = self._load_batch_clock()
             if current["expected_completed_trials"] != expected_completed:
                 raise CapacityPlanningError("another batch wall clock is active")
+            if current["active_started_at_utc"] is None:
+                current["active_started_at_utc"] = self._clock_text(self._clock())
+                self._write_batch_clock(current)
             return
-        now = self._clock()
-        if now.tzinfo is None:
-            raise CapacityPlanningError("batch wall clock must be timezone-aware")
-        now = now.astimezone(timezone.utc)
-        unsigned = {
-            "format": "truth_editing_controller_batch_wall_clock_v1",
+        self._write_batch_clock({
+            "format": "truth_editing_controller_batch_wall_clock_v2",
             "expected_completed_trials": expected_completed,
-            "started_at_utc": now.isoformat().replace("+00:00", "Z"),
-        }
-        value = {**unsigned, "self_sha256": canonical_sha256(unsigned)}
+            "active_elapsed_seconds": 0.0,
+            "active_started_at_utc": self._clock_text(self._clock()),
+        })
+
+    @staticmethod
+    def _clock_text(value: datetime) -> str:
+        if value.tzinfo is None:
+            raise CapacityPlanningError("batch wall clock must be timezone-aware")
+        return value.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+
+    @staticmethod
+    def _parse_clock_text(value: object) -> datetime:
+        if not isinstance(value, str) or not value.endswith("Z"):
+            raise CapacityPlanningError("batch wall clock timestamp is invalid")
+        try:
+            return datetime.fromisoformat(
+                value[:-1] + "+00:00"
+            ).astimezone(timezone.utc)
+        except (TypeError, ValueError) as error:
+            raise CapacityPlanningError(
+                "batch wall clock timestamp is invalid"
+            ) from error
+
+    def _write_batch_clock(self, unsigned: Mapping[str, object]) -> None:
+        value = {**unsigned, "self_sha256": canonical_sha256(dict(unsigned))}
         self._batch_clock_path.parent.mkdir(parents=True, exist_ok=True)
         temporary = self._batch_clock_path.with_name(
             f".{self._batch_clock_path.name}.{os.getpid()}.tmp"
@@ -574,45 +586,120 @@ class _RollingCapacityController:
         )
         temporary.replace(self._batch_clock_path)
 
-    def _batch_wall_seconds(self, *, completed_trials: int, observed: datetime) -> float | None:
-        if not self._batch_clock_path.exists():
-            return None
+    def _load_batch_clock(self) -> dict[str, object]:
         value = _read_object(self._batch_clock_path, "batch wall clock")
         unsigned = dict(value)
         claimed = unsigned.pop("self_sha256", None)
+        if claimed != canonical_sha256(unsigned):
+            raise CapacityPlanningError("batch wall clock is invalid")
         if (
-            set(unsigned) != {"format", "expected_completed_trials", "started_at_utc"}
-            or unsigned.get("format") != "truth_editing_controller_batch_wall_clock_v1"
-            or claimed != canonical_sha256(unsigned)
-            or value["expected_completed_trials"] != completed_trials
+            unsigned.get("format")
+            != "truth_editing_controller_batch_wall_clock_v2"
+            or set(unsigned) != {
+                "format", "expected_completed_trials",
+                "active_elapsed_seconds", "active_started_at_utc",
+            }
         ):
-            raise CapacityPlanningError("batch wall clock differs from completion")
-        timestamp = value["started_at_utc"]
-        if not isinstance(timestamp, str) or not timestamp.endswith("Z"):
-            raise CapacityPlanningError("batch wall clock timestamp is invalid")
-        try:
-            started = datetime.fromisoformat(
-                timestamp[:-1] + "+00:00"
-            ).astimezone(timezone.utc)
-        except (TypeError, ValueError) as error:
-            raise CapacityPlanningError("batch wall clock timestamp is invalid") from error
-        elapsed = (observed - started).total_seconds()
-        if elapsed < 0:
-            raise CapacityPlanningError("batch wall clock moved backwards")
-        return elapsed
+            raise CapacityPlanningError("batch wall clock is invalid")
+        expected = unsigned["expected_completed_trials"]
+        elapsed = unsigned["active_elapsed_seconds"]
+        active_started = unsigned["active_started_at_utc"]
+        if (
+            isinstance(expected, bool)
+            or not isinstance(expected, int)
+            or expected <= 0
+            or expected % self._policy.batch_size
+            or expected > self._policy.maximum_trials
+            or isinstance(elapsed, bool)
+            or not isinstance(elapsed, (int, float))
+            or not math.isfinite(float(elapsed))
+            or float(elapsed) < 0
+            or active_started is not None
+            and not isinstance(active_started, str)
+        ):
+            raise CapacityPlanningError("batch wall clock is invalid")
+        if active_started is not None:
+            self._parse_clock_text(active_started)
+        return unsigned
 
-    def _retire_completed_batch_clock(self, *, completed_trials: int) -> None:
+    def _resume_batch_clock_after_controller_restart(self) -> None:
+        """Resume an existing batch without charging controller-offline time."""
+
         if not self._batch_clock_path.exists():
             return
         value = _read_object(self._batch_clock_path, "batch wall clock")
         unsigned = dict(value)
         claimed = unsigned.pop("self_sha256", None)
-        if (
-            set(unsigned) != {"format", "expected_completed_trials", "started_at_utc"}
-            or unsigned.get("format") != "truth_editing_controller_batch_wall_clock_v1"
-            or claimed != canonical_sha256(unsigned)
-        ):
+        if claimed != canonical_sha256(unsigned):
             raise CapacityPlanningError("batch wall clock is invalid")
+        now_text = self._clock_text(self._clock())
+        if (
+            unsigned.get("format")
+            == "truth_editing_controller_batch_wall_clock_v1"
+            and set(unsigned)
+            == {"format", "expected_completed_trials", "started_at_utc"}
+        ):
+            self._parse_clock_text(unsigned["started_at_utc"])
+            migrated = {
+                "format": "truth_editing_controller_batch_wall_clock_v2",
+                "expected_completed_trials": unsigned["expected_completed_trials"],
+                "active_elapsed_seconds": 0.0,
+                "active_started_at_utc": now_text,
+            }
+            self._write_batch_clock(migrated)
+            self._load_batch_clock()
+            return
+        current = self._load_batch_clock()
+        current["active_started_at_utc"] = now_text
+        self._write_batch_clock(current)
+
+    def pause_batch_clock(self, *, completed_trials: int) -> None:
+        """Stop throughput timing while preserving the paid-spend ledger."""
+
+        if not self._batch_clock_path.exists():
+            return
+        current = self._load_batch_clock()
+        if current["expected_completed_trials"] != (
+            completed_trials + self._policy.batch_size
+        ):
+            raise CapacityPlanningError("batch wall clock differs from pause boundary")
+        active_started = current["active_started_at_utc"]
+        if active_started is None:
+            return
+        now = self._clock()
+        self._clock_text(now)
+        active_elapsed = (
+            now.astimezone(timezone.utc) - self._parse_clock_text(active_started)
+        ).total_seconds()
+        if active_elapsed < 0:
+            raise CapacityPlanningError("batch wall clock moved backwards")
+        current["active_elapsed_seconds"] = (
+            float(current["active_elapsed_seconds"]) + active_elapsed
+        )
+        current["active_started_at_utc"] = None
+        self._write_batch_clock(current)
+
+    def _batch_wall_seconds(self, *, completed_trials: int, observed: datetime) -> float | None:
+        if not self._batch_clock_path.exists():
+            return None
+        value = self._load_batch_clock()
+        if value["expected_completed_trials"] != completed_trials:
+            raise CapacityPlanningError("batch wall clock differs from completion")
+        elapsed = float(value["active_elapsed_seconds"])
+        active_started = value["active_started_at_utc"]
+        if active_started is not None:
+            active_elapsed = (
+                observed - self._parse_clock_text(active_started)
+            ).total_seconds()
+            if active_elapsed < 0:
+                raise CapacityPlanningError("batch wall clock moved backwards")
+            elapsed += active_elapsed
+        return elapsed
+
+    def _retire_completed_batch_clock(self, *, completed_trials: int) -> None:
+        if not self._batch_clock_path.exists():
+            return
+        value = self._load_batch_clock()
         expected = value["expected_completed_trials"]
         if expected == completed_trials:
             self._batch_clock_path.unlink()
@@ -1243,6 +1330,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     if judge_budget is None:
         raise ValueError("adaptive production requires the durable judge ledger")
+    judge_budget.recover_orphaned_reservations()
     spend_reader = _ControllerSpendReader(
         capacity_receipt=capacity_receipt,
         judge_budget=judge_budget,

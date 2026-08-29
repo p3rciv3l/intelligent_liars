@@ -211,6 +211,21 @@ def test_adaptive_progress_checkpoint_rejects_policy_drift_and_regression(
         advance_adaptive_progress_checkpoint(path, regressed)
 
 
+def test_incomplete_coverage_allows_abort_but_not_adaptive_search(
+    tmp_path: Path,
+) -> None:
+    """An operational abort is terminal reporting, not search concentration."""
+
+    aborted = _adaptive_progress("a" * 64, stage="aborted")
+    checkpoint = advance_adaptive_progress_checkpoint(
+        tmp_path / "aborted-progress.json", aborted
+    )
+
+    assert checkpoint.progress == aborted
+    with pytest.raises(WandbCheckpointError, match="coverage"):
+        _adaptive_progress("a" * 64, stage="adaptive_search")
+
+
 def test_adaptive_progress_checkpoint_rejects_tampering_and_unknown_fields(
     tmp_path: Path,
 ) -> None:
