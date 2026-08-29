@@ -1567,6 +1567,9 @@ def main(argv: list[str] | None = None) -> int:
             expected_study_config_sha256=study_config.identity_sha256,
             expected_completed_trials=completed_trials,
             expected_optuna_study_name=driver.persistent_study_name,
+            tier_through_trials=tuple(
+                tier.through_trial for tier in study_config.evaluation_tiers
+            ),
         )
         binding = SnapshotBinding(
             study_identity_sha256=study_identity_sha256,

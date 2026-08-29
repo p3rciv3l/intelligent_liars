@@ -493,6 +493,34 @@ def test_routine_absolute_semantic_schema_failure_gets_one_strict_correction() -
     assert correction["previous_invalid_output"] == invalid
 
 
+def test_absolute_json_healing_normalizes_candidate_free_correction() -> None:
+    invalid = _absolute_response()
+    invalid["unexpected"] = True
+    correction = _absolute_response()
+    row = correction["responses"][0]
+    row.update(
+        asserted_answer="",
+        asserted_state="unknown",
+        answer_type="evasive",
+        semantic_type_valid=False,
+        plausible_falsehood="unclear",
+        instruction_following=False,
+        hedging_or_abstention=True,
+    )
+    correction["failure_mode"] = "forced_guessing"
+    transport = StoredJudgeTransport(
+        [_transport_response(invalid), _transport_response(correction)]
+    )
+
+    evidence = TruthEditingLiveJudge(transport=transport).judge(_record())
+
+    assert evidence.result.operational_status == "succeeded"
+    assert evidence.result.result is not None
+    assert evidence.result.result.failure_mode == "refusal_or_evasion"
+    assert evidence.cache_receipt.attempts == 2
+    assert len(transport.requests) == 2
+
+
 def test_absolute_json_healing_relabels_candidate_free_forced_guessing(
     tmp_path: Path,
 ) -> None:

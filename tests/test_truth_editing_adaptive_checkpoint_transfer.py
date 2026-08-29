@@ -51,6 +51,7 @@ def _write_adaptive_state(
     root: Path, *, completed: int = 80, progress_completed: int | None = None,
     abort_minimum: bool = False,
     operational_failure_ordinals: frozenset[int] = frozenset(),
+    expanded_through: int = 160,
 ) -> None:
     progress_completed = completed if progress_completed is None else progress_completed
     (root / "study").mkdir(parents=True)
@@ -58,7 +59,11 @@ def _write_adaptive_state(
         {
             "trial_id": f"trial-{ordinal:04d}",
             "ordinal": ordinal,
-            "tier_name": "discovery" if ordinal < 80 else "expanded",
+            "tier_name": (
+                "discovery"
+                if ordinal < 80
+                else "expanded" if ordinal < expanded_through else "finalist"
+            ),
             "evaluation_record_ids": ["record-1"],
             "proposal": SearchProposal(
                 direction_ids=("truth-general-21",),
@@ -732,3 +737,20 @@ def test_adaptive_checkpoint_cli_publishes_and_restores(tmp_path: Path) -> None:
         text=True,
     )
     assert json.loads(result.stdout)["completed_trials"] == 80
+
+
+def test_adaptive_checkpoint_accepts_configured_expanded_tier_through_200(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "source-expanded-200"
+    _write_adaptive_state(source, completed=168, expanded_through=200)
+    manifest = publish_adaptive_checkpoint(
+        source,
+        tmp_path / "published-expanded-200",
+        expected_study_identity_sha256=STUDY_ID,
+        expected_study_config_sha256=STUDY_CONFIG_SHA,
+        expected_completed_trials=168,
+        expected_optuna_study_name=OPTUNA_STUDY_NAME,
+        tier_through_trials=(80, 200, 800),
+    )
+    assert manifest["completed_trials"] == 168

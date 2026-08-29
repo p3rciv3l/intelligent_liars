@@ -258,6 +258,7 @@ def publish_adaptive_checkpoint(
     expected_study_config_sha256: str,
     expected_completed_trials: int,
     expected_optuna_study_name: str,
+    tier_through_trials: tuple[int, ...] = (80, 160, 800),
 ) -> dict[str, Any]:
     """Publish one rolling adaptive generation without legacy phase semantics."""
 
@@ -277,6 +278,7 @@ def publish_adaptive_checkpoint(
         expected_study_config_sha256=expected_study_config_sha256,
         expected_completed_trials=expected_completed_trials,
         expected_optuna_study_name=expected_optuna_study_name,
+        tier_through_trials=tier_through_trials,
     )
     with _locked_publication_root(root):
         parent_sha = _validate_adaptive_lineage(
@@ -452,6 +454,7 @@ def _read_adaptive_state(
     expected_study_config_sha256: str,
     expected_completed_trials: int,
     expected_optuna_study_name: str,
+    tier_through_trials: tuple[int, ...] = (80, 160, 800),
 ) -> tuple[
     list[dict[str, Any]],
     dict[str, bytes],
@@ -481,6 +484,7 @@ def _read_adaptive_state(
         payloads[ADAPTIVE_STATE_FILES[0]],
         expected_study_identity_sha256,
         expected_completed_trials,
+        tier_through_trials=tier_through_trials,
     )
     _validate_optuna_journal(
         payloads[ADAPTIVE_STATE_FILES[1]],
@@ -1200,8 +1204,27 @@ def _monitoring_identity(payload: bytes) -> dict[str, str]:
 
 
 def _validate_study_journal(
-    payload: bytes, study_identity: str, completed: int
+    payload: bytes,
+    study_identity: str,
+    completed: int,
+    *,
+    tier_through_trials: tuple[int, ...] = (80, 160, 800),
 ) -> list[Mapping[str, Any]]:
+    if (
+        len(tier_through_trials) != 3
+        or any(
+            isinstance(boundary, bool)
+            or not isinstance(boundary, int)
+            or not 0 < boundary <= 800
+            for boundary in tier_through_trials
+        )
+        or not (
+            tier_through_trials[0]
+            < tier_through_trials[1]
+            < tier_through_trials[2]
+        )
+    ):
+        raise PhaseCheckpointError("study journal tier boundaries are invalid")
     try:
         raw = json.loads(payload)
     except (UnicodeDecodeError, json.JSONDecodeError) as error:
@@ -1260,7 +1283,9 @@ def _validate_study_journal(
             if result is None:
                 raise PhaseCheckpointError("phase checkpoint contains an incomplete trial")
             expected_tier = (
-                "discovery" if ordinal < 80 else "expanded" if ordinal < 160 else "finalist"
+                "discovery"
+                if ordinal < tier_through_trials[0]
+                else "expanded" if ordinal < tier_through_trials[1] else "finalist"
             )
             if trial.get("tier_name") != expected_tier:
                 raise PhaseCheckpointError("study journal trial tier differs")

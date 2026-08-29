@@ -1602,6 +1602,30 @@ class TruthEditingLiveJudge:
                 elapsed_ms=(time.monotonic() - correction_started) * 1000.0,
                 terminal_cache_key=identities["cache_key_sha256"],
             )
+        # Apply the same mechanically safe JSON normalizations to the explicit
+        # correction response.  The correction model can reproduce a
+        # candidate-free ``forced_guessing`` label (or omit ``confidence``)
+        # even after being shown the validation categories; accepting those
+        # deterministic repairs keeps response healing from turning a valid
+        # paid response into a terminal cache poison.  Bind the normalized
+        # correction in the paid-response lineage so the receipt remains
+        # content-addressed and auditable.
+        corrected_normalization_lineage: Mapping[str, Any] | None = None
+        if kind == "absolute":
+            corrected_semantic, correction_rules = (
+                _normalize_unambiguous_absolute_json(corrected_semantic)
+            )
+            if correction_rules:
+                corrected_normalization_lineage = _normalization_lineage(
+                    kind=kind,
+                    rules=correction_rules,
+                    identities=correction_identities,
+                    response=corrected_response,
+                    normalized_semantic=corrected_semantic,
+                )
+                corrected_response = _combine_normalized_response(
+                    corrected_response, corrected_normalization_lineage
+                )
         try:
             corrected_result = validate(
                 corrected_semantic, correction_identities["raw_request_sha256"]
