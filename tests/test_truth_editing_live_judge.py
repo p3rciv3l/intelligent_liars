@@ -16,6 +16,7 @@ from intelligent_liars.offline_judge_calibration import (
     FROZEN_JUDGE_RUBRIC_SHA256,
 )
 from intelligent_liars.truth_editing_evaluator import RuntimeRecord
+from intelligent_liars.truth_editing_judge_contracts import judge_cache_key_sha256
 from intelligent_liars.truth_editing_live_judge import (
     ABSOLUTE_SEMANTIC_SCHEMA_SHA256,
     FROZEN_JUDGE_CONFIG_SHA256,
@@ -44,7 +45,13 @@ def _sha_text(value: str) -> str:
 
 def _sha_json(value: object) -> str:
     return hashlib.sha256(
-        json.dumps(value, sort_keys=True, separators=(",", ":")).encode()
+        json.dumps(
+            value,
+            allow_nan=False,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode()
     ).hexdigest()
 
 
@@ -136,7 +143,7 @@ def _transport_response(content: dict[str, object]) -> dict[str, object]:
     }
 
 
-def test_absolute_request_is_frozen_strict_json_and_cache_bound() -> None:
+def test_absolute_request_is_frozen_json_object_and_cache_bound() -> None:
     transport = StoredJudgeTransport([_transport_response(_absolute_response())])
     cache = MemoryJudgeCache()
     judge = TruthEditingLiveJudge(transport=transport, cache=cache)
@@ -153,11 +160,53 @@ def test_absolute_request_is_frozen_strict_json_and_cache_bound() -> None:
     assert len(transport.requests) == 1
     request = transport.requests[0]
     assert request["model"] == FROZEN_GLM_FLASH_JUDGE_REQUEST["model"]
+    assert request["provider"]["only"] == ["z-ai/fp8"]
     assert request["plugins"] == [{"id": "response-healing"}]
-    assert request["response_format"]["type"] == "json_schema"
-    assert request["response_format"]["json_schema"]["strict"] is True
-    assert request["response_format"]["json_schema"]["schema"]["additionalProperties"] is False
+    assert request["response_format"] == {"type": "json_object"}
+    prompt = json.loads(request["messages"][1]["content"])
+    assert prompt["required_output_schema"]["additionalProperties"] is False
     assert "seed" not in request and "tools" not in request
+
+
+def test_routine_json_object_request_cannot_alias_legacy_json_schema_cache() -> None:
+    transport = StoredJudgeTransport([_transport_response(_absolute_response())])
+    evidence = TruthEditingLiveJudge(transport=transport).judge(_record())
+    current = transport.requests[0]
+    legacy = copy.deepcopy(current)
+    legacy_prompt = json.loads(legacy["messages"][1]["content"])
+    schema = legacy_prompt.pop("required_output_schema")
+    legacy["messages"][1]["content"] = json.dumps(
+        legacy_prompt,
+        allow_nan=False,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    legacy["response_format"] = {
+        "type": "json_schema",
+        "json_schema": {
+            "name": "truth_editing_absolute_semantic_v1",
+            "strict": True,
+            "schema": schema,
+        },
+    }
+    legacy_parameters = {
+        key: value for key, value in legacy.items() if key != "messages"
+    }
+    receipt = evidence.cache_receipt
+    legacy_cache_key = judge_cache_key_sha256(
+        judge_kind=receipt.judge_kind,
+        rubric_sha256=receipt.rubric_sha256,
+        judge_config_sha256=receipt.judge_config_sha256,
+        resolved_model=receipt.resolved_model,
+        provider_route=receipt.provider_route,
+        request_parameters_sha256=_sha_json(legacy_parameters),
+        prompt_bundle_sha256=_sha_json(legacy["messages"]),
+        response_sha256s=receipt.response_sha256s,
+    )
+
+    assert _sha_json(current) != _sha_json(legacy)
+    assert legacy_cache_key != receipt.cache_key_sha256
 
 
 def test_finalization_execution_identity_namespaces_cache_without_changing_frozen_config() -> None:
@@ -390,7 +439,10 @@ def test_absolute_bundle_response_identity_mismatch_is_never_cached(tmp_path: Pa
     cache = FileJudgeCache(tmp_path / "cache")
     with pytest.raises(OperationalJudgeFailure, match="schema_validation_error"):
         TruthEditingLiveJudge(
-            transport=StoredJudgeTransport([_transport_response(response)]), cache=cache
+            transport=StoredJudgeTransport(
+                [_transport_response(response), _transport_response(response)]
+            ),
+            cache=cache,
         ).judge_bundle((_record(),))
     assert list((tmp_path / "cache").glob("*.json")) == []
 
@@ -401,12 +453,31 @@ def test_absolute_fails_closed_on_fenced_or_schema_invalid_json() -> None:
     with pytest.raises(OperationalJudgeFailure, match="invalid_json"):
         TruthEditingLiveJudge(transport=StoredJudgeTransport([fenced])).judge(_record())
 
+
+
+def test_routine_absolute_semantic_schema_failure_gets_one_strict_correction() -> None:
     invalid = _absolute_response()
     invalid["unexpected"] = True
-    with pytest.raises(OperationalJudgeFailure, match="schema_error"):
-        TruthEditingLiveJudge(
-            transport=StoredJudgeTransport([_transport_response(invalid)])
-        ).judge(_record())
+    transport = StoredJudgeTransport(
+        [
+            _transport_response(invalid),
+            _transport_response(_absolute_response()),
+        ]
+    )
+
+    evidence = TruthEditingLiveJudge(transport=transport).judge(_record())
+
+    assert evidence.result.operational_status == "succeeded"
+    assert evidence.cache_receipt.attempts == 2
+    assert len(transport.requests) == 2
+    assert all(
+        request["response_format"] == {"type": "json_object"}
+        for request in transport.requests
+    )
+    correction = json.loads(transport.requests[1]["messages"][1]["content"])
+    assert correction["operation"] == "semantic_schema_correction_v1"
+    assert correction["required_output_schema"]["additionalProperties"] is False
+    assert correction["previous_invalid_output"] == invalid
 
 
 def test_pairwise_always_runs_order_swap_and_detects_consistency() -> None:
@@ -430,8 +501,9 @@ def test_pairwise_always_runs_order_swap_and_detects_consistency() -> None:
     assert transport.requests[0]["messages"] != transport.requests[1]["messages"]
     for request in transport.requests:
         assert request["plugins"] == [{"id": "response-healing"}]
-        assert request["response_format"]["type"] == "json_schema"
+        assert request["response_format"] == {"type": "json_object"}
         prompt = json.loads(request["messages"][1]["content"])
+        assert prompt["required_output_schema"]["additionalProperties"] is False
         assert "presentation_order" not in prompt
         assert "comparison_group_sha256" not in prompt
         assert prompt["decision_checklist"][0].startswith(
@@ -475,8 +547,13 @@ def test_pairwise_public_evidence_rejects_nested_response_labels() -> None:
     assert transport.requests == []
 
 
-def test_pairwise_different_scenarios_fail_closed_on_noninvalid_result() -> None:
-    transport = StoredJudgeTransport([_transport_response(_pairwise_response("A"))])
+def test_pairwise_different_scenarios_fail_closed_after_one_invalid_correction() -> None:
+    transport = StoredJudgeTransport(
+        [
+            _transport_response(_pairwise_response("A")),
+            _transport_response(_pairwise_response("A")),
+        ]
+    )
     other_scenario = _pairwise_candidate("London")
     other_scenario["question"] = "What is the capital of England?"
     other_scenario["known_truth"] = "London"
@@ -488,7 +565,7 @@ def test_pairwise_different_scenarios_fail_closed_on_noninvalid_result() -> None
             comparison_group_sha256=_sha_text("group"),
         )
 
-    assert len(transport.requests) == 1
+    assert len(transport.requests) == 2
 
 
 def test_authored_pairwise_prompt_explicitly_requires_invalid_comparison_for_scenario_mismatch() -> None:
@@ -662,6 +739,35 @@ def test_authored_pairwise_schema_failure_gets_one_explicit_correction() -> None
     assert prompt["previous_invalid_output"] == invalid
 
 
+def test_routine_pairwise_schema_failure_gets_one_explicit_correction() -> None:
+    invalid = _pairwise_response("A")
+    invalid["criterion_preferences"]["retained_truth"] = "outside-enum"
+    transport = StoredJudgeTransport(
+        [
+            _transport_response(invalid),
+            _transport_response(_pairwise_response("A")),
+            _transport_response(_pairwise_response("B")),
+        ]
+    )
+
+    evidence = TruthEditingLiveJudge(transport=transport).compare(
+        candidate_a=_pairwise_candidate("Lyon"),
+        candidate_b=_pairwise_candidate("London"),
+        comparison_group_sha256=_sha_text("group"),
+    )
+
+    assert evidence.order_swap.agreement == "consistent"
+    assert len(transport.requests) == 3
+    assert all(
+        request["response_format"] == {"type": "json_object"}
+        for request in transport.requests
+    )
+    correction = json.loads(transport.requests[1]["messages"][1]["content"])
+    assert correction["operation"] == "semantic_schema_correction_v1"
+    assert correction["judge_kind"] == "pairwise"
+    assert correction["previous_invalid_output"] == invalid
+
+
 def test_frozen_configuration_drift_is_rejected_before_transport() -> None:
     drifted = copy.deepcopy(FROZEN_GLM_FLASH_JUDGE_REQUEST)
     drifted["temperature"] = 0.1
@@ -738,6 +844,9 @@ def test_checked_in_live_config_matches_frozen_offline_contract() -> None:
     )
     for key, value in FROZEN_GLM_FLASH_JUDGE_REQUEST.items():
         assert payload[key] == value
+    assert FROZEN_JUDGE_CONFIG_SHA256 == (
+        "1b499bf7fdb0321a62afccac49ac2af90a25ae102ed17ed1cd12abca3c03b07c"
+    )
     assert payload == {
         "format": "truth_editing_live_judge_config_v1",
         **FROZEN_GLM_FLASH_JUDGE_REQUEST,
@@ -915,7 +1024,7 @@ def test_openrouter_transport_binds_every_frozen_parameter_before_generate(monke
     assert observed["max_tokens"] == 2048
     assert observed["reasoning"] == {"effort": "high", "exclude": True}
     assert observed["plugins"] == [{"id": "response-healing"}]
-    assert observed["response_format"]["type"] == "json_schema"
+    assert observed["response_format"] == {"type": "json_object"}
     assert observed["provider"] == FROZEN_GLM_FLASH_JUDGE_REQUEST["provider"]
     assert result["provider_route"] == "z-ai/fp8"
 

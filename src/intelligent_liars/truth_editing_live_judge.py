@@ -55,6 +55,11 @@ from intelligent_liars.truth_editing_pairwise_reconciliation import (
 
 _PROVIDER_ROUTE = "z-ai/fp8"
 _COMPATIBLE_ADAPTER_CODE_SHA256S = {
+    # Same frozen provider, prompts, schemas, and local parsers before routine
+    # Z.AI requests moved from unsupported json_schema transport enforcement to
+    # response-healed json_object with the strict schema embedded in the prompt.
+    # The changed request parameters and prompt identity prevent cache aliasing.
+    "1b0aea07f0c05254fd702b5757b217f370ebef4da9c05c9662acafdd26164e40",
     # Same frozen request/parser contract before derivative upstream circuit
     # failures stopped poisoning the semantic terminal-cache namespace.
     # Existing successful and true response-owned failure receipts remain
@@ -919,6 +924,7 @@ class TruthEditingLiveJudge:
             "rubric": FROZEN_JUDGE_RUBRIC,
             "examples": FROZEN_JUDGE_EXAMPLES,
             "decision_checklist": _ABSOLUTE_DECISION_CHECKLIST,
+            "required_output_schema": _ABSOLUTE_SEMANTIC_SCHEMA,
             "records": prompt_records,
         }
         if execution_identity_sha256 is not None:
@@ -1107,7 +1113,7 @@ class TruthEditingLiveJudge:
     def _execute_absolute(
         self, prompt: Mapping[str, Any], response_sha256s: tuple[str, ...],
         *, schema_name: str = "truth_editing_absolute_semantic_v1",
-        response_format_type: str = "json_schema",
+        response_format_type: str = "json_object",
     ) -> tuple[AbsoluteJudgeResult, JudgeCacheReceipt]:
         request, identities = self._request(
             "absolute", prompt, _ABSOLUTE_SEMANTIC_SCHEMA, response_sha256s,
@@ -1210,7 +1216,7 @@ class TruthEditingLiveJudge:
         comparison_kind: str | None = None,
         operation: str = "pairwise_semantic_selection_v1",
         schema_name: str = "truth_editing_pairwise_semantic_v1",
-        response_format_type: str = "json_schema",
+        response_format_type: str = "json_object",
     ) -> tuple[PairwiseJudgeResult, JudgeCacheReceipt]:
         public_a = _pairwise_public_evidence(candidate_a, name="candidate_a")
         public_b = _pairwise_public_evidence(candidate_b, name="candidate_b")
