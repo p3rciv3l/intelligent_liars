@@ -33,6 +33,7 @@ from intelligent_liars.truth_editing_live_judge import (
     PAIRWISE_SEMANTIC_SCHEMA_SHA256,
     StoredJudgeTransport,
     TruthEditingLiveJudge,
+    judge_timeout_seconds_for_bundle_size,
 )
 from intelligent_liars.truth_editing_production_judge_budget import (
     ProductionJudgeBudget,
@@ -999,6 +1000,35 @@ def test_checked_in_live_config_matches_frozen_offline_contract() -> None:
         "absolute_semantic_schema_sha256": ABSOLUTE_SEMANTIC_SCHEMA_SHA256,
         "pairwise_semantic_schema_sha256": PAIRWISE_SEMANTIC_SCHEMA_SHA256,
     }
+
+
+def test_judge_timeout_scales_with_bundle_size_but_preserves_small_frozen_requests() -> None:
+    assert judge_timeout_seconds_for_bundle_size(1) == 120.0
+    assert judge_timeout_seconds_for_bundle_size(32) == 156.0
+    assert judge_timeout_seconds_for_bundle_size(64) == 252.0
+
+
+def test_judge_timeout_rejects_invalid_bundle_sizes() -> None:
+    for value in (0, -1, True, 1.5):
+        with pytest.raises(LiveJudgeError, match="bundle size"):
+            judge_timeout_seconds_for_bundle_size(value)  # type: ignore[arg-type]
+
+
+def test_absolute_bundle_request_uses_size_aware_timeout() -> None:
+    records = tuple(
+        replace(_record(generation=f"Lyon-{index}"), record_id=f"record-{index}")
+        for index in range(32)
+    )
+    response = _absolute_response()
+    response["responses"] = [
+        {**response["responses"][0], "response_id": record.record_id}
+        for record in records
+    ]
+    transport = StoredJudgeTransport([_transport_response(response)])
+
+    TruthEditingLiveJudge(transport=transport).judge_bundle(records)
+
+    assert transport.requests[0]["timeout"] == 156.0
 
 
 def test_file_cache_round_trip_avoids_transport_after_restart(tmp_path: Path) -> None:

@@ -54,6 +54,49 @@ from intelligent_liars.truth_editing_pairwise_reconciliation import (
 
 
 _PROVIDER_ROUTE = "z-ai/fp8"
+# The frozen GLM request keeps its 120-second timeout for the smallest
+# requests. Larger bundles receive additional wall-clock allowance based on
+# the number of rows the judge must classify. The upper bound prevents a
+# provider stall from holding a worker forever.
+_JUDGE_TIMEOUT_BASE_SECONDS = 60.0
+_JUDGE_TIMEOUT_SECONDS_PER_RECORD = 3.0
+_JUDGE_TIMEOUT_MAX_SECONDS = 600.0
+
+
+def judge_timeout_seconds_for_bundle_size(bundle_size: int) -> float:
+    """Return the bounded timeout for one structured judge request.
+
+    The timeout is part of the concrete request identity, while the model,
+    provider route, reasoning, and JSON response-healing settings remain the
+    frozen GLM-5.3 Flash contract. A one-row request remains exactly 120
+    seconds for backwards compatibility; larger requests scale linearly and
+    are capped at ten minutes.
+    """
+
+    if isinstance(bundle_size, bool) or not isinstance(bundle_size, int) or bundle_size < 1:
+        raise LiveJudgeError("judge bundle size must be a positive integer")
+    return min(
+        _JUDGE_TIMEOUT_MAX_SECONDS,
+        max(
+            float(_FROZEN_REQUEST["timeout"]),
+            _JUDGE_TIMEOUT_BASE_SECONDS
+            + _JUDGE_TIMEOUT_SECONDS_PER_RECORD * bundle_size,
+        ),
+    )
+
+
+def _bundle_size_from_prompt(prompt: Mapping[str, Any]) -> int:
+    records = prompt.get("records")
+    if isinstance(records, list) and records:
+        return len(records)
+    bundle = prompt.get("bundle")
+    if isinstance(bundle, Mapping):
+        responses = bundle.get("responses")
+        if isinstance(responses, list) and responses:
+            return len(responses)
+    if "candidate_A" in prompt and "candidate_B" in prompt:
+        return 2
+    return 1
 _COMPATIBLE_ADAPTER_CODE_SHA256S = {
     # Same finalized normalizer before the complete historical success-code
     # inventory was pinned for resumable production cache reads.
@@ -1253,9 +1296,11 @@ class TruthEditingLiveJudge:
         *, schema_name: str = "truth_editing_absolute_semantic_v1",
         response_format_type: str = "json_object",
     ) -> tuple[AbsoluteJudgeResult, JudgeCacheReceipt]:
+        bundle_size = _bundle_size_from_prompt(prompt)
         request, identities = self._request(
             "absolute", prompt, _ABSOLUTE_SEMANTIC_SCHEMA, response_sha256s,
             schema_name=schema_name, response_format_type=response_format_type,
+            bundle_size=bundle_size,
         )
         cache_key = identities["cache_key_sha256"]
         cached = self._validated_cached(cache_key, self._cache.get(cache_key))
@@ -1330,6 +1375,7 @@ class TruthEditingLiveJudge:
             response_sha256s=response_sha256s, identities=identities,
             response=response, semantic=semantic, validate=validate,
             correction_allowed=response_format_type == "json_object",
+            bundle_size=bundle_size,
             started=started,
         )
         try:
@@ -1385,6 +1431,7 @@ class TruthEditingLiveJudge:
         request, identities = self._request(
             "pairwise", prompt, _PAIRWISE_SEMANTIC_SCHEMA, response_sha256s,
             schema_name=schema_name, response_format_type=response_format_type,
+            bundle_size=2,
         )
         cache_key = identities["cache_key_sha256"]
         cached = self._validated_cached(cache_key, self._cache.get(cache_key))
@@ -1466,6 +1513,7 @@ class TruthEditingLiveJudge:
             response_sha256s=response_sha256s, identities=identities,
             response=response, semantic=semantic, validate=validate,
             correction_allowed=response_format_type == "json_object",
+            bundle_size=2,
             started=started,
         )
         try:
@@ -1498,6 +1546,7 @@ class TruthEditingLiveJudge:
         semantic: Mapping[str, Any] | None,
         validate: Callable[[Mapping[str, Any], str], AbsoluteJudgeResult | PairwiseJudgeResult],
         correction_allowed: bool,
+        bundle_size: int,
         started: float,
     ) -> tuple[
         AbsoluteJudgeResult | PairwiseJudgeResult,
@@ -1575,6 +1624,7 @@ class TruthEditingLiveJudge:
             kind, correction_prompt, schema, response_sha256s,
             schema_name=f"truth_editing_{kind}_semantic_correction_v1",
             response_format_type="json_object",
+            bundle_size=bundle_size,
         )
         correction_started = time.monotonic()
         try:
@@ -1672,6 +1722,7 @@ class TruthEditingLiveJudge:
         response_sha256s: tuple[str, ...],
         *, schema_name: str | None = None,
         response_format_type: str = "json_schema",
+        bundle_size: int,
     ) -> tuple[dict[str, Any], dict[str, str]]:
         messages = [
             {"role": "system", "content": FROZEN_JUDGE_SYSTEM_PROMPT},
@@ -1690,7 +1741,12 @@ class TruthEditingLiveJudge:
             response_format = {"type": "json_object"}
         else:  # pragma: no cover - internal invariant
             raise LiveJudgeError("judge response format type differs")
-        request = {**copy.deepcopy(self._request_config), "messages": messages, "response_format": response_format}
+        request = {
+            **copy.deepcopy(self._request_config),
+            "timeout": judge_timeout_seconds_for_bundle_size(bundle_size),
+            "messages": messages,
+            "response_format": response_format,
+        }
         # The response-healing plugin is legal only because response_format is
         # present and strict local parsing follows the provider response.
         if request.get("plugins") != [{"id": "response-healing"}]:
