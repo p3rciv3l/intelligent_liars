@@ -221,6 +221,60 @@ def test_signed_rolling_batch_observation_reforecasts_the_next_batch() -> None:
     )["batch_duration_seconds_upper_bound"]
 
 
+def test_expanded_tier_observation_is_not_multiplied_by_expanded_tier_twice() -> None:
+    policy = CapacityPolicy.from_mapping(
+        json.loads(Path("configs/truth_editing_adaptive_capacity_policy_v1.json").read_text())
+    )
+    initial = build_capacity_receipt(
+        policy=policy,
+        measurement=load_capacity_measurement(measurement(), now=NOW),
+        planned_at=NOW,
+    )
+    observation = _self_hashed({
+        "format": "truth_editing_capacity_batch_observation_v2",
+        "observation_id": "batch-0011-expanded",
+        "observed_at": "2026-08-28T11:59:00Z",
+        "timed_canary_receipt_sha256": SHA,
+        "completed_through_trial": 88,
+        "batch_size": 8,
+        "generated_tokens_per_trial_upper_bound": 360,
+        "generation_seconds_per_trial_upper_bound": 120.0,
+        "trial_wall_seconds_upper_bound": 260.0,
+        "judge_elapsed_seconds_per_trial_upper_bound": 135.0,
+        "judge_cost_usd_per_trial_upper_bound": "0.0006",
+        "judge_ledger_before_receipt_sha256": "b" * 64,
+        "judge_ledger_after_receipt_sha256": "c" * 64,
+        "judge_calls": 24,
+        "judge_failures": 0,
+        "judge_elapsed_seconds_total": 1080.0,
+        "judge_cost_usd_total": "0.0048",
+        "spend": {
+            "actual_total_usd": "1.0048",
+            "actual_infrastructure_usd": "0.9",
+            "actual_evaluation_usd": "0.1048",
+            "pending_infrastructure_usd": "0",
+            "pending_evaluation_usd": "0",
+        },
+    })
+
+    rolling = reforecast_capacity_receipt(
+        policy=policy,
+        previous_receipt=initial,
+        batch_observation=observation,
+        planned_at=NOW,
+    )
+
+    assert rolling["measured"]["judge_latency_seconds"] == 45.0
+    assert rolling["measured"]["judge_cost_usd_per_trial"] == "0.0002"
+    assert rolling["measured"]["generated_tokens"] == 120
+    assert rolling["measured"]["tokens_per_second"] == 3.0
+    assert rolling["conservative_projection"]["generation_seconds_from_measured_tps"] == 40.0
+    assert rolling["conservative_projection"]["fixed_seconds"] == pytest.approx(5.0)
+    expanded = select_next_batch_projection(rolling, next_completed_trials=96)
+    assert expanded["batch_duration_seconds_upper_bound"] == pytest.approx(325.0)
+    assert expanded["batch_evaluation_cost_usd_upper_bound"] == "0.006"
+
+
 def test_late_rolling_reforecast_does_not_reapply_the_200_trial_floor() -> None:
     policy = CapacityPolicy.from_mapping(
         json.loads(Path("configs/truth_editing_adaptive_capacity_policy_v1.json").read_text())

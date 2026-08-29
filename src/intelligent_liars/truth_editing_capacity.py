@@ -15,7 +15,7 @@ import os
 import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from decimal import Decimal, InvalidOperation, ROUND_FLOOR
+from decimal import Decimal, InvalidOperation, ROUND_CEILING, ROUND_FLOOR
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -893,16 +893,63 @@ def reforecast_capacity_receipt(
         raise CapacityPlanningError(
             "rolling evaluation spend delta differs from judge ledger cost delta"
         )
+    # Batch observations contain the workload of the tier that just ran.  The
+    # capacity builder, however, expects a discovery-equivalent baseline and
+    # applies each tier multiplier when projecting future batches.  Normalize
+    # the observed variable work once so an expanded or concentrated batch is
+    # not multiplied by its tier a second time.  Actual spend and the signed
+    # raw observation remain untouched and fully validated above.
+    observed_tier = next(
+        tier for tier in policy.tier_multipliers if completed <= tier[1]
+    )
+    generation_multiplier = observed_tier[2]
+    judge_multiplier = observed_tier[3]
+    previous_generation = Decimal(str(measured["generated_tokens"])) / Decimal(
+        str(measured["tokens_per_second"])
+    )
+    previous_judge = Decimal(str(measured["judge_latency_seconds"]))
+    observed_generation = Decimal(str(generation))
+    observed_judge = Decimal(str(judge_elapsed))
+    observed_wall = Decimal(str(wall))
+    observed_fixed = observed_wall - observed_generation - observed_judge
+    normalized_generation = max(
+        previous_generation,
+        observed_generation / generation_multiplier,
+    )
+    normalized_judge = max(
+        previous_judge,
+        observed_judge / judge_multiplier,
+    )
+    normalized_cost = max(
+        _money(measured["judge_cost_usd_per_trial"], "previous judge cost"),
+        judge_cost / judge_multiplier,
+    )
+    normalized_observed_wall = (
+        observed_fixed
+        + observed_generation / generation_multiplier
+        + observed_judge / judge_multiplier
+    )
+    normalized_wall = max(
+        normalized_observed_wall,
+        normalized_generation + normalized_judge,
+    )
+    normalized_tokens = int(
+        (Decimal(tokens) / generation_multiplier).to_integral_value(
+            rounding=ROUND_CEILING
+        )
+    )
     measurement_unsigned = {
         "format": MEASUREMENT_FORMAT,
         "measurement_id": _text(observation["observation_id"], "observation_id"),
         "observed_at": _utc_text(observed),
         "timed_canary_receipt_sha256": previous["timed_canary_receipt_sha256"],
-        "generated_tokens": tokens,
-        "tokens_per_second": tokens / generation,
-        "trial_wall_seconds": wall,
-        "judge_latency_seconds": judge_elapsed,
-        "judge_cost_usd_per_trial": _money_text(judge_cost),
+        "generated_tokens": normalized_tokens,
+        "tokens_per_second": float(
+            Decimal(normalized_tokens) / normalized_generation
+        ),
+        "trial_wall_seconds": math.nextafter(float(normalized_wall), math.inf),
+        "judge_latency_seconds": float(normalized_judge),
+        "judge_cost_usd_per_trial": _money_text(normalized_cost),
         "per_gpu_hourly_usd": measured["per_gpu_hourly_usd"],
         "projected_storage_network_usd": measured["projected_storage_network_usd"],
         "spend": _spend_as_mapping(spend),
