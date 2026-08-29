@@ -417,6 +417,7 @@ class CoordinatorMonitor:
         self._objectives: list[dict[str, float]] = []
         self._objective_ordinals: list[int] = []
         self._objective_parameters: list[dict[str, Any]] = []
+        self._loss_chart_points: dict[int, dict[str, float]] = {}
         self._attempted_logs: list[dict[str, Any]] = []
         self._closed = False
         self._wandb = wandb_module
@@ -672,6 +673,83 @@ class CoordinatorMonitor:
         except Exception as error:
             self._failure("log", error)
 
+    def _log_loss_chart(self, *, step: int) -> None:
+        """Publish one interactive, lower-is-better view of trial quality.
+
+        W&B's line-series chart supplies the clickable legend. The aggregate
+        is display-only: it never enters Optuna, the journal, or selection.
+        """
+
+        if self._run is None or self._closed or self._wandb is None:
+            return
+        plot = getattr(self._wandb, "plot", None)
+        line_series = getattr(plot, "line_series", None)
+        if not callable(line_series) or not self._loss_chart_points:
+            return
+        ordinals = sorted(self._loss_chart_points)
+        names = (
+            "valid_false_report_rate_lcb",
+            "truth_report_dissociation_lcb",
+            "capability_preservation_lcb",
+        )
+        complete = [
+            (ordinal, self._loss_chart_points[ordinal])
+            for ordinal in ordinals
+            if all(
+                name in self._loss_chart_points[ordinal]
+                and 0.0 <= self._loss_chart_points[ordinal][name] <= 1.0
+                for name in names
+            )
+        ]
+        if not complete:
+            return
+        trial_ordinals = [ordinal for ordinal, _ in complete]
+        false_report = [row[names[0]] for _, row in complete]
+        retained_truth = [row[names[1]] for _, row in complete]
+        capability = [row[names[2]] for _, row in complete]
+        kl_points = [
+            (ordinal, -math.log(row[names[2]]))
+            for ordinal, row in complete
+            if row[names[2]] > 0.0
+        ]
+        xs = [
+            trial_ordinals,
+            trial_ordinals,
+            trial_ordinals,
+            trial_ordinals,
+            [ordinal for ordinal, _ in kl_points],
+        ]
+        ys = [
+            [
+                1.0 - (false_value * truth_value * capability_value) ** (1.0 / 3.0)
+                for false_value, truth_value, capability_value in zip(
+                    false_report, retained_truth, capability, strict=True
+                )
+            ],
+            [1.0 - value for value in false_report],
+            [1.0 - value for value in retained_truth],
+            [1.0 - value for value in capability],
+            [value for _, value in kl_points],
+        ]
+        try:
+            chart = line_series(
+                xs=xs,
+                ys=ys,
+                keys=[
+                    "Overall loss",
+                    "False-report loss",
+                    "Retained-truth loss",
+                    "Capability loss",
+                    "Worst preservation KL",
+                ],
+                title="Loss overview (lower is better)",
+                xname="Trial",
+            )
+            self._run.log({"charts/loss_overview": chart}, step=step)
+            self._logged_metric_keys.add("charts/loss_overview")
+        except Exception as error:
+            self._failure("log", error)
+
     @staticmethod
     def _pareto_size(points: Sequence[Mapping[str, float]]) -> int:
         count = 0
@@ -727,12 +805,15 @@ class CoordinatorMonitor:
                 values.update(
                     {f"trial/objectives/{name}": value for name, value in objectives.items()}
                 )
+                if objectives and result.outcome_kind != "operational_failure":
+                    self._loss_chart_points[request.ordinal] = objectives
                 if objectives and result.outcome_kind == "successful":
                     self._objectives.append(objectives)
                     self._objective_ordinals.append(request.ordinal)
                     self._objective_parameters.append(parameters)
                 self._completed_trials = max(self._completed_trials, request.ordinal + 1)
                 self._safe_log(values, step=request.ordinal)
+            self._log_loss_chart(step=max(0, self._completed_trials - 1))
             elapsed = max(0.0, float(self._monotonic()) - self._started_at)
             eta = (
                 elapsed

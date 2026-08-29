@@ -234,6 +234,19 @@ def test_dashboard_readback_rejects_any_extra_unapproved_key(tmp_path: Path) -> 
         )
 
 
+def test_dashboard_readback_allows_loss_overview_chart(tmp_path: Path) -> None:
+    trace = _trace()
+    trace["dashboard_readback"]["metric_keys"].append("charts/loss_overview")
+
+    receipt = verify_wandb_canary(
+        trace=trace,
+        checkpoint=_checkpoint(),
+        receipt_path=tmp_path / "receipt.json",
+    )
+
+    assert receipt["privacy_verified"] is True
+
+
 def test_dashboard_readback_queries_exact_remote_run_and_history() -> None:
     class Run:
         id = RUN_ID

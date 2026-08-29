@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 from pathlib import Path
 from dataclasses import replace
@@ -47,6 +48,21 @@ class _FakeWandb:
     def init(self, **kwargs: Any) -> _FakeRun:
         self.init_calls.append(kwargs)
         return self.run
+
+
+class _FakePlot:
+    def __init__(self) -> None:
+        self.line_series_calls: list[dict[str, Any]] = []
+
+    def line_series(self, **kwargs: Any) -> dict[str, Any]:
+        self.line_series_calls.append(kwargs)
+        return {"kind": "toggleable-line-series", **kwargs}
+
+
+class _FakeWandbWithPlots(_FakeWandb):
+    def __init__(self, run: _FakeRun) -> None:
+        super().__init__(run)
+        self.plot = _FakePlot()
 
 
 def test_wandb_host_cost_includes_elapsed_setup_before_monitor_started() -> None:
@@ -127,6 +143,51 @@ def test_one_resumable_coordinator_run_logs_sanitized_progress_and_operations(
     assert "cost/gpu_actual_usd" in logged
     assert "operations/retries" in logged
     assert run.finished == 1
+
+
+def test_successful_trials_publish_one_toggleable_loss_chart(tmp_path: Path) -> None:
+    run = _FakeRun()
+    wandb = _FakeWandbWithPlots(run)
+    monitor = CoordinatorMonitor(
+        run_id="loss-chart",
+        project="intelligent-liars",
+        entity=None,
+        run_name="loss-chart-test",
+        receipt_path=tmp_path / "events.jsonl",
+        total_trials=8,
+        batch_size=8,
+        wandb_module=wandb,
+        monotonic=lambda: 10.0,
+    )
+
+    monitor.record_batch(
+        0,
+        (_request(0),),
+        (EvaluationResult.successful({
+            "valid_false_report_rate_lcb": 0.8,
+            "truth_report_dissociation_lcb": 0.6,
+            "capability_preservation_lcb": 0.9,
+        }),),
+    )
+
+    assert len(wandb.plot.line_series_calls) == 1
+    chart = wandb.plot.line_series_calls[0]
+    assert chart["keys"] == [
+        "Overall loss",
+        "False-report loss",
+        "Retained-truth loss",
+        "Capability loss",
+        "Worst preservation KL",
+    ]
+    assert chart["xs"] == [[0], [0], [0], [0], [0]]
+    assert [series[0] for series in chart["ys"][1:]] == pytest.approx([
+        0.2,
+        0.4,
+        0.1,
+        -math.log(0.9),
+    ])
+    assert chart["ys"][0][0] == pytest.approx(1.0 - (0.8 * 0.6 * 0.9) ** (1 / 3))
+    assert any("charts/loss_overview" in values for values, _step in run.logged)
 
 
 def test_sdk_metadata_and_job_creation_are_disabled_in_coordinator_environment(

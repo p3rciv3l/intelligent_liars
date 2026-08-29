@@ -104,6 +104,7 @@ REQUIRED_WANDB_METRIC_KEYS = (
     "operations/error_category",
     "operations/error_fingerprint",
 )
+OPTIONAL_WANDB_METRIC_KEYS = ("charts/loss_overview",)
 
 _TRACE_FIELDS = {
     "format",
@@ -287,7 +288,10 @@ def _pattern_matches(pattern: str, key: str) -> bool:
 
 
 def _allowed_metric_key(key: str) -> bool:
-    return any(_pattern_matches(pattern, key) for pattern in REQUIRED_WANDB_METRIC_KEYS)
+    return any(
+        _pattern_matches(pattern, key)
+        for pattern in (*REQUIRED_WANDB_METRIC_KEYS, *OPTIONAL_WANDB_METRIC_KEYS)
+    )
 
 
 def _validate_metric_value(key: str, value: Any) -> None:
