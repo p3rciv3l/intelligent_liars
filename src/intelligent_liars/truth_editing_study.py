@@ -1380,6 +1380,7 @@ class OptunaSearchDriver(OfflineDeterministicSearchDriver):
             directions=["maximize"] * len(OBJECTIVES), sampler=sampler,
         )
         state_path.parent.mkdir(parents=True, exist_ok=True)
+        reopen_existing = state_path.is_file() and state_path.stat().st_size > 0
         try:
             journal_backend = self._optuna.storages.journal.JournalFileBackend(
                 str(state_path)
@@ -1395,13 +1396,29 @@ class OptunaSearchDriver(OfflineDeterministicSearchDriver):
                 for item in directions
             ]
         )
-        self._persistent_study = self._optuna.create_study(
-            study_name=f"{config.study_id}-{config.identity_sha256[:12]}-{direction_identity[:12]}",
-            directions=["maximize"] * len(OBJECTIVES),
-            storage=storage,
-            sampler=sampler,
-            load_if_exists=True,
+        study_name = (
+            f"{config.study_id}-{config.identity_sha256[:12]}-"
+            f"{direction_identity[:12]}"
         )
+        try:
+            self._persistent_study = (
+                self._optuna.load_study(
+                    study_name=study_name,
+                    storage=storage,
+                    sampler=sampler,
+                )
+                if reopen_existing
+                else self._optuna.create_study(
+                    study_name=study_name,
+                    directions=["maximize"] * len(OBJECTIVES),
+                    storage=storage,
+                    sampler=sampler,
+                )
+            )
+        except KeyError as error:
+            raise StudyError(
+                "existing Optuna journal does not contain the expected study"
+            ) from error
         self._persisted_ordinals = {
             int(trial.user_attrs["study_ordinal"])
             for trial in self._persistent_study.get_trials(deepcopy=False)

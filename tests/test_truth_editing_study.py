@@ -898,6 +898,22 @@ def test_optuna_restart_uses_native_journal_and_exact_pending_proposal(tmp_path)
 
 
 @pytest.mark.skipif(importlib.util.find_spec("optuna") is None, reason="Optuna is optional")
+def test_optuna_prepare_reopens_existing_journal_without_appending(tmp_path) -> None:
+    config = _config(tmp_path)
+    directions = TruthEditingStudy(config, _direction_bank()).directions
+    path = tmp_path / "existing.optuna.log"
+    first = OptunaSearchDriver(seed=17)
+    first.prepare(config, directions, path)
+    original = path.read_bytes()
+
+    second = OptunaSearchDriver(seed=17)
+    second.prepare(config, directions, path)
+
+    assert path.read_bytes() == original
+    assert second.persistent_study_name == first.persistent_study_name
+
+
+@pytest.mark.skipif(importlib.util.find_spec("optuna") is None, reason="Optuna is optional")
 def test_optuna_replays_unresolved_operational_failures_fifo_and_exactly(
     tmp_path,
 ) -> None:
