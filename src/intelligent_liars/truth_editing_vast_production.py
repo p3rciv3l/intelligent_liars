@@ -28,6 +28,7 @@ from intelligent_liars.truth_editing_vast_prerequisites import (
     Offer,
     RunCommand,
     VastPrerequisiteError,
+    adaptive_aws_required_validity_seconds,
     build_bundle,
     canonical_bytes,
     execute_lifecycle,
@@ -415,17 +416,12 @@ def execute_production_lifecycle(
             )
         try:
             full_lease_validity = config.base_job.maximum_elapsed_seconds + 300
-            required_validity = (
-                full_lease_validity
-                if minimum_aws_validity_seconds is None
-                else minimum_aws_validity_seconds
+            required_validity = adaptive_aws_required_validity_seconds(
+                minimum_aws_validity_seconds,
+                full_lease_validity,
             )
-            if not 600 <= required_validity <= full_lease_validity:
-                raise ProductionVastError(
-                    "adaptive AWS validity override is outside the safe range"
-                )
             aws_credentials.assert_valid_for(required_validity)
-        except VastPrerequisiteError as error:
+        except (ValueError, VastPrerequisiteError) as error:
             raise ProductionVastError(str(error)) from error
     base_metadata = metadata_path.with_name(metadata_path.name + ".base.json")
     base_receipt: dict[str, Any] | None = None
