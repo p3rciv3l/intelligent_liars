@@ -16,7 +16,7 @@ import math
 import mimetypes
 import re
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from types import MappingProxyType
 from typing import Any, Literal, Protocol
@@ -188,6 +188,13 @@ class FrozenMediaReference:
     sha256: str
     content: bytes
 
+    # The worker keeps one verified media payload for its entire lifetime.
+    # Cache only the expensive serialization result; ``resolved_content_block``
+    # still returns a fresh mapping on every call, so a processor/backend cannot
+    # mutate the cached evidence.  The source bytes and digest remain available
+    # to ``verify_current`` on every trial.
+    _encoded_content: str | None = field(default=None, init=False, compare=False, repr=False)
+
     def verify_current(self) -> None:
         try:
             current = self.path.read_bytes()
@@ -208,7 +215,10 @@ class FrozenMediaReference:
         mime = mimetypes.guess_type(self.path.name)[0]
         if mime is None or not mime.startswith(f"{self.media_type}/"):
             mime = f"{self.media_type}/png" if self.media_type == "image" else "video/mp4"
-        encoded = base64.b64encode(self.content).decode("ascii")
+        encoded = self._encoded_content
+        if encoded is None:
+            encoded = base64.b64encode(self.content).decode("ascii")
+            object.__setattr__(self, "_encoded_content", encoded)
         return {
             "type": self.media_type,
             self.media_type: f"data:{mime};base64,{encoded}",

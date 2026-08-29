@@ -122,6 +122,52 @@ from intelligent_liars.truth_editing_wandb_monitoring import (  # noqa: E402
 )
 
 
+class _OrderedDurableCallback:
+    """Serialize concurrent worker callbacks at the durable ordinal frontier.
+
+    Workers are intentionally dispatched concurrently, but the off-host partial
+    checkpoint is an ordered frontier.  Waiting callbacks are released when the
+    preceding ordinal has published; a callback failure wakes every waiter so a
+    failed publication cannot strand worker threads at a barrier.
+    """
+
+    def __init__(
+        self,
+        callback: Callable[[Mapping[str, object]], None],
+        *,
+        next_ordinal_reader: Callable[[], int],
+    ) -> None:
+        self._callback = callback
+        self._next_ordinal_reader = next_ordinal_reader
+        self._condition = threading.Condition()
+        self._next_ordinal: int | None = None
+        self._failure: BaseException | None = None
+
+    def __call__(self, event: Mapping[str, object]) -> None:
+        ordinal = event.get("ordinal")
+        if isinstance(ordinal, bool) or not isinstance(ordinal, int):
+            raise ValueError("durable event ordinal must be an integer")
+        with self._condition:
+            if self._failure is not None:
+                raise RuntimeError("durable callback frontier failed") from self._failure
+            if self._next_ordinal is None:
+                self._next_ordinal = self._next_ordinal_reader()
+            while ordinal != self._next_ordinal:
+                if ordinal < self._next_ordinal:
+                    raise ValueError("durable event ordinal regressed")
+                self._condition.wait()
+                if self._failure is not None:
+                    raise RuntimeError("durable callback frontier failed") from self._failure
+            try:
+                self._callback(event)
+            except BaseException as error:
+                self._failure = error
+                self._condition.notify_all()
+                raise
+            self._next_ordinal += 1
+            self._condition.notify_all()
+
+
 def publish_completed_boundary_then_recover_orphans(
     *,
     publish_completed_boundary: Callable[[], None],
@@ -1386,6 +1432,21 @@ def main(argv: list[str] | None = None) -> int:
             raise ValueError("partial publication snapshot path differs")
         shutil.rmtree(snapshot, ignore_errors=True)
 
+    adaptive_checkpoint_path = (
+        args.adaptive_checkpoint
+        if args.adaptive_checkpoint is not None
+        else production.journal_path.parent / "adaptive-run-checkpoint.json"
+    )
+    ordered_checkpoint_partial_trial = _OrderedDurableCallback(
+        checkpoint_partial_trial,
+        next_ordinal_reader=lambda: _integer(
+            _read_object(adaptive_checkpoint_path, "adaptive checkpoint")[
+                "completed_trials"
+            ],
+            "adaptive completed trials",
+        ),
+    )
+
     evaluator = FleetBatchEvaluator(
         fleet,
         receipt_directory_override=(
@@ -1393,7 +1454,7 @@ def main(argv: list[str] | None = None) -> int:
         ),
         telemetry=telemetry,
         trial_telemetry_callback=record_trial_telemetry,
-        trial_receipt_durable_callback=checkpoint_partial_trial,
+        trial_receipt_durable_callback=ordered_checkpoint_partial_trial,
         worker_factory=lambda slot: SubprocessCudaWorker(
             slot,
             (
@@ -1427,11 +1488,6 @@ def main(argv: list[str] | None = None) -> int:
         evaluator=evaluator,  # type: ignore[arg-type]
         artifacts=ImmutableStudyArtifactAdapter(production.artifact_dir),
         journal_path=production.journal_path,
-    )
-    adaptive_checkpoint_path = (
-        args.adaptive_checkpoint
-        if args.adaptive_checkpoint is not None
-        else production.journal_path.parent / "adaptive-run-checkpoint.json"
     )
     if judge_budget is None:
         raise ValueError("adaptive production requires the durable judge ledger")

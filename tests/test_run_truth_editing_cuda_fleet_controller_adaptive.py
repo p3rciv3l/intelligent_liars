@@ -6,6 +6,8 @@ import json
 import os
 import subprocess
 import sys
+import threading
+import time
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
@@ -40,6 +42,71 @@ assert SPEC is not None and SPEC.loader is not None
 MODULE = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(MODULE)
 RECEIPT_DIRECTORY = Path("/workspace/outputs/fleet-receipts")
+
+
+def test_ordered_durable_callback_preserves_frontier_under_concurrent_dispatch() -> None:
+    published: list[int] = []
+    active = 0
+    peak = 0
+    lock = threading.Lock()
+
+    def publish(event: dict[str, object]) -> None:
+        nonlocal active, peak
+        with lock:
+            active += 1
+            peak = max(peak, active)
+        time.sleep(0.005)
+        published.append(int(event["ordinal"]))
+        with lock:
+            active -= 1
+
+    callback = MODULE._OrderedDurableCallback(
+        publish,
+        next_ordinal_reader=lambda: 0,
+    )
+    threads = [
+        threading.Thread(target=callback, args=({"ordinal": ordinal},))
+        for ordinal in reversed(range(8))
+    ]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=2)
+        assert not thread.is_alive()
+
+    assert published == list(range(8))
+    assert peak == 1
+
+
+def test_ordered_durable_callback_releases_waiters_after_frontier_failure() -> None:
+    calls: list[int] = []
+
+    def publish(event: dict[str, object]) -> None:
+        calls.append(int(event["ordinal"]))
+        if event["ordinal"] == 0:
+            raise RuntimeError("publication failed")
+
+    callback = MODULE._OrderedDurableCallback(
+        publish,
+        next_ordinal_reader=lambda: 0,
+    )
+    errors: list[type[BaseException]] = []
+
+    def invoke(ordinal: int) -> None:
+        try:
+            callback({"ordinal": ordinal})
+        except BaseException as error:
+            errors.append(type(error))
+
+    threads = [threading.Thread(target=invoke, args=(ordinal,)) for ordinal in (1, 0)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=2)
+        assert not thread.is_alive()
+
+    assert calls == [0]
+    assert len(errors) == 2
 
 
 def _partial_binding() -> PartialBatchBinding:
@@ -644,7 +711,7 @@ def test_real_main_wires_per_trial_offhost_durability() -> None:
         if keyword.arg == "trial_receipt_durable_callback"
     )
     assert isinstance(callback, ast.Name)
-    assert callback.id == "checkpoint_partial_trial"
+    assert callback.id == "ordered_checkpoint_partial_trial"
 
 
 def test_real_main_handles_durable_abort_without_entering_finalization() -> None:

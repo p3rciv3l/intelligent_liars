@@ -57,6 +57,20 @@ def test_budget_money_serialization_preserves_integer_trailing_zeroes() -> None:
     assert mapping["per_call_reservation_usd"] == "0.025"
 
 
+def test_judge_concurrency_is_bounded_and_configurable(tmp_path: Path) -> None:
+    for value in (0, 9, True):
+        with pytest.raises(ProductionJudgeBudgetError, match="concurrency"):
+            ProductionJudgeBudget(
+                tmp_path / f"invalid-{value}",
+                config=_config(),
+                max_concurrency=value,  # type: ignore[arg-type]
+            )
+    budget = ProductionJudgeBudget(
+        tmp_path / "eight", config=_config(), max_concurrency=8
+    )
+    assert budget.max_concurrency == 8
+
+
 class _Transport:
     def __init__(
         self,
@@ -344,7 +358,7 @@ def test_eight_workers_share_one_cap_and_open_one_durable_circuit(tmp_path: Path
     assert receipt["circuit_open"] is True
 
 
-def test_paid_transport_gate_allows_only_one_thread_in_flight_per_ledger(
+def test_paid_transport_gate_allows_four_threads_in_flight_per_ledger(
     tmp_path: Path,
 ) -> None:
     class MeasuringTransport(_Transport):
@@ -379,7 +393,7 @@ def test_paid_transport_gate_allows_only_one_thread_in_flight_per_ledger(
         list(pool.map(call, range(8)))
 
     assert transport.calls == 8
-    assert transport.maximum_active == 1
+    assert transport.maximum_active == 4
 
 
 def test_paid_transport_waiters_recheck_circuit_before_calling_provider(
@@ -402,7 +416,9 @@ def test_paid_transport_waiters_recheck_circuit_before_calling_provider(
 
     def call(index: int) -> str:
         try:
-            ProductionJudgeBudget(root, config=_config()).transport(transport).complete(
+            ProductionJudgeBudget(
+                root, config=_config(), max_concurrency=1
+            ).transport(transport).complete(
                 _request(index)
             )
         except PaidJudgeCircuitOpen:
@@ -426,7 +442,7 @@ def test_paid_transport_waiters_recheck_circuit_before_calling_provider(
     assert transport.calls == 1
 
 
-def test_paid_transport_gate_serializes_across_processes(tmp_path: Path) -> None:
+def test_paid_transport_gate_allows_four_processes_in_flight(tmp_path: Path) -> None:
     context = multiprocessing.get_context("fork")
     start = context.Event()
     active = context.Value("i", 0)
@@ -457,7 +473,7 @@ def test_paid_transport_gate_serializes_across_processes(tmp_path: Path) -> None
 
     assert all(process.exitcode == 0 for process in processes)
     assert outcomes == ["completed"] * 4
-    assert maximum_active.value == 1
+    assert maximum_active.value == 4
 
 
 def test_paid_transport_gate_is_released_when_worker_crashes(tmp_path: Path) -> None:

@@ -90,6 +90,7 @@ Purpose: prevent repeated operational mistakes. Read this file before every paid
 | Adaptive main r11, resume 4 capacity precision | Replaying the completed batch reached capacity validation, where a binary-float average multiplied by eight was `6e-13` seconds below the signed judge total. | Round the serialized per-trial judge bound upward by one representable float. The exact live-scale regression and the broader truth-editing suite pass. |
 | Adaptive main r11, resume 5 tier accounting | Trial 88 committed, but the planner treated a measured 3x expanded workload as a discovery baseline and multiplied it by three again. It falsely projected only 192 affordable trials and durably stopped below the required 200. | Normalize measured generation, judge time, and judge cost back to a discovery-equivalent baseline before applying future tier multipliers. Preserve raw observations and actual spend unchanged. The corrected trial-88 receipt guarantees the minimum and targets 224 trials. |
 | Adaptive main r11, resumes 6–9 checkpoint recovery | A local-only trial-80 restore lacked the matching judge ledger; a fresh S3 namespace lacked its required barrier-zero lineage; and the first partial replay met the later trial-85 S3 receipt rather than the restored pre-85 frontier. Each attempt stopped before admitting new Optuna work. | Preserve every failed tree and S3 version. Hydrate the exact trial-80 partial snapshot, restore the versioned full and partial pointers to their matching trial-80 frontiers, replay the single missing receipt, and let the normal publisher create a new active trial-88 continuation. |
+| Adaptive main r11, trial 104 stop | The run stopped at trial 104 because the capacity model treated judge capacity as if the eight GPU workers could consume it in parallel; the production judge transport was serialized, so judge wall time and reservations accumulated faster than the model projected. The final receipt has 104 completed trials: 35 scientifically infeasible, 69 operational failures, and 0 successful trials. | Preserve the stopped run and all immutable local/off-host artifacts. Rebuild capacity from observed serialized judge throughput and actual reservations before any continuation; do not count this partial run as scientific success or silently discard its failures. |
 
 ## Current attempt
 
@@ -103,6 +104,14 @@ Purpose: prevent repeated operational mistakes. Read this file before every paid
 - Capacity: minimum guarantee remains restored; advisory target `216` after the fresh expanded batch.
 - Active work: trials 96–103 authorized; controller and all eight GPU workers active under the same W&B run ID `2c8c9039985846a3b1f979422604756a`.
 - Status at `2026-08-29T13:43:49Z`: phase `broad_coverage`, no stop reason, and no judge JSON/schema/transport failure in trials 88–95.
+
+### Adaptive main r11, trial 104 stop — 2026-08-29
+
+- Stop boundary: trial 104; coverage incomplete; no successful scientific trial.
+- Root cause: the capacity model assumed parallel judge consumption, but the production judge path is serialized. Judge latency/reservations therefore exhausted the modeled allowance before the projected trial target.
+- Judge spend: `$0.165587505` actual across 736 calls (726 completed, 10 ambiguous); `$0.415587505` reserved-or-spent. Vast infrastructure spend remains separately reconciled by the lifecycle receipt.
+- Preserved artifacts: final run receipt (`ff4cbe10…639d4`), phase receipt (`26af501…2846`), journal (`d1b025d…02449`), capacity snapshot (`8a0c3a…6a98d0`), judge cache/ledger, checkpoint, and the stopped output tree/off-host copies.
+- No-data-loss status: no committed trial record, judge cache entry, journal event, checkpoint, or receipt was dropped; the stop is an incomplete run, not a data-loss event.
 
 ## Spend ledger
 

@@ -23,6 +23,7 @@ from intelligent_liars.truth_editing_preservation import (
 )
 from intelligent_liars.truth_editing_preservation_runtime import (
     EditedPreservationOutput,
+    FrozenMediaReference,
     FrozenPreservationInput,
     PreservationRuntimeError,
     PreservationRuntimeReceipt,
@@ -30,6 +31,40 @@ from intelligent_liars.truth_editing_preservation_runtime import (
     _hash,
     _preservation_receipt_mapping,
 )
+
+
+def test_frozen_media_serialization_is_cached_without_caching_mutable_evidence(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    media_path = tmp_path / "frozen.png"
+    content = b"immutable vision fixture"
+    media_path.write_bytes(content)
+    reference = FrozenMediaReference(
+        media_id="image-1",
+        media_type="image",
+        path=media_path,
+        sha256=hashlib.sha256(content).hexdigest(),
+        content=content,
+    )
+    calls = 0
+    import intelligent_liars.truth_editing_preservation_runtime as runtime
+
+    original = runtime.base64.b64encode
+
+    def counted(value: bytes) -> bytes:
+        nonlocal calls
+        calls += 1
+        return original(value)
+
+    monkeypatch.setattr(runtime.base64, "b64encode", counted)
+    first = reference.resolved_content_block()
+    second = reference.resolved_content_block()
+    assert calls == 1
+    assert first == second
+    assert first is not second
+    first["image"] = "mutated"
+    assert reference.resolved_content_block()["image"] == second["image"]
+    reference.verify_current()
 
 
 def _sha(character: str) -> str:

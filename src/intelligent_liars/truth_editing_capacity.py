@@ -24,6 +24,10 @@ POLICY_FORMAT = "truth_editing_adaptive_capacity_policy_v1"
 MEASUREMENT_FORMAT = "truth_editing_capacity_measurement_v1"
 RECEIPT_FORMAT = "truth_editing_adaptive_capacity_receipt_v2"
 BATCH_OBSERVATION_FORMAT = "truth_editing_capacity_batch_observation_v2"
+# Production judge budget runs four judge workers.  A scheduler batch has
+# eight trials, so judge work contributes two waves to batch makespan.
+JUDGE_MAX_CONCURRENCY = 4
+JUDGE_BATCH_WAVES = 2
 _HEX = frozenset("0123456789abcdef")
 _UTC_PATTERN = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z")
 _TIMED_CANARY_RECEIPT_FIELDS = {
@@ -582,7 +586,10 @@ def build_capacity_receipt(
         duration = policy.duration_margin * (
             fixed_seconds
             + generation_seconds * generation_multiplier
-            + judge_latency * judge_multiplier
+            # Eight trials are submitted in a batch, while at most four
+            # judge requests run concurrently.  Judge time is therefore two
+            # waves of per-trial judge work in the batch makespan.
+            + judge_latency * judge_multiplier * JUDGE_BATCH_WAVES
         )
         judge_cost = measurement.judge_cost_usd_per_trial * policy.judge_cost_margin * judge_multiplier
         gpu_cost = measurement.per_gpu_hourly_usd * duration / Decimal(3600)
@@ -904,22 +911,42 @@ def reforecast_capacity_receipt(
     )
     generation_multiplier = observed_tier[2]
     judge_multiplier = observed_tier[3]
-    previous_generation = Decimal(str(measured["generated_tokens"])) / Decimal(
-        str(measured["tokens_per_second"])
-    )
-    previous_judge = Decimal(str(measured["judge_latency_seconds"]))
     observed_generation = Decimal(str(generation))
     observed_judge = Decimal(str(judge_elapsed))
     observed_wall = Decimal(str(wall))
-    observed_fixed = observed_wall - observed_generation - observed_judge
-    normalized_generation = max(
-        previous_generation,
-        observed_generation / generation_multiplier,
+    # The ledger total is aggregate work, not makespan.  Normalize it to one
+    # trial before applying the two-wave batch schedule.  When the observed
+    # wall contains serialized judge work, subtract that total from the wall
+    # before estimating fixed overhead; otherwise use the bounded two-wave
+    # makespan.  This keeps old serialized runs from poisoning future forecasts.
+    observed_judge_work = max(
+        observed_judge,
+        judge_elapsed_total / Decimal(policy.batch_size),
     )
-    normalized_judge = max(
-        previous_judge,
-        observed_judge / judge_multiplier,
+    if judge_elapsed_total == 0:
+        # Legacy worker-only observations have no ledger delta.  Keep their
+        # one-wave interpretation; the signed worker wall already includes
+        # the previous judge bound.
+        judge_component = observed_judge
+    elif judge_elapsed_total <= max(Decimal(0), observed_wall - observed_generation):
+        # The wall contains serialized provider work.  Remove that entire
+        # aggregate total from fixed overhead before forecasting the new
+        # bounded-concurrency schedule.
+        judge_component = judge_elapsed_total
+    else:
+        # Calls already overlapped in the observed batch; use the conservative
+        # two-wave makespan for the new production gate.
+        judge_component = observed_judge_work * JUDGE_BATCH_WAVES
+    observed_fixed = max(
+        Decimal(0),
+        observed_wall - observed_generation - judge_component,
     )
+    # A fresh complete batch is a better bound than a stale canary/fallback.
+    # Both values are signed by the batch observation, so allowing them to
+    # decrease is safe and is required to recover from missing-telemetry
+    # fallback measurements such as the trial-104 abort.
+    normalized_generation = observed_generation / generation_multiplier
+    normalized_judge = observed_judge_work / judge_multiplier
     normalized_cost = max(
         _money(measured["judge_cost_usd_per_trial"], "previous judge cost"),
         judge_cost / judge_multiplier,
@@ -927,7 +954,7 @@ def reforecast_capacity_receipt(
     normalized_observed_wall = (
         observed_fixed
         + observed_generation / generation_multiplier
-        + observed_judge / judge_multiplier
+        + observed_judge_work / judge_multiplier
     )
     normalized_wall = max(
         normalized_observed_wall,
@@ -1084,6 +1111,7 @@ def write_capacity_receipt(path: Path, receipt: Mapping[str, Any]) -> None:
 
 __all__ = [
     "CapacityMeasurement", "CapacityPlanningError", "CapacityPolicy",
+    "JUDGE_MAX_CONCURRENCY", "JUDGE_BATCH_WAVES",
     "MinimumTrialGuaranteeError",
     "SpendSnapshot", "build_capacity_receipt", "create_capacity_measurement", "load_capacity_measurement",
     "reforecast_capacity_receipt",

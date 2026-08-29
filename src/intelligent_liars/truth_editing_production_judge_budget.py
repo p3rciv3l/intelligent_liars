@@ -32,9 +32,12 @@ EVENT_FORMAT = "truth_editing_production_judge_budget_event_v1"
 RECEIPT_FORMAT = "truth_editing_production_judge_budget_receipt_v1"
 MAXIMUM_ALL_IN_SPEND_USD = Decimal("50")
 MINIMUM_CALL_RESERVATION_USD = Decimal("0.025")
+DEFAULT_MAX_CONCURRENCY = 4
+MAX_MAX_CONCURRENCY = 8
 _INPUT_USD_PER_TOKEN = Decimal("0.000000075")
 _OUTPUT_USD_PER_TOKEN = Decimal("0.00000025")
 _THREAD_LOCKS: dict[str, threading.RLock] = {}
+_THREAD_TRANSPORT_SEMAPHORES: dict[str, threading.BoundedSemaphore] = {}
 _THREAD_LOCKS_GUARD = threading.Lock()
 _SECRET_FIELD_NAMES = frozenset(
     {"api_key", "authorization", "openrouter_api_key", "x-api-key", "cookie", "set-cookie"}
@@ -181,14 +184,49 @@ class ProductionJudgeBudget:
     """One append-only ledger shared by every production judge worker."""
 
     def __init__(
-        self, path: str | Path, *, config: ProductionJudgeBudgetConfig
+        self,
+        path: str | Path,
+        *,
+        config: ProductionJudgeBudgetConfig,
+        max_concurrency: int = DEFAULT_MAX_CONCURRENCY,
     ) -> None:
+        if (
+            isinstance(max_concurrency, bool)
+            or not isinstance(max_concurrency, int)
+            or not 1 <= max_concurrency <= MAX_MAX_CONCURRENCY
+        ):
+            raise ProductionJudgeBudgetError(
+                f"judge concurrency must be an integer in [1, {MAX_MAX_CONCURRENCY}]"
+            )
         self.path = Path(path)
         if self.path.exists() and (self.path.is_symlink() or not self.path.is_dir()):
             raise ProductionJudgeBudgetError("judge budget ledger must be a real directory")
         self.path.mkdir(parents=True, exist_ok=True)
         (self.path / "calls").mkdir(exist_ok=True)
         self.config = config
+        self.max_concurrency = max_concurrency
+        self._transport_slots_dir = self.path / ".transport-slots"
+        if self._transport_slots_dir.exists() and (
+            self._transport_slots_dir.is_symlink()
+            or not self._transport_slots_dir.is_dir()
+        ):
+            raise ProductionJudgeBudgetError(
+                "judge transport slot directory must be a real directory"
+            )
+        self._transport_slots_dir.mkdir(exist_ok=True)
+        # There are always eight physical slots so separately started workers
+        # can share the same bounded semaphore.  Each worker acquires only the
+        # configured prefix, making the default four slots conservative while
+        # allowing an explicitly coordinated increase to eight.
+        for slot in range(MAX_MAX_CONCURRENCY):
+            slot_path = self._transport_slots_dir / f"{slot:02d}.lock"
+            if slot_path.exists() and (
+                slot_path.is_symlink() or not slot_path.is_file()
+            ):
+                raise ProductionJudgeBudgetError(
+                    "judge transport slot must be a regular file"
+                )
+            slot_path.touch(mode=0o600, exist_ok=True)
         with self._locked():
             self._open_manifest()
 
@@ -202,7 +240,7 @@ class ProductionJudgeBudget:
                 # by reservation/reconciliation without deadlocking this call.
                 # Waiting workers enter only after the prior call commits, then
                 # re-check replay/circuit state before touching the provider.
-                with ledger._transport_locked():
+                with ledger._transport_slot():
                     request_copy = copy.deepcopy(dict(request))
                     canonical_request_sha = _sha(request_copy)
                     request_sha, replay = ledger._reserve_or_replay(
@@ -239,7 +277,7 @@ class ProductionJudgeBudget:
         """
 
         recovered: list[dict[str, Any]] = []
-        with self._transport_locked(), self._locked():
+        with self._transport_slots(), self._locked():
             for call_dir in sorted((self.path / "calls").iterdir()):
                 if call_dir.is_symlink() or not call_dir.is_dir():
                     raise ProductionJudgeBudgetError(
@@ -744,23 +782,61 @@ class ProductionJudgeBudget:
 
     @contextmanager
     def _transport_locked(self) -> Iterator[None]:
-        """Serialize the paid boundary across both threads and processes.
+        """Backward-compatible alias for draining every transport slot."""
 
-        ``flock`` is released by the kernel if a worker exits, while the
-        process-local lock supplies the thread exclusion that process-scoped
-        advisory locks cannot provide reliably on their own.
-        """
+        with self._transport_slots():
+            yield
 
-        key = f"{self.path.resolve()}::transport"
+    @contextmanager
+    def _transport_slot(self) -> Iterator[None]:
+        """Acquire one crash-releasing, process-shared paid-call slot."""
+
+        descriptors: list[int] = []
+        key = str(self.path.resolve())
         with _THREAD_LOCKS_GUARD:
-            thread_lock = _THREAD_LOCKS.setdefault(key, threading.RLock())
-        with thread_lock:
-            lock_path = self.path / ".transport.lock"
-            descriptor = os.open(lock_path, os.O_RDWR | os.O_CREAT, 0o600)
-            try:
+            thread_semaphore = _THREAD_TRANSPORT_SEMAPHORES.setdefault(
+                key, threading.BoundedSemaphore(MAX_MAX_CONCURRENCY)
+            )
+        thread_semaphore.acquire()
+        try:
+            while True:
+                for index in range(self.max_concurrency):
+                    path = self._transport_slots_dir / f"{index:02d}.lock"
+                    descriptor = os.open(path, os.O_RDWR)
+                    try:
+                        fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    except BlockingIOError:
+                        os.close(descriptor)
+                        continue
+                    descriptors.append(descriptor)
+                    yield
+                    return
+                time.sleep(0.005)
+        finally:
+            for descriptor in descriptors:
+                fcntl.flock(descriptor, fcntl.LOCK_UN)
+                os.close(descriptor)
+            thread_semaphore.release()
+
+    @contextmanager
+    def _transport_slots(self) -> Iterator[None]:
+        """Drain the semaphore, proving no paid call is still active."""
+
+        with self._all_transport_slots():
+            yield
+
+    @contextmanager
+    def _all_transport_slots(self) -> Iterator[None]:
+        descriptors: list[int] = []
+        try:
+            for index in range(MAX_MAX_CONCURRENCY):
+                path = self._transport_slots_dir / f"{index:02d}.lock"
+                descriptor = os.open(path, os.O_RDWR)
                 fcntl.flock(descriptor, fcntl.LOCK_EX)
-                yield
-            finally:
+                descriptors.append(descriptor)
+            yield
+        finally:
+            for descriptor in reversed(descriptors):
                 fcntl.flock(descriptor, fcntl.LOCK_UN)
                 os.close(descriptor)
 

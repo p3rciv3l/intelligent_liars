@@ -72,8 +72,8 @@ def test_capacity_plan_uses_complete_batches_and_can_expand_to_800() -> None:
         "batch_size": 8,
         "minimum_trials": 200,
         "maximum_trials": 800,
-        "planned_trial_limit": 800,
-        "planned_batch_limit": 100,
+        "planned_trial_limit": 752,
+        "planned_batch_limit": 94,
         "minimum_trial_guarantee_met": True,
         "search_seconds": 75600,
         "finalization_seconds_reserved": 10800,
@@ -91,7 +91,7 @@ def test_capacity_plan_uses_complete_batches_and_can_expand_to_800() -> None:
     assert receipt["source_judge_ledger_after_receipt_sha256"] is None
     assert receipt["completed_through_trial"] == 0
     assert receipt["next_batch_projection"]["batch_total_cost_usd_upper_bound"] != "0"
-    assert receipt["capacity_limits"]["time_limited_trials"] == 800
+    assert receipt["capacity_limits"]["time_limited_trials"] == 752
     assert receipt["capacity_limits"]["total_budget_limited_trials"] == 800
     assert receipt["capacity_limits"]["evaluation_budget_limited_trials"] == 800
     assert receipt["budget"]["reserved_evaluation_usd"] == "1"
@@ -239,7 +239,8 @@ def test_expanded_tier_observation_is_not_multiplied_by_expanded_tier_twice() ->
         "batch_size": 8,
         "generated_tokens_per_trial_upper_bound": 360,
         "generation_seconds_per_trial_upper_bound": 120.0,
-        "trial_wall_seconds_upper_bound": 260.0,
+        # 120s generation plus two 135s judge waves plus 5s orchestration.
+        "trial_wall_seconds_upper_bound": 395.0,
         "judge_elapsed_seconds_per_trial_upper_bound": 135.0,
         "judge_cost_usd_per_trial_upper_bound": "0.0006",
         "judge_ledger_before_receipt_sha256": "b" * 64,
@@ -271,8 +272,62 @@ def test_expanded_tier_observation_is_not_multiplied_by_expanded_tier_twice() ->
     assert rolling["conservative_projection"]["generation_seconds_from_measured_tps"] == 40.0
     assert rolling["conservative_projection"]["fixed_seconds"] == pytest.approx(5.0)
     expanded = select_next_batch_projection(rolling, next_completed_trials=96)
-    assert expanded["batch_duration_seconds_upper_bound"] == pytest.approx(325.0)
+    assert expanded["batch_duration_seconds_upper_bound"] == pytest.approx(493.75)
     assert expanded["batch_evaluation_cost_usd_upper_bound"] == "0.006"
+
+
+def test_trial104_live_scale_keeps_serialized_judge_work_out_of_fixed_overhead() -> None:
+    """The signed batch ledger must participate in the timing decomposition."""
+    policy = CapacityPolicy.from_mapping(
+        json.loads(Path("configs/truth_editing_adaptive_capacity_policy_v1.json").read_text())
+    )
+    initial = build_capacity_receipt(
+        policy=policy,
+        measurement=load_capacity_measurement(measurement(), now=NOW),
+        planned_at=NOW,
+    )
+    raw_observation = {
+        "format": "truth_editing_capacity_batch_observation_v2",
+        "observation_id": "trial104-live-scale",
+        "observed_at": "2026-08-28T11:59:00Z",
+        "timed_canary_receipt_sha256": SHA,
+        "completed_through_trial": 104,
+        "batch_size": 8,
+        "generated_tokens_per_trial_upper_bound": 360,
+        "generation_seconds_per_trial_upper_bound": 120.0,
+        # 120s generation plus two 135s judge waves plus 5s orchestration.
+        "trial_wall_seconds_upper_bound": 395.0,
+        "judge_elapsed_seconds_per_trial_upper_bound": 135.0,
+        "judge_cost_usd_per_trial_upper_bound": "0.0006",
+        "judge_ledger_before_receipt_sha256": "b" * 64,
+        "judge_ledger_after_receipt_sha256": "c" * 64,
+        "judge_calls": 24,
+        "judge_failures": 0,
+        "judge_elapsed_seconds_total": 1080.0,
+        "judge_cost_usd_total": "0.0048",
+        "spend": {
+            "actual_total_usd": "1.0048",
+            "actual_infrastructure_usd": "0.9",
+            "actual_evaluation_usd": "0.1048",
+            "pending_infrastructure_usd": "0",
+            "pending_evaluation_usd": "0",
+        },
+    }
+    observation = _self_hashed(raw_observation)
+    rolling = reforecast_capacity_receipt(
+        policy=policy,
+        previous_receipt=initial,
+        batch_observation=observation,
+        planned_at=NOW,
+    )
+
+    # 120s generation + 135s of judge work leaves only 5s of genuine fixed
+    # batch overhead; serialized judge calls must not be counted twice.
+    assert rolling["completed_through_trial"] == 104
+    assert rolling["conservative_projection"]["fixed_seconds"] == pytest.approx(5.0)
+    assert rolling["measured"]["judge_latency_seconds"] == pytest.approx(45.0)
+    assert rolling["source_batch_observation_sha256"] == observation["self_sha256"]
+    assert validate_capacity_receipt(rolling) == rolling
 
 
 def test_late_rolling_reforecast_does_not_reapply_the_200_trial_floor() -> None:
@@ -346,7 +401,7 @@ def test_rolling_reforecast_uses_only_time_remaining_before_absolute_deadline() 
 @pytest.mark.parametrize(
     ("completed", "evaluation_spend", "actual_total", "judge_cost", "expected_target"),
     [
-        (0, "0.1", "1", "0.0001", 800),
+        (0, "0.1", "1", "0.0001", 752),
         (192, "3.95", "4.85", "0.001", 200),
         (200, "4.99", "5.89", "0.001", 200),
         (792, "0.1", "1", "0.0001", 800),
