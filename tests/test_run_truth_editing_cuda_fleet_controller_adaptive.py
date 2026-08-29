@@ -14,7 +14,22 @@ from types import SimpleNamespace
 import pytest
 
 from test_truth_editing_adaptive_run import NOW, _policy, _receipt, _spend
+from intelligent_liars.truth_editing_capacity import (
+    build_capacity_receipt,
+    load_capacity_measurement,
+)
 from intelligent_liars.truth_editing_contracts import canonical_sha256
+from intelligent_liars.truth_editing_live_judge import FROZEN_JUDGE_CONFIG_SHA256
+from intelligent_liars.truth_editing_offhost_checkpoint import (
+    OffHostCheckpointError,
+    PartialBatchBinding,
+    PartialTrialReceiptBinding,
+    SnapshotBinding,
+)
+from intelligent_liars.truth_editing_production_judge_budget import (
+    ProductionJudgeBudget,
+    ProductionJudgeBudgetConfig,
+)
 
 
 SCRIPT = Path(__file__).parents[1] / "scripts/run_truth_editing_cuda_fleet_controller.py"
@@ -24,6 +39,45 @@ SPEC = importlib.util.spec_from_file_location(
 assert SPEC is not None and SPEC.loader is not None
 MODULE = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(MODULE)
+RECEIPT_DIRECTORY = Path("/workspace/outputs/fleet-receipts")
+
+
+def _partial_binding() -> PartialBatchBinding:
+    return PartialBatchBinding(
+        committed=SnapshotBinding(
+            study_identity_sha256="a" * 64,
+            study_config_sha256="b" * 64,
+            fleet_config_sha256="c" * 64,
+            optuna_study_name="study",
+            wandb_run_id="wandb-run",
+            completed_trials=48,
+        ),
+        batch_ordinal=6,
+        batch_size=8,
+        durable_receipts=(
+            PartialTrialReceiptBinding(
+                trial_id="trial-0048",
+                ordinal=48,
+                proposal_sha256="d" * 64,
+                request_sha256="e" * 64,
+                receipt_sha256="f" * 64,
+            ),
+        ),
+    )
+
+
+def _durable_event(**overrides: object) -> dict[str, object]:
+    event: dict[str, object] = {
+        "format": "truth_editing_vast_fleet_receipt_durable_event_v1",
+        "fleet_config_sha256": "c" * 64,
+        "trial_id": "trial-0048",
+        "ordinal": 48,
+        "request_sha256": "e" * 64,
+        "receipt_path": "/workspace/outputs/fleet-receipts/trial-0048.json",
+        "receipt_sha256": "f" * 64,
+    }
+    event.update(overrides)
+    return event
 
 
 def test_controller_imports_repository_package_without_install_or_pythonpath(
@@ -102,42 +156,277 @@ def test_controller_price_environment_accepts_only_explicit_host_total_unit() ->
         )
 
 
-def test_controller_recovers_orphaned_judge_reservations_before_replay() -> None:
+def test_exact_restored_partial_event_is_already_published() -> None:
+    binding = _partial_binding()
+    repository = SimpleNamespace(
+        read_latest_partial_binding_if_present=lambda committed: (
+            binding if committed == binding.committed else None
+        )
+    )
+
+    assert MODULE.offhost_partial_event_is_already_published(
+        repository=repository,
+        committed_binding=binding.committed,
+        durable_event=_durable_event(),
+        expected_receipt_directory=RECEIPT_DIRECTORY,
+    ) is True
+
+
+def test_restored_partial_event_missing_from_frontier_requires_publication() -> None:
+    binding = _partial_binding()
+    repository = SimpleNamespace(
+        read_latest_partial_binding_if_present=lambda committed: (
+            binding if committed == binding.committed else None
+        )
+    )
+
+    assert MODULE.offhost_partial_event_is_already_published(
+        repository=repository,
+        committed_binding=binding.committed,
+        durable_event=_durable_event(
+            trial_id="trial-0049",
+            ordinal=49,
+            request_sha256="1" * 64,
+            receipt_path="/workspace/outputs/fleet-receipts/trial-0049.json",
+            receipt_sha256="2" * 64,
+        ),
+        expected_receipt_directory=RECEIPT_DIRECTORY,
+    ) is False
+
+
+@pytest.mark.parametrize(
+    ("field", "different"),
+    (
+        ("trial_id", "trial-9999"),
+        ("request_sha256", "1" * 64),
+        ("receipt_sha256", "2" * 64),
+        ("fleet_config_sha256", "3" * 64),
+    ),
+)
+def test_restored_partial_event_identity_mismatch_fails_closed(
+    field: str, different: object
+) -> None:
+    binding = _partial_binding()
+    repository = SimpleNamespace(
+        read_latest_partial_binding_if_present=lambda committed: binding
+    )
+
+    with pytest.raises(OffHostCheckpointError, match="identity differs"):
+        MODULE.offhost_partial_event_is_already_published(
+            repository=repository,
+            committed_binding=binding.committed,
+            durable_event=_durable_event(**{field: different}),
+            expected_receipt_directory=RECEIPT_DIRECTORY,
+        )
+
+
+@pytest.mark.parametrize(
+    "event",
+    (
+        _durable_event(format="different"),
+        _durable_event(ordinal="48"),
+        _durable_event(ordinal=49),
+        _durable_event(
+            receipt_path="/workspace/outputs/fleet-receipts/trial-9999.json"
+        ),
+        {key: value for key, value in _durable_event().items() if key != "receipt_path"},
+        {**_durable_event(), "unexpected": True},
+    ),
+)
+def test_restored_partial_event_malformed_identity_fails_closed(
+    event: dict[str, object],
+) -> None:
+    binding = _partial_binding()
+    repository = SimpleNamespace(
+        read_latest_partial_binding_if_present=lambda committed: binding
+    )
+
+    with pytest.raises(OffHostCheckpointError, match="identity differs"):
+        MODULE.offhost_partial_event_is_already_published(
+            repository=repository,
+            committed_binding=binding.committed,
+            durable_event=event,
+            expected_receipt_directory=RECEIPT_DIRECTORY,
+        )
+
+
+def test_partial_checkpoint_skips_exact_bound_event_before_republication() -> None:
+    class Repository:
+        def __init__(self, binding: PartialBatchBinding) -> None:
+            self.binding = binding
+            self.publication_calls = 0
+
+        def read_latest_partial_binding_if_present(
+            self, committed: SnapshotBinding
+        ) -> PartialBatchBinding | None:
+            return self.binding if committed == self.binding.committed else None
+
+        def publish_partial_from_runtime(self) -> object:
+            self.publication_calls += 1
+            return object()
+
+    binding = _partial_binding()
+    repository = Repository(binding)
+
+    result = MODULE.publish_partial_event_if_needed(
+        repository=repository,
+        committed_binding=binding.committed,
+        durable_event=_durable_event(),
+        expected_receipt_directory=RECEIPT_DIRECTORY,
+        publish=repository.publish_partial_from_runtime,
+    )
+
+    assert result is None
+    assert repository.publication_calls == 0
+
+
+def test_partial_checkpoint_publishes_event_missing_from_restored_frontier() -> None:
+    binding = _partial_binding()
+    publication_calls = 0
+
+    def publish() -> str:
+        nonlocal publication_calls
+        publication_calls += 1
+        return "published"
+
+    result = MODULE.publish_partial_event_if_needed(
+        repository=SimpleNamespace(
+            read_latest_partial_binding_if_present=lambda committed: binding
+        ),
+        committed_binding=binding.committed,
+        durable_event=_durable_event(
+            trial_id="trial-0049",
+            ordinal=49,
+            request_sha256="1" * 64,
+            receipt_path="/workspace/outputs/fleet-receipts/trial-0049.json",
+            receipt_sha256="2" * 64,
+        ),
+        expected_receipt_directory=RECEIPT_DIRECTORY,
+        publish=publish,
+    )
+
+    assert result == "published"
+    assert publication_calls == 1
+
+
+def test_partial_checkpoint_mismatch_fails_before_republication() -> None:
+    binding = _partial_binding()
+    publication_calls = 0
+
+    def publish() -> None:
+        nonlocal publication_calls
+        publication_calls += 1
+
+    with pytest.raises(OffHostCheckpointError, match="identity differs"):
+        MODULE.publish_partial_event_if_needed(
+            repository=SimpleNamespace(
+                read_latest_partial_binding_if_present=lambda committed: binding
+            ),
+            committed_binding=binding.committed,
+            durable_event=_durable_event(request_sha256="1" * 64),
+            expected_receipt_directory=RECEIPT_DIRECTORY,
+            publish=publish,
+        )
+
+    assert publication_calls == 0
+
+
+def test_controller_recovers_orphaned_judge_reservations_after_replay_publication() -> None:
     tree = ast.parse(SCRIPT.read_text())
     main = next(
         node
         for node in tree.body
         if isinstance(node, ast.FunctionDef) and node.name == "main"
     )
-    recovery_call = next(
+    callback = next(
         node
-        for node in ast.walk(main)
+        for node in main.body
+        if isinstance(node, ast.FunctionDef) and node.name == "after_complete_batch"
+    )
+    lifecycle_call = next(
+        node
+        for node in ast.walk(callback)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "publish_completed_boundary_then_recover_orphans"
+    )
+    commit_call = next(
+        node
+        for node in ast.walk(callback)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "commit_batch"
+    )
+    startup_recovery_calls = [
+        node
+        for node in main.body
         if isinstance(node, ast.Call)
         and isinstance(node.func, ast.Attribute)
         and isinstance(node.func.value, ast.Name)
         and node.func.value.id == "judge_budget"
         and node.func.attr == "recover_orphaned_reservations"
+    ]
+
+    assert commit_call.lineno < lifecycle_call.lineno
+    assert startup_recovery_calls == []
+
+
+def test_hydrated_partial_judge_bytes_publish_before_orphan_recovery(
+    tmp_path: Path,
+) -> None:
+    class SimulatedWorkerExit(BaseException):
+        pass
+
+    class InterruptedTransport:
+        def complete(self, request: object) -> dict[str, object]:
+            del request
+            raise SimulatedWorkerExit
+
+    config = ProductionJudgeBudgetConfig.from_mapping(
+        {
+            "format": "truth_editing_production_judge_budget_config_v1",
+            "all_in_maximum_spend_usd": "50",
+            "non_judge_reserved_spend_usd": "49",
+            "maximum_judge_spend_usd": "1",
+            "per_call_reservation_usd": "0.025",
+            "judge_config_sha256": FROZEN_JUDGE_CONFIG_SHA256,
+        }
     )
-    spend_reader_assignment = next(
-        node
-        for node in main.body
-        if isinstance(node, ast.Assign)
-        and any(
-            isinstance(target, ast.Name) and target.id == "spend_reader"
-            for target in node.targets
-        )
-    )
-    study_run = next(
-        node
-        for node in ast.walk(main)
-        if isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Attribute)
-        and isinstance(node.func.value, ast.Name)
-        and node.func.value.id == "run"
-        and node.func.attr == "run"
+    root = tmp_path / "hydrated-ledger"
+    budget = ProductionJudgeBudget(root, config=config)
+    request = {
+        "model": "z-ai/glm-5.3-flash",
+        "max_tokens": 2048,
+        "messages": [{"role": "user", "content": "stored fixture"}],
+    }
+    with pytest.raises(SimulatedWorkerExit):
+        budget.transport(InterruptedTransport()).complete(request)
+    hydrated_bytes = {
+        path.relative_to(root): path.read_bytes()
+        for path in root.rglob("*.json")
+    }
+    published = False
+
+    def publish_restored_partial() -> None:
+        nonlocal published
+        assert {
+            path.relative_to(root): path.read_bytes()
+            for path in root.rglob("*.json")
+        } == hydrated_bytes
+        assert not tuple(root.glob("calls/*/orphan-recovery.json"))
+        published = True
+
+    recovered = MODULE.publish_completed_boundary_then_recover_orphans(
+        publish_completed_boundary=publish_restored_partial,
+        judge_budget=budget,
     )
 
-    assert recovery_call.lineno < spend_reader_assignment.lineno < study_run.lineno
+    assert published is True
+    assert len(recovered) == 1
+    assert tuple(root.glob("calls/*/orphan-recovery.json"))
+    assert next(root.glob("calls/*/reservation.json")).read_bytes() in (
+        hydrated_bytes.values()
+    )
 
 
 def test_real_main_publishes_committed_batch_before_next_batch_admission() -> None:
@@ -194,7 +483,7 @@ def test_real_main_publishes_committed_batch_before_next_batch_admission() -> No
         for node in ast.walk(callback)
         if isinstance(node, ast.Call)
         and isinstance(node.func, ast.Name)
-        and node.func.id == "record_and_publish"
+        and node.func.id == "publish_completed_boundary_then_recover_orphans"
     )
     commit_call = next(
         node
@@ -788,6 +1077,85 @@ def test_rolling_capacity_measures_dispatch_to_journal_wall_time_not_worker_only
 
     rolling = json.loads(rolling_path.read_text())
     assert rolling["measured"]["trial_wall_seconds"] >= 120.0
+
+
+def test_complete_worker_telemetry_wall_covers_generation_plus_signed_judge(
+    tmp_path: Path,
+) -> None:
+    measurement_unsigned = {
+        "format": "truth_editing_capacity_measurement_v1",
+        "measurement_id": "signed-high-judge-bound",
+        "observed_at": "2026-08-28T11:30:00Z",
+        "timed_canary_receipt_sha256": "a" * 64,
+        "generated_tokens": 103,
+        "tokens_per_second": 1.0,
+        "trial_wall_seconds": 191.0,
+        "judge_latency_seconds": 88.0,
+        "judge_cost_usd_per_trial": "0.0001",
+        "per_gpu_hourly_usd": "0.05",
+        "projected_storage_network_usd": "0.1",
+        "spend": {
+            "actual_total_usd": "1.1",
+            "actual_infrastructure_usd": "1",
+            "actual_evaluation_usd": "0.1",
+            "pending_infrastructure_usd": "0",
+            "pending_evaluation_usd": "0",
+        },
+    }
+    measurement = load_capacity_measurement(
+        {
+            **measurement_unsigned,
+            "self_sha256": canonical_sha256(measurement_unsigned),
+        },
+        now=NOW,
+    )
+    initial_receipt = build_capacity_receipt(
+        policy=_policy(), measurement=measurement, planned_at=NOW
+    )
+    judge_path = tmp_path / "judge-ledger"
+    judge_path.mkdir()
+    judge_receipt = _judge_receipt()
+    judge_snapshot = _judge_snapshot()
+    judge = SimpleNamespace(
+        path=judge_path,
+        receipt=lambda: dict(judge_receipt),
+        monitoring_snapshot=lambda: dict(judge_snapshot),
+    )
+    rolling_path = tmp_path / "rolling.json"
+    now = [NOW]
+    controller = MODULE._RollingCapacityController(
+        policy=_policy(),
+        initial_receipt=initial_receipt,
+        rolling_receipt_path=rolling_path,
+        spend_reader=lambda: _spend(),
+        judge_budget=judge,
+        clock=lambda: now[0],
+    )
+    controller.record_batch_admission(completed_trials=0)
+    for index in range(8):
+        controller.record_trial(
+            index,
+            f"trial-{index:04d}",
+            {
+                "evaluation_seconds": 103.0,
+                "generated_tokens": 103.0,
+                "generated_tokens_per_second": 1.0,
+            },
+        )
+    now[0] += timedelta(seconds=5)
+    controller.reforecast(SimpleNamespace(
+        batch_ordinal=0,
+        batch_sha256="e" * 64,
+        batch_size=8,
+        completed_trials=8,
+        trials=tuple(
+            SimpleNamespace(trial_id=f"trial-{index:04d}")
+            for index in range(8)
+        ),
+    ))
+
+    rolling = json.loads(rolling_path.read_text())
+    assert rolling["measured"]["trial_wall_seconds"] == pytest.approx(191.0)
 
 
 def test_rolling_capacity_resume_excludes_offline_repair_time_but_keeps_spend(

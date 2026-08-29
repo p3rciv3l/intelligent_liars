@@ -84,8 +84,10 @@ from intelligent_liars.truth_editing_phase_checkpoint import (  # noqa: E402
     restore_adaptive_checkpoint,
 )
 from intelligent_liars.truth_editing_offhost_checkpoint import (  # noqa: E402
+    OffHostCheckpointError,
     OffHostCheckpointRepository,
     OffHostCheckpointTarget,
+    PartialBatchBinding,
     S3VersionedObjectStore,
     SnapshotBinding,
     hydrate_offhost_partial_snapshot,
@@ -118,6 +120,91 @@ from intelligent_liars.truth_editing_wandb_monitoring import (  # noqa: E402
     CoordinatorTelemetryPump,
     MonitoredSearchDriver,
 )
+
+
+def publish_completed_boundary_then_recover_orphans(
+    *,
+    publish_completed_boundary: Callable[[], None],
+    judge_budget: ProductionJudgeBudget,
+) -> tuple[dict[str, object], ...]:
+    """Preserve hydrated bytes through publication, then recover crashed calls."""
+
+    publish_completed_boundary()
+    return judge_budget.recover_orphaned_reservations()
+
+
+def offhost_partial_event_is_already_published(
+    *,
+    repository: OffHostCheckpointRepository,
+    committed_binding: SnapshotBinding,
+    durable_event: Mapping[str, object],
+    expected_receipt_directory: Path,
+) -> bool:
+    """Recognize one exact receipt already bound by a validated partial pointer."""
+
+    expected_fields = {
+        "format",
+        "fleet_config_sha256",
+        "trial_id",
+        "ordinal",
+        "request_sha256",
+        "receipt_path",
+        "receipt_sha256",
+    }
+    ordinal = durable_event.get("ordinal")
+    receipt_path = durable_event.get("receipt_path")
+    if (
+        set(durable_event) != expected_fields
+        or durable_event.get("format")
+        != "truth_editing_vast_fleet_receipt_durable_event_v1"
+        or durable_event.get("fleet_config_sha256")
+        != committed_binding.fleet_config_sha256
+        or isinstance(ordinal, bool)
+        or not isinstance(ordinal, int)
+        or durable_event.get("trial_id") != f"trial-{ordinal:04d}"
+        or not isinstance(receipt_path, str)
+        or not receipt_path
+        or Path(receipt_path).resolve()
+        != (expected_receipt_directory / f"trial-{ordinal:04d}.json").resolve()
+    ):
+        raise OffHostCheckpointError("restored partial event identity differs")
+    existing: PartialBatchBinding | None = (
+        repository.read_latest_partial_binding_if_present(committed_binding)
+    )
+    if existing is None:
+        return False
+    matched = next(
+        (item for item in existing.durable_receipts if item.ordinal == ordinal), None
+    )
+    if matched is None:
+        return False
+    if (
+        matched.trial_id != durable_event.get("trial_id")
+        or matched.request_sha256 != durable_event.get("request_sha256")
+        or matched.receipt_sha256 != durable_event.get("receipt_sha256")
+    ):
+        raise OffHostCheckpointError("restored partial event identity differs")
+    return True
+
+
+def publish_partial_event_if_needed(
+    *,
+    repository: OffHostCheckpointRepository,
+    committed_binding: SnapshotBinding,
+    durable_event: Mapping[str, object],
+    expected_receipt_directory: Path,
+    publish: Callable[[], object],
+) -> object | None:
+    """Publish a new frontier, but never rebuild an exact restored frontier."""
+
+    if offhost_partial_event_is_already_published(
+        repository=repository,
+        committed_binding=committed_binding,
+        durable_event=durable_event,
+        expected_receipt_directory=expected_receipt_directory,
+    ):
+        return None
+    return publish()
 
 
 def host_hourly_usd_from_environment(environment: Mapping[str, str]) -> float:
@@ -1265,20 +1352,30 @@ def main(argv: list[str] | None = None) -> int:
             wandb_run_id=monitor.run_id,
             completed_trials=completed_trials,
         )
-        _receipt, _binding, snapshot = (
-            offhost_repository.publish_partial_from_runtime(
+        receipt_directory = args.output_root.resolve() / "fleet-receipts"
+        published = publish_partial_event_if_needed(
+            repository=offhost_repository,
+            committed_binding=committed,
+            durable_event=event,
+            expected_receipt_directory=receipt_directory,
+            publish=lambda: offhost_repository.publish_partial_from_runtime(
                 args.output_root.resolve() / "checkpoint-staging/partial",
                 committed_binding=committed,
                 durable_event=event,
                 adaptive_state_root=args.output_root.resolve(),
-                fleet_receipt_dir=(
-                    args.output_root.resolve() / "fleet-receipts"
-                ),
+                fleet_receipt_dir=receipt_directory,
                 runtime_output_dir=production.runtime_output_dir,
                 judge_cache_dir=production.judge_cache_dir,
                 judge_budget_ledger_dir=production.judge_budget_ledger_dir,
-            )
+            ),
         )
+        if published is None:
+            return
+        if not isinstance(published, tuple) or len(published) != 3:
+            raise ValueError("partial publication result differs")
+        _receipt, _binding, snapshot = published
+        if not isinstance(snapshot, Path):
+            raise ValueError("partial publication snapshot path differs")
         shutil.rmtree(snapshot, ignore_errors=True)
 
     evaluator = FleetBatchEvaluator(
@@ -1330,7 +1427,6 @@ def main(argv: list[str] | None = None) -> int:
     )
     if judge_budget is None:
         raise ValueError("adaptive production requires the durable judge ledger")
-    judge_budget.recover_orphaned_reservations()
     spend_reader = _ControllerSpendReader(
         capacity_receipt=capacity_receipt,
         judge_budget=judge_budget,
@@ -1526,7 +1622,13 @@ def main(argv: list[str] | None = None) -> int:
             completed_trials=commit.completed_trials,
             coverage_complete=commit.coverage_complete,
         )
-        record_and_publish(commit)
+        # Hydrated checkpoint bytes remain immutable through replay and
+        # publication. Only after that durable boundary may crashed paid-call
+        # reservations be superseded for exact retry before next admission.
+        publish_completed_boundary_then_recover_orphans(
+            publish_completed_boundary=lambda: record_and_publish(commit),
+            judge_budget=judge_budget,
+        )
 
     with evaluator, pump:
         receipt = run.run(
