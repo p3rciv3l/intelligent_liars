@@ -210,6 +210,32 @@ def test_real_main_discovers_latest_offhost_resume_without_manual_tuple() -> Non
     assert "read_latest_binding_if_present" in calls
 
 
+def test_offhost_auto_resume_uses_complete_planned_study_identity() -> None:
+    """The S3 binding is not the fleet's similarly named config hash."""
+
+    tree = ast.parse(SCRIPT.read_text())
+    main = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "main"
+    )
+    read_call = next(
+        node
+        for node in ast.walk(main)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "read_latest_binding_if_present"
+    )
+    study_identity = next(
+        keyword.value
+        for keyword in read_call.keywords
+        if keyword.arg == "expected_study_identity_sha256"
+    )
+
+    assert isinstance(study_identity, ast.Name)
+    assert study_identity.id == "planned_study_identity_sha256"
+
+
 def test_real_main_wires_per_trial_offhost_durability() -> None:
     tree = ast.parse(SCRIPT.read_text())
     main = next(

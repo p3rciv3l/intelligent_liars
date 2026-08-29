@@ -97,6 +97,7 @@ from intelligent_liars.truth_editing_study import (  # noqa: E402
     OptunaSearchDriver,
     PreparedStudyContext,
     TruthEditingStudy,
+    TruthEditingStudyConfig,
     load_truth_editing_study_config,
 )
 from intelligent_liars.truth_editing_vast_fleet import (  # noqa: E402
@@ -148,6 +149,36 @@ def parse_host_lease_started_at_utc(value: str | None) -> datetime:
     except ValueError as error:
         raise ValueError("host lease start must be a valid ISO UTC timestamp") from error
     return parsed
+
+
+def planned_fleet_study_identity_sha256(
+    *,
+    fleet: FleetConfig,
+    production: ProductionRunConfig,
+    study_config: TruthEditingStudyConfig,
+    bank: DirectionBank,
+) -> str:
+    """Compute the real study identity before consulting an off-host pointer.
+
+    The fleet's ``study_identity_sha256`` field binds the study *configuration*.
+    Off-host snapshots bind the complete study identity, which additionally
+    includes the direction bank, driver, evaluator, and orchestrator code.
+    """
+
+    identity_evaluator = FleetBatchEvaluator(
+        fleet,
+        worker_factory=lambda _slot: None,  # type: ignore[arg-type,return-value]
+        receipt_directory_override=production.journal_path.parent.parent
+        / "fleet-receipts",
+    )
+    identity_run = ProductionTruthEditingRun(
+        study=TruthEditingStudy(study_config, bank.manifest),
+        driver=OptunaSearchDriver(seed=study_config.sampler_seed),
+        evaluator=identity_evaluator,
+        artifacts=ImmutableStudyArtifactAdapter(production.artifact_dir),
+        journal_path=production.journal_path,
+    )
+    return identity_run.planned_study_identity_sha256
 
 
 DEFAULT_CAPACITY_POLICY = Path("configs/truth_editing_adaptive_capacity_policy_v1.json")
@@ -938,6 +969,15 @@ def main(argv: list[str] | None = None) -> int:
         requested_study_config_path=production.study_config,
         observed_study_identity_sha256=study_config.identity_sha256,
     )
+    bank = DirectionBank.open(
+        production.direction_manifest, root=production.direction_root
+    )
+    planned_study_identity_sha256 = planned_fleet_study_identity_sha256(
+        fleet=fleet,
+        production=production,
+        study_config=study_config,
+        bank=bank,
+    )
     offhost_target = OffHostCheckpointTarget.from_model_registry_config(
         args.model_registry_config,
         key_prefix=args.offhost_key_prefix,
@@ -1011,7 +1051,7 @@ def main(argv: list[str] | None = None) -> int:
         )
     else:
         latest_binding = offhost_repository.read_latest_binding_if_present(
-            expected_study_identity_sha256=str(fleet.study_identity_sha256),
+            expected_study_identity_sha256=planned_study_identity_sha256,
             expected_study_config_sha256=study_config.identity_sha256,
             expected_fleet_config_sha256=fleet.identity_sha256,
         )
@@ -1053,7 +1093,6 @@ def main(argv: list[str] | None = None) -> int:
                         args.output_root.resolve(),
                         binding=partial_binding,
                     )
-    bank = DirectionBank.open(production.direction_manifest, root=production.direction_root)
     worker_script = Path(__file__).with_name("run_truth_editing_cuda_fleet_worker.py")
     telemetry = GpuTelemetryCollector(gpu_slots=fleet.worker_count)
     monitoring_root = production.journal_path.parent.parent / "monitoring"
