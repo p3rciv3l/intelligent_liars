@@ -121,11 +121,16 @@ def _from_environment() -> dict[str, Any]:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("mode", choices=("initialize", "replace-from-stdin", "emit"))
+    parser.add_argument(
+        "mode", choices=("prepare", "initialize", "replace-from-stdin", "emit")
+    )
     parser.add_argument("--root", type=Path, required=True)
     args = parser.parse_args()
     root = args.root.resolve()
     path = _process_path(root)
+    if args.mode == "prepare":
+        _write_config(root)
+        return 0
     if args.mode == "initialize":
         _atomic_private(path, _payload(_from_environment()))
         _write_config(root)

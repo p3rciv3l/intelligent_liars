@@ -338,8 +338,16 @@ def production_lifecycle_plan(
     bootstrap = shlex.join(config.base_job.bootstrap_command)
     if config.phase == "adaptive":
         bootstrap = (
-            "python scripts/configure_truth_editing_aws_refresh.py initialize "
+            "set -euo pipefail; "
+            "python scripts/configure_truth_editing_aws_refresh.py prepare "
             "--root /workspace/.truth-editing-aws; "
+            "aws_refresh_attempt=0; "
+            "until python scripts/configure_truth_editing_aws_refresh.py emit "
+            "--root /workspace/.truth-editing-aws >/dev/null 2>&1; do "
+            "aws_refresh_attempt=$((aws_refresh_attempt + 1)); "
+            "if [ \"$aws_refresh_attempt\" -ge 150 ]; then "
+            "echo 'fresh AWS credentials were not installed before bootstrap' >&2; "
+            "exit 91; fi; sleep 2; done; "
             f"{bootstrap}"
         )
     base = replace(

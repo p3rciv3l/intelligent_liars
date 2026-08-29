@@ -69,6 +69,21 @@ def test_initialize_creates_private_refresh_profile_and_emits_exact_identity(
         assert permissions & 0o077 == 0
 
 
+def test_prepare_creates_refresh_target_without_launch_credentials(tmp_path: Path) -> None:
+    root = tmp_path / "aws-refresh"
+
+    prepared = _run(root, "prepare", environment=dict(os.environ))
+    emitted = _run(root, "emit")
+
+    assert prepared.returncode == 0
+    assert emitted.returncode != 0
+    assert "[profile truth-editing-refresh]" in (root / "config").read_text()
+    assert (root / "credentials").read_bytes() == b""
+    assert not (root / "process-credentials.json").exists()
+    for path in (root, root / "config", root / "credentials"):
+        assert stat.S_IMODE(path.stat().st_mode) & 0o077 == 0
+
+
 def test_replace_from_stdin_atomically_changes_emitted_identity(tmp_path: Path) -> None:
     root = tmp_path / "aws-refresh"
     first = _credential(suffix="1")
