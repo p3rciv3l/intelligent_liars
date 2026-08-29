@@ -16,6 +16,7 @@ from intelligent_liars.offline_judge_calibration import (
     FROZEN_JUDGE_RUBRIC_SHA256,
 )
 from intelligent_liars.truth_editing_evaluator import RuntimeRecord
+from intelligent_liars.truth_editing_failure_policy import PaidJudgeCircuitOpen
 from intelligent_liars.truth_editing_judge_contracts import judge_cache_key_sha256
 from intelligent_liars.truth_editing_live_judge import (
     ABSOLUTE_SEMANTIC_SCHEMA_SHA256,
@@ -1027,6 +1028,96 @@ def test_openrouter_transport_binds_every_frozen_parameter_before_generate(monke
     assert observed["response_format"] == {"type": "json_object"}
     assert observed["provider"] == FROZEN_GLM_FLASH_JUDGE_REQUEST["provider"]
     assert result["provider_route"] == "z-ai/fp8"
+
+
+def test_openrouter_transport_preserves_known_cost_payload_without_text(monkeypatch) -> None:
+    payload = {
+        "model": "z-ai/glm-5.3-flash",
+        "provider": "Z.AI",
+        "choices": [{"message": {"role": "assistant"}}],
+        "usage": {
+            "prompt_tokens": 100,
+            "completion_tokens": 0,
+            "total_tokens": 100,
+            "cost": 0.00001,
+        },
+    }
+
+    class Client:
+        def __init__(self, **kwargs):
+            self.model = kwargs["model"]
+            self.provider_config = kwargs["provider"]
+
+        def generate(self, messages):
+            del messages
+            return payload
+
+    monkeypatch.setattr(
+        "intelligent_liars.clients.openrouter_client.OpenRouterClient", Client
+    )
+    stored = StoredJudgeTransport([_transport_response(_absolute_response())])
+    TruthEditingLiveJudge(transport=stored).judge(_record())
+
+    response = OpenRouterJudgeTransport(api_key="test-placeholder").complete(
+        stored.requests[0]
+    )
+
+    assert response["content"] == ""
+    assert response["usage"] == payload["usage"]
+    assert response["price_usd"] == 0.00001
+    assert response["raw_payload"] == payload
+    assert response["provider_route"] == "z-ai/fp8"
+
+
+def test_paid_empty_openrouter_response_becomes_known_cost_invalid_json(monkeypatch) -> None:
+    payload = {
+        "model": "z-ai/glm-5.3-flash",
+        "provider": "Z.AI",
+        "choices": [{"message": {"role": "assistant"}}],
+        "usage": {
+            "prompt_tokens": 100,
+            "completion_tokens": 0,
+            "total_tokens": 100,
+            "cost": 0.00001,
+        },
+    }
+
+    class Client:
+        def __init__(self, **kwargs):
+            self.model = kwargs["model"]
+            self.provider_config = kwargs["provider"]
+
+        def generate(self, messages):
+            del messages
+            return payload
+
+    monkeypatch.setattr(
+        "intelligent_liars.clients.openrouter_client.OpenRouterClient", Client
+    )
+    cache = MemoryJudgeCache()
+
+    with pytest.raises(OperationalJudgeFailure) as captured:
+        TruthEditingLiveJudge(
+            transport=OpenRouterJudgeTransport(api_key="test-placeholder"),
+            cache=cache,
+        ).judge(_record())
+
+    receipt = captured.value.receipt
+    assert receipt.operational_status == "invalid_json"
+    assert receipt.operational_failure is not None
+    assert receipt.operational_failure.code == "empty_response"
+    assert receipt.operational_failure.retryable is True
+    assert receipt.operational_failure.message == "error_class=EmptyResponse"
+    assert not isinstance(captured.value.__cause__, PaidJudgeCircuitOpen)
+    assert receipt.raw_response_sha256 == _sha_json(payload)
+    assert receipt.usage is not None
+    assert receipt.usage.to_payload() == {
+        "input_tokens": 100,
+        "output_tokens": 0,
+        "total_tokens": 100,
+    }
+    assert receipt.price_usd == 0.00001
+    assert cache.failure_receipts(receipt.cache_key_sha256) == (receipt,)
 
 
 def test_invalid_json_persists_failure_receipt_but_not_success_cache(tmp_path: Path) -> None:

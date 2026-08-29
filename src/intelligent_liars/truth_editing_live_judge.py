@@ -494,8 +494,17 @@ class OpenRouterJudgeTransport:
         price = payload.get("usage", {}).get("cost") if isinstance(usage, Mapping) else None
         if price is None:
             price = payload.get("cost")
+        try:
+            content = _extract_openrouter_text(payload)
+        except RuntimeError:
+            # The provider returned a billable response, so preserve it across
+            # the paid boundary. Strict local parsing owns the retryable empty-
+            # response classification and can bind usage and price to a receipt.
+            if not isinstance(usage, Mapping) or price is None:
+                raise
+            content = ""
         return {
-            "content": _extract_openrouter_text(payload),
+            "content": content,
             "model": payload.get("model"),
             # The concrete route is pinned by provider.only; OpenRouter's
             # response-level ``provider`` is a display name, not the route tag.
