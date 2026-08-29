@@ -119,6 +119,16 @@ def _object(value: Any, label: str) -> dict[str, Any]:
     return result
 
 
+def _owned_json(value: Any) -> Any:
+    """Own an immutable receipt tree without changing its JSON meaning."""
+
+    if isinstance(value, Mapping):
+        return {key: _owned_json(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_owned_json(item) for item in value]
+    return value
+
+
 def _field(value: Any, name: str, label: str) -> Any:
     """Read one public record field from real mappings or typed test adapters."""
 
@@ -1617,7 +1627,9 @@ class LeaseScopedPreservationAdapter:
     def __init__(self) -> None:
         self._receipts: dict[tuple[str, str], PreservationReceipt] = {}
 
-    def register(self, receipt: PreservationReceipt) -> None:
+    def register(self, receipt: PreservationReceipt | Mapping[str, Any]) -> None:
+        if isinstance(receipt, Mapping):
+            receipt = _parse_preservation(_owned_json(receipt))
         key = (receipt.edited_model_sha256, receipt.tier)
         existing = self._receipts.get(key)
         if existing is not None and existing != receipt:
@@ -1871,7 +1883,7 @@ def _parse_preservation(value: Any) -> PreservationReceipt:
     if set(raw) != expected or raw["format"] != "truth_editing_preservation_receipt_v1":
         raise ProductionCompositionError("preservation receipt fields or format differ")
     strata_raw = raw["strata"]
-    if not isinstance(strata_raw, list):
+    if not isinstance(strata_raw, (list, tuple)):
         raise ProductionCompositionError("preservation receipt strata must be an array")
     strata = tuple(
         StratumPreservationResult(
@@ -1890,8 +1902,23 @@ def _parse_preservation(value: Any) -> PreservationReceipt:
         vision_tower_byte_identical=bool(raw["vision_tower_byte_identical"]),
         self_sha256=str(raw["self_sha256"]),
     )
-    unsigned = dict(raw)
-    unsigned.pop("self_sha256")
+    unsigned = {
+        "format": receipt.format,
+        "spec_sha256": receipt.spec_sha256,
+        "edited_model_sha256": receipt.edited_model_sha256,
+        "tier": receipt.tier,
+        "strata": [
+            {
+                "stratum": item.stratum,
+                "record_count": item.record_count,
+                "assistant_token_count": item.assistant_token_count,
+                "forward_kl": item.forward_kl,
+            }
+            for item in receipt.strata
+        ],
+        "aggregate_kl": receipt.aggregate_kl,
+        "vision_tower_byte_identical": receipt.vision_tower_byte_identical,
+    }
     if _sha(unsigned) != receipt.self_sha256:
         raise ProductionCompositionError("preservation receipt self hash differs")
     return receipt

@@ -5,7 +5,7 @@ import hashlib
 from dataclasses import dataclass
 from dataclasses import asdict, replace
 from pathlib import Path
-from types import SimpleNamespace
+from types import MappingProxyType, SimpleNamespace
 from typing import Any
 
 import pytest
@@ -20,6 +20,7 @@ from intelligent_liars.truth_editing_production import (
     DeterministicMockPreservationAdapter,
     GroupedV2Corpus,
     ImmutableStudyArtifactAdapter,
+    LeaseScopedPreservationAdapter,
     ProductionCompositionError,
     ProductionRunConfig,
     ProductionStudyEvaluator,
@@ -53,6 +54,50 @@ from intelligent_liars.truth_editing_refusal_directions import (
 
 def _sha(character: str) -> str:
     return character * 64
+
+
+def _canonical_sha(value: Any) -> str:
+    return hashlib.sha256(
+        json.dumps(
+            value,
+            allow_nan=False,
+            ensure_ascii=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode("utf-8")
+    ).hexdigest()
+
+
+def test_lease_scoped_preservation_registers_frozen_runtime_mapping() -> None:
+    unsigned = {
+        "format": "truth_editing_preservation_receipt_v1",
+        "spec_sha256": _sha("1"),
+        "edited_model_sha256": _sha("2"),
+        "tier": "trial",
+        "strata": [
+            {
+                "stratum": "text",
+                "record_count": 1,
+                "assistant_token_count": 1,
+                "forward_kl": 0.0,
+            }
+        ],
+        "aggregate_kl": 0.0,
+        "vision_tower_byte_identical": True,
+    }
+    frozen = MappingProxyType({
+        **unsigned,
+        "strata": tuple(MappingProxyType(item) for item in unsigned["strata"]),
+        "self_sha256": _canonical_sha(unsigned),
+    })
+    adapter = LeaseScopedPreservationAdapter()
+
+    adapter.register(frozen)
+
+    receipt = adapter.evaluate(
+        SimpleNamespace(edited_model_sha256=_sha("2")), None, tier="trial"
+    )
+    assert receipt.edited_model_sha256 == _sha("2")
 
 
 def _evaluator_config() -> EvaluatorConfig:
