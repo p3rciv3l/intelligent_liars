@@ -55,6 +55,9 @@ from intelligent_liars.truth_editing_pairwise_reconciliation import (
 
 _PROVIDER_ROUTE = "z-ai/fp8"
 _COMPATIBLE_ADAPTER_CODE_SHA256S = {
+    # Same finalized normalizer before the complete historical success-code
+    # inventory was pinned for resumable production cache reads.
+    "85a8c30434d050cd0df7cda3cc888371f9bf9a95a54c4ea82e5a504862dfe533",
     # Same normalization contract in the intermediate deployed build that
     # produced two durable successes before empty-terminal reprocessing.
     "25b105242f170be1855831098f5f15bed9701fec0e4b734c4883e2caa252767e",
