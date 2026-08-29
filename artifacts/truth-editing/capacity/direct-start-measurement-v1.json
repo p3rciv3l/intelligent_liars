@@ -1,0 +1,21 @@
+{
+  "format": "truth_editing_capacity_measurement_v1",
+  "generated_tokens": 1,
+  "judge_cost_usd_per_trial": "0.00124477",
+  "judge_latency_seconds": 87.83146324900736,
+  "measurement_id": "direct-adaptive-recovery-r18-plus-calibration-maxima",
+  "observed_at": "2026-08-29T00:14:32.333079Z",
+  "per_gpu_hourly_usd": "0.15333333333333332",
+  "projected_storage_network_usd": "1",
+  "self_sha256": "475974b5c4daf489e44bbe0be162bb74d2722f463f846a3712c34373edcdedb4",
+  "spend": {
+    "actual_evaluation_usd": "0.25",
+    "actual_infrastructure_usd": "1.5",
+    "actual_total_usd": "1.75",
+    "pending_evaluation_usd": "0",
+    "pending_infrastructure_usd": "0"
+  },
+  "timed_canary_receipt_sha256": "d478804f94e93048702aa60a07b64ae06567c1a96734461204d6cf81130db16d",
+  "tokens_per_second": 52.63954162769509,
+  "trial_wall_seconds": 137.13605191977695
+}

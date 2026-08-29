@@ -1,0 +1,12 @@
+{
+  "completed_trials": 1,
+  "gpu_hourly_usd": 0.15333333333333332,
+  "judge_max_latency_seconds": 87.83146324900736,
+  "judge_max_price_usd": 0.00124477,
+  "judge_source_receipt_count": 632,
+  "measured_wall_seconds": 137.13605191977695,
+  "software_and_live_canary_passed": false,
+  "tokens_per_second": 52.63954162769509,
+  "trial_outcome_kind": "operational_failure",
+  "wandb_run_id": "f274b779a6db77865c145b9a0614be6a"
+}

@@ -1,0 +1,40 @@
+{
+  "adaptive_capacity_policy": {
+    "path": "configs/truth_editing_adaptive_capacity_policy_v1_13bf1f92.json",
+    "sha256": "2b3dfc27d2f4ecfaf714600cac64e9106c6d4edfccfb3eb8c53b45f6042932df"
+  },
+  "budget": {
+    "all_in_maximum_spend_usd": "50",
+    "format": "truth_editing_vast_fleet_budget_v1",
+    "identity_sha256": "c1abce008e8ce1c5f0461faabb23bf36e469887fff0d91320317afa4ae178b69",
+    "included_infrastructure_costs": [
+      "gpu_compute",
+      "storage",
+      "network_download",
+      "network_upload"
+    ],
+    "maximum_fetch_gib": 1.0,
+    "maximum_host_lease_seconds": 86400,
+    "maximum_infrastructure_spend_usd": "45",
+    "maximum_judge_spend_usd": "5",
+    "production_judge_budget_config_sha256": "38201cd9f58cb58930157fb00a2608f969297fa1d1e375d30a96e4f39f879f48"
+  },
+  "capability_test_access": false,
+  "execution_topology": {
+    "batch_size": 8,
+    "mode": "persistent_single_host_eight_gpu",
+    "worker_count": 8
+  },
+  "fleet_id": "truth-editing-production",
+  "format": "truth_editing_vast_fleet_v3",
+  "production_config": {
+    "path": "configs/truth_editing_production_v6_adaptive_r10_17b1e9cb_c1f373f8.json",
+    "sha256": "bbb25ef3f7ef3778947c95db6831f7150c57557b50e7cfce025c28ce11b9e2c0"
+  },
+  "receipt_directory": "artifacts/truth-editing/fleet/trials",
+  "study": {
+    "config_sha256": "ae34823c6c1f32630111a9774ae7db5fce5222ac1e92064ec215f6b6e8f0a19f",
+    "identity_sha256": "b5e1ab464a5d6a107bbed2d4ce08055f55b9853642a07dafdab4c78c2ce25298",
+    "path": "configs/truth_editing_study_v5_adaptive_r10_c1f373f8.json"
+  }
+}
