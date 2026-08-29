@@ -50,6 +50,7 @@ def _sha(value: object) -> str:
 def _write_adaptive_state(
     root: Path, *, completed: int = 80, progress_completed: int | None = None,
     abort_minimum: bool = False,
+    operational_failure_ordinals: frozenset[int] = frozenset(),
 ) -> None:
     progress_completed = completed if progress_completed is None else progress_completed
     (root / "study").mkdir(parents=True)
@@ -71,9 +72,21 @@ def _write_adaptive_state(
                 strength=0.5,
             ).to_dict(),
             "result": {
-                "outcome_kind": "successful",
-                "metrics": {name: 0.5 for name in OBJECTIVES},
-                "detail": None,
+                "outcome_kind": (
+                    "operational_failure"
+                    if ordinal in operational_failure_ordinals
+                    else "successful"
+                ),
+                "metrics": (
+                    {}
+                    if ordinal in operational_failure_ordinals
+                    else {name: 0.5 for name in OBJECTIVES}
+                ),
+                "detail": (
+                    "transient worker failure"
+                    if ordinal in operational_failure_ordinals
+                    else None
+                ),
             },
         }
         for ordinal in range(completed)
@@ -99,6 +112,8 @@ def _write_adaptive_state(
         directions=["maximize"] * len(OBJECTIVES),
     )
     for trial in trials:
+        if trial["ordinal"] in operational_failure_ordinals:
+            continue
         study.add_trial(
             optuna.trial.create_trial(
                 values=[0.5] * len(OBJECTIVES),
@@ -108,6 +123,7 @@ def _write_adaptive_state(
                 },
             )
         )
+
     wandb = create_wandb_run_checkpoint(
         root / "monitoring/wandb-run.json",
         run_id="adaptive-transfer",
@@ -284,6 +300,59 @@ def _write_adaptive_state(
                 completed_trials=next_completed,
                 coverage_complete=next_completed >= 40,
             )
+
+
+def test_adaptive_checkpoint_accepts_audit_only_operational_batch_without_optuna_growth(
+    tmp_path: Path,
+) -> None:
+    publication = tmp_path / "published"
+    source_104 = tmp_path / "source-104"
+    source_112 = tmp_path / "source-112"
+    _write_adaptive_state(source_104, completed=104)
+    _write_adaptive_state(
+        source_112,
+        completed=112,
+        operational_failure_ordinals=frozenset(range(104, 112)),
+    )
+    prior_progress = json.loads(
+        (source_104 / "monitoring/adaptive-progress.json").read_text()
+    )
+    next_progress = json.loads(
+        (source_112 / "monitoring/adaptive-progress.json").read_text()
+    )
+    next_progress["revision"] = prior_progress["revision"] + 1
+    next_progress["previous_checkpoint_sha256"] = prior_progress[
+        "checkpoint_sha256"
+    ]
+    next_progress.pop("checkpoint_sha256")
+    next_progress["checkpoint_sha256"] = _sha(next_progress)
+    (source_112 / "monitoring/adaptive-progress.json").write_text(
+        json.dumps(next_progress) + "\n"
+    )
+    # This is the exact production shape: the controller journal advances for
+    # audit-only failures while Optuna's non-learning journal remains unchanged.
+    (source_112 / "study/study-journal.json.optuna.log").write_bytes(
+        (source_104 / "study/study-journal.json.optuna.log").read_bytes()
+    )
+
+    first = publish_adaptive_checkpoint(
+        source_104,
+        publication,
+        expected_study_identity_sha256=STUDY_ID,
+        expected_study_config_sha256=STUDY_CONFIG_SHA,
+        expected_completed_trials=104,
+        expected_optuna_study_name=OPTUNA_STUDY_NAME,
+    )
+    second = publish_adaptive_checkpoint(
+        source_112,
+        publication,
+        expected_study_identity_sha256=STUDY_ID,
+        expected_study_config_sha256=STUDY_CONFIG_SHA,
+        expected_completed_trials=112,
+        expected_optuna_study_name=OPTUNA_STUDY_NAME,
+    )
+
+    assert second["parent_manifest_sha256"] == first["manifest_sha256"]
 
 
 def test_adaptive_checkpoint_round_trip_preserves_scheduler_progress_and_wandb(

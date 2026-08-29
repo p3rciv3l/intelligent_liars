@@ -930,6 +930,15 @@ def _validate_adaptive_lineage(
     if completed == prior_completed:
         if new_optuna != prior_optuna:
             raise PhaseCheckpointError("adaptive Optuna journal changed without trials")
+    elif new_optuna == prior_optuna and _adaptive_optuna_omission_is_audit_only(
+        new_trials[prior_completed:]
+    ):
+        # Operational failures and matched controls are authoritative in the
+        # controller study journal but intentionally omitted from the TPE
+        # journal.  Their checkpoint advance is valid even though Optuna's
+        # bytes do not grow; any scientific/TPE-observed addition still must
+        # satisfy the strict append-only rule below.
+        pass
     elif len(new_optuna) <= len(prior_optuna) or not new_optuna.startswith(prior_optuna):
         raise PhaseCheckpointError("adaptive Optuna journal is not append-only")
     if new_payloads[ADAPTIVE_STATE_FILES[3]] != prior_payloads[ADAPTIVE_STATE_FILES[3]]:
@@ -1033,6 +1042,32 @@ def _validate_adaptive_lineage(
     if any(current < previous for previous, current in spend_pairs):
         raise PhaseCheckpointError("adaptive scheduler spend lineage regressed")
     return str(prior["manifest_sha256"])
+
+
+def _adaptive_optuna_omission_is_audit_only(
+    trials: Sequence[Mapping[str, Any]],
+) -> bool:
+    """Return whether newly completed rows may be absent from Optuna state.
+
+    The controller study journal records every completed attempt.  Optuna is a
+    learning journal, so it deliberately omits operational failures and
+    matched-basis controls.  This helper keeps that policy explicit at the
+    publication seam: an unchanged Optuna file is acceptable only when *every*
+    newly appended controller row is one of those non-learning records.
+    """
+
+    if not trials:
+        return False
+    for trial in trials:
+        proposal = trial.get("proposal")
+        result = trial.get("result")
+        if not isinstance(proposal, Mapping) or not isinstance(result, Mapping):
+            return False
+        if proposal.get("matched_basis_control") == "orthogonal":
+            continue
+        if result.get("outcome_kind") != "operational_failure":
+            return False
+    return True
 
 
 def _advance_adaptive_latest(root: Path, manifest: Mapping[str, Any]) -> None:
