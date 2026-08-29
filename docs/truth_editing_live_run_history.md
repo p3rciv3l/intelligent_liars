@@ -86,18 +86,23 @@ Purpose: prevent repeated operational mistakes. Read this file before every paid
 | Adaptive main r11, W&B resume ordering | W&B stayed on the correct run but rejected replayed trial rows after GPU telemetry advanced its shared history step, leaving the dashboard stale at trial 48 while local checkpoints remained authoritative. | Give every coordinator event one lock-serialized monotonic W&B step, keep trial ordinal as a metric, commit every row explicitly, preserve nonfatal behavior, and replay the durable journal to backfill the dashboard. |
 | Adaptive main r11, W&B server cursor | Resume 3 backfilled every trial through 63 and restored live telemetry, but W&B emitted old-row warnings because `run.step` initially reported local step 0 while the server was already ahead. | Prefer W&B 0.29's server-derived `run.starting_step`, then fall back to `run.step` or implicit committed logging. The hotfix changes monitoring only; Optuna, checkpoints, judge settings, and scores are unchanged. |
 | Adaptive main r11, resume-3 batch 64–71 | Planned monitoring maintenance interrupted an in-flight broad-coverage batch after the full trial-64 boundary. Seven replayed trials produced real scientific scores; trial 64 recorded one retryable, near-instant judge-circuit failure. | Preserve the full trial-72 checkpoint, exclude trial 64 from coverage and Optuna learning, and replay its exact parameters first as trial 72. No other result from the batch is discarded. |
+| Adaptive main r11, batch 80–87 judge JSON | Five trials became operational failures after GLM returned malformed JSON. OpenRouter response healing was enabled, but production code failed immediately instead of making the one allowed correction call. | Keep the frozen GLM-5.3 Flash/Z.AI/FP8/2,048-token configuration and response-healing plugin. On JSON syntax failure only, make one explicit JSON correction call, aggregate both paid calls, and remain fail-closed for duplicate keys, non-finite values, empty output, or a second malformed response. |
+| Adaptive main r11, resume 4 capacity precision | Replaying the completed batch reached capacity validation, where a binary-float average multiplied by eight was `6e-13` seconds below the signed judge total. | Round the serialized per-trial judge bound upward by one representable float. The exact live-scale regression and the broader truth-editing suite pass. |
+| Adaptive main r11, resume 5 tier accounting | Trial 88 committed, but the planner treated a measured 3x expanded workload as a discovery baseline and multiplied it by three again. It falsely projected only 192 affordable trials and durably stopped below the required 200. | Normalize measured generation, judge time, and judge cost back to a discovery-equivalent baseline before applying future tier multipliers. Preserve raw observations and actual spend unchanged. The corrected trial-88 receipt guarantees the minimum and targets 224 trials. |
+| Adaptive main r11, resumes 6–9 checkpoint recovery | A local-only trial-80 restore lacked the matching judge ledger; a fresh S3 namespace lacked its required barrier-zero lineage; and the first partial replay met the later trial-85 S3 receipt rather than the restored pre-85 frontier. Each attempt stopped before admitting new Optuna work. | Preserve every failed tree and S3 version. Hydrate the exact trial-80 partial snapshot, restore the versioned full and partial pointers to their matching trial-80 frontiers, replay the single missing receipt, and let the normal publisher create a new active trial-88 continuation. |
 
 ## Current attempt
 
-### Adaptive main r11, resume 3 — 2026-08-29
+### Adaptive main r11, resume 10 — 2026-08-29
 
 - Vast instance: `49087336`
 - GPUs: eight RTX 3090s
-- Controller attempt: `r11-resume-3`
-- Durable boundary: full trial-72 checkpoint published locally and to S3.
-- Recovery: trial 64's retryable operational failure is excluded and exactly replayed as trial 72.
-- Active work: trials 72–79 admitted; controller and all eight GPU workers active.
-- Status at `2026-08-29T11:11:43Z`: seven new scientific outcomes committed, one exact operational replay in flight, and no stop reason.
+- Controller attempt: `r11-resume-10`
+- Durable boundary: trial 88 committed locally; the prior aborted trial-88 S3 version and host tree remain preserved.
+- Recovery: the trial-80 partial checkpoint reused seven receipts and recomputed only missing trial 85 before committing a new trial-88 continuation.
+- Capacity: minimum guarantee restored; advisory target `224`, time limit `224`, evaluation limit `232`, infrastructure limit `288`, total limit `280`.
+- Active work: trials 88–95 authorized; controller and all eight GPU workers active under the same W&B run ID `2c8c9039985846a3b1f979422604756a`.
+- Status at `2026-08-29T13:22:23Z`: phase `broad_coverage`, no stop reason, no successful scientific candidate yet.
 
 ## Spend ledger
 
