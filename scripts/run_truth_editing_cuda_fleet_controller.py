@@ -110,6 +110,7 @@ from intelligent_liars.truth_editing_vast_fleet import (  # noqa: E402
 )
 from intelligent_liars.truth_editing_wandb_checkpoint import (  # noqa: E402
     AdaptiveRunProgress,
+    open_adaptive_progress_checkpoint,
     open_wandb_run_checkpoint,
 )
 from intelligent_liars.truth_editing_wandb_monitoring import (  # noqa: E402
@@ -179,6 +180,31 @@ def planned_fleet_study_identity_sha256(
         journal_path=production.journal_path,
     )
     return identity_run.planned_study_identity_sha256
+
+
+def adaptive_progress_boundary_is_already_recorded(
+    path: Path,
+    *,
+    completed_trials: int,
+    coverage: Mapping[str, tuple[int, int]],
+) -> bool:
+    """Make replay of a committed batch idempotent before publication.
+
+    A crash may occur after the progress file advances but before its checkpoint
+    generation is published. Replaying that batch must publish the existing
+    progress node, not append a second node and break lineage continuity.
+    """
+
+    if not path.exists():
+        return False
+    existing = open_adaptive_progress_checkpoint(path).progress
+    if existing.completed_search_trials > completed_trials:
+        raise ValueError("adaptive progress is ahead of the replayed batch")
+    if existing.completed_search_trials < completed_trials:
+        return False
+    if dict(existing.coverage) != dict(coverage):
+        raise ValueError("adaptive progress coverage differs at replayed batch")
+    return True
 
 
 DEFAULT_CAPACITY_POLICY = Path("configs/truth_editing_adaptive_capacity_policy_v1.json")
@@ -1314,16 +1340,22 @@ def main(argv: list[str] | None = None) -> int:
         nonlocal latest_coverage
         latest_coverage = commit.coverage_summary
         checkpoint = _read_object(adaptive_checkpoint_path, "adaptive checkpoint")
-        monitor.record_adaptive_progress(
-            _adaptive_progress(
-                checkpoint=checkpoint,
-                completed_trials=commit.completed_trials,
-                coverage=commit.coverage_summary,
-                capacity_receipt=rolling_capacity.current_receipt(),
-                policy=capacity_policy,
-                study_config_sha256=study_config.identity_sha256,
+        progress_path = monitoring_root / "adaptive-progress.json"
+        if not adaptive_progress_boundary_is_already_recorded(
+            progress_path,
+            completed_trials=commit.completed_trials,
+            coverage=commit.coverage_summary,
+        ):
+            monitor.record_adaptive_progress(
+                _adaptive_progress(
+                    checkpoint=checkpoint,
+                    completed_trials=commit.completed_trials,
+                    coverage=commit.coverage_summary,
+                    capacity_receipt=rolling_capacity.current_receipt(),
+                    policy=capacity_policy,
+                    study_config_sha256=study_config.identity_sha256,
+                )
             )
-        )
         publish_boundary(
             study_identity_sha256=commit.study_identity_sha256,
             completed_trials=commit.completed_trials,

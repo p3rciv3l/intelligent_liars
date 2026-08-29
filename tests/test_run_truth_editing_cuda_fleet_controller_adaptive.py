@@ -236,6 +236,57 @@ def test_offhost_auto_resume_uses_complete_planned_study_identity() -> None:
     assert study_identity.id == "planned_study_identity_sha256"
 
 
+def test_replayed_batch_reuses_already_recorded_progress_node(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path / "adaptive-progress.json"
+    path.write_text("placeholder")
+    progress = SimpleNamespace(
+        completed_search_trials=8,
+        coverage={"direction_family": (1, 3)},
+    )
+    monkeypatch.setattr(
+        MODULE,
+        "open_adaptive_progress_checkpoint",
+        lambda _path: SimpleNamespace(progress=progress),
+    )
+
+    assert MODULE.adaptive_progress_boundary_is_already_recorded(
+        path,
+        completed_trials=8,
+        coverage={"direction_family": (1, 3)},
+    )
+
+
+def test_replayed_batch_progress_check_fails_closed_on_drift(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path / "adaptive-progress.json"
+    path.write_text("placeholder")
+    progress = SimpleNamespace(
+        completed_search_trials=8,
+        coverage={"direction_family": (0, 3)},
+    )
+    monkeypatch.setattr(
+        MODULE,
+        "open_adaptive_progress_checkpoint",
+        lambda _path: SimpleNamespace(progress=progress),
+    )
+
+    with pytest.raises(ValueError, match="coverage differs"):
+        MODULE.adaptive_progress_boundary_is_already_recorded(
+            path,
+            completed_trials=8,
+            coverage={"direction_family": (1, 3)},
+        )
+    with pytest.raises(ValueError, match="ahead"):
+        MODULE.adaptive_progress_boundary_is_already_recorded(
+            path,
+            completed_trials=0,
+            coverage={"direction_family": (0, 3)},
+        )
+
+
 def test_real_main_wires_per_trial_offhost_durability() -> None:
     tree = ast.parse(SCRIPT.read_text())
     main = next(
