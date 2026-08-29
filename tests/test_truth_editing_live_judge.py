@@ -1006,6 +1006,7 @@ def test_judge_timeout_scales_with_bundle_size_but_preserves_small_frozen_reques
     assert judge_timeout_seconds_for_bundle_size(1) == 120.0
     assert judge_timeout_seconds_for_bundle_size(32) == 156.0
     assert judge_timeout_seconds_for_bundle_size(64) == 252.0
+    assert judge_timeout_seconds_for_bundle_size(256) == 828.0
 
 
 def test_judge_timeout_rejects_invalid_bundle_sizes() -> None:

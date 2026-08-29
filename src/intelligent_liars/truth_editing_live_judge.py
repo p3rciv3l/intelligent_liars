@@ -56,11 +56,9 @@ from intelligent_liars.truth_editing_pairwise_reconciliation import (
 _PROVIDER_ROUTE = "z-ai/fp8"
 # The frozen GLM request keeps its 120-second timeout for the smallest
 # requests. Larger bundles receive additional wall-clock allowance based on
-# the number of rows the judge must classify. The upper bound prevents a
-# provider stall from holding a worker forever.
+# the number of rows the judge must classify.
 _JUDGE_TIMEOUT_BASE_SECONDS = 60.0
 _JUDGE_TIMEOUT_SECONDS_PER_RECORD = 3.0
-_JUDGE_TIMEOUT_MAX_SECONDS = 600.0
 
 
 def judge_timeout_seconds_for_bundle_size(bundle_size: int) -> float:
@@ -69,19 +67,16 @@ def judge_timeout_seconds_for_bundle_size(bundle_size: int) -> float:
     The timeout is part of the concrete request identity, while the model,
     provider route, reasoning, and JSON response-healing settings remain the
     frozen GLM-5.3 Flash contract. A one-row request remains exactly 120
-    seconds for backwards compatibility; larger requests scale linearly and
-    are capped at ten minutes.
+    seconds for backwards compatibility; larger requests scale linearly
+    without a separate universal cap.
     """
 
     if isinstance(bundle_size, bool) or not isinstance(bundle_size, int) or bundle_size < 1:
         raise LiveJudgeError("judge bundle size must be a positive integer")
-    return min(
-        _JUDGE_TIMEOUT_MAX_SECONDS,
-        max(
-            float(_FROZEN_REQUEST["timeout"]),
-            _JUDGE_TIMEOUT_BASE_SECONDS
-            + _JUDGE_TIMEOUT_SECONDS_PER_RECORD * bundle_size,
-        ),
+    return max(
+        float(_FROZEN_REQUEST["timeout"]),
+        _JUDGE_TIMEOUT_BASE_SECONDS
+        + _JUDGE_TIMEOUT_SECONDS_PER_RECORD * bundle_size,
     )
 
 
