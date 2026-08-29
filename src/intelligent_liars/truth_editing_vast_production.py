@@ -335,8 +335,16 @@ def production_lifecycle_plan(
 
     host_hourly_usd = offer.requested_hourly_price_usd(config.base_job.disk_gib)
     compound = _remote_production_command(config, host_hourly_usd=host_hourly_usd)
+    bootstrap = shlex.join(config.base_job.bootstrap_command)
+    if config.phase == "adaptive":
+        bootstrap = (
+            "python scripts/configure_truth_editing_aws_refresh.py initialize "
+            "--root /workspace/.truth-editing-aws; "
+            f"{bootstrap}"
+        )
     base = replace(
         config.base_job,
+        bootstrap_command=("bash", "-lc", bootstrap),
         workload_command=("bash", "-lc", compound),
     )
     base_plan = lifecycle_plan(
@@ -503,8 +511,6 @@ def _remote_production_command(
         else f"mkdir -p {checkpoint_dir}; "
     )
     aws_refresh_setup = (
-        "python scripts/configure_truth_editing_aws_refresh.py initialize "
-        "--root /workspace/.truth-editing-aws; "
         "unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN "
         "AWS_CREDENTIAL_EXPIRATION; "
         "export AWS_PROFILE=truth-editing-refresh; "

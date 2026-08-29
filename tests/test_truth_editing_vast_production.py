@@ -45,6 +45,24 @@ def test_refreshable_aws_validity_accepts_one_refresh_interval_plus_margin() -> 
         adaptive_aws_required_validity_seconds(full_lease + 1, full_lease)
 
 
+def test_adaptive_remote_initializes_refresh_store_before_bootstrap() -> None:
+    config = ProductionVastConfig.from_mapping(_adaptive_raw())
+    plan = production_lifecycle_plan(
+        vastai="vastai",
+        config=config,
+        offer=_eight_gpu_offer(),
+        bundle=Path("bundle"),
+        fetch_dir=Path("fetch"),
+        ssh_identity=Path("id_ed25519"),
+    )
+
+    remote = plan["base_lifecycle"]["remote_command"]
+    initialize = "configure_truth_editing_aws_refresh.py initialize"
+    bootstrap = "bootstrap.sh"
+    assert remote.count(initialize) == 1
+    assert remote.index(initialize) < remote.index(bootstrap)
+
+
 def _raw() -> dict[str, object]:
     return {
         "format": "truth_editing_vast_production_job_v1",
