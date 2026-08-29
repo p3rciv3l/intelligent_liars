@@ -832,6 +832,25 @@ def test_optional_optuna_dependency_fails_with_actionable_error() -> None:
 
 
 @pytest.mark.skipif(importlib.util.find_spec("optuna") is None, reason="Optuna is optional")
+def test_optuna_prepare_creates_missing_journal_parent(tmp_path) -> None:
+    config = _config(
+        tmp_path,
+        max_trials=1,
+        evaluation_tiers=[{"name": "all", "record_limit": 1, "through_trial": 1}],
+    )
+    journal = tmp_path / "outputs" / "study" / "study-journal.json"
+
+    TruthEditingStudy(config, _direction_bank()).run(
+        driver=OptunaSearchDriver(seed=17),
+        evaluator=OfflineSyntheticEvaluator(),
+        journal_path=journal,
+    )
+
+    assert journal.is_file()
+    assert journal.with_name(journal.name + ".optuna.log").is_file()
+
+
+@pytest.mark.skipif(importlib.util.find_spec("optuna") is None, reason="Optuna is optional")
 def test_optuna_restart_uses_native_journal_and_exact_pending_proposal(tmp_path) -> None:
     class InterruptSixth(OfflineSyntheticEvaluator):
         def __init__(self):

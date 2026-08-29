@@ -1355,6 +1355,7 @@ class OptunaSearchDriver(OfflineDeterministicSearchDriver):
         self._study = self._optuna.create_study(
             directions=["maximize"] * len(OBJECTIVES), sampler=sampler,
         )
+        state_path.parent.mkdir(parents=True, exist_ok=True)
         try:
             journal_backend = self._optuna.storages.journal.JournalFileBackend(
                 str(state_path)
