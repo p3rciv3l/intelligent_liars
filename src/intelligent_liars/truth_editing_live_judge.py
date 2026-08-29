@@ -55,6 +55,9 @@ from intelligent_liars.truth_editing_pairwise_reconciliation import (
 
 _PROVIDER_ROUTE = "z-ai/fp8"
 _COMPATIBLE_ADAPTER_CODE_SHA256S = {
+    # Same normalization and frozen request contract immediately before old
+    # empty correction terminals were made reprocessable by the new adapter.
+    "4c8323db3f7dbca9d0656b67f66c3e1d51d9010bcb0923fa56c94c1a2273e9cb",
     # Frozen request and transport contract immediately before deterministic
     # normalization of unambiguous json_object omissions/invariant mismatches.
     "73194161b939bf1f9599d7f28e0f165a974ca601c9add762055914498c2a56f7",
