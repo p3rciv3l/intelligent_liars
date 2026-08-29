@@ -977,7 +977,12 @@ class CoordinatorMonitor:
         )
 
     def _publish_loss_chart(self, points: Mapping[int, Mapping[str, float]]) -> None:
-        """Create and publish the plot only from the transport daemon."""
+        """Create readable live loss views only from the transport daemon.
+
+        Trial order is an Optuna search sequence, not a gradient-training
+        curve.  Publish raw aggregate loss beside its cumulative minimum, and
+        keep differently scaled component and KL values on separate charts.
+        """
 
         if self._run is None or self._wandb is None:
             return
@@ -1006,45 +1011,61 @@ class CoordinatorMonitor:
         false_report = [row[names[0]] for _, row in complete]
         retained_truth = [row[names[1]] for _, row in complete]
         capability = [row[names[2]] for _, row in complete]
+        overall_loss = [
+            1.0 - (false_value * truth_value * capability_value) ** (1.0 / 3.0)
+            for false_value, truth_value, capability_value in zip(
+                false_report, retained_truth, capability, strict=True
+            )
+        ]
+        best_loss_so_far: list[float] = []
+        running_best = math.inf
+        for value in overall_loss:
+            running_best = min(running_best, value)
+            best_loss_so_far.append(running_best)
         kl_points = [
             (ordinal, -math.log(row[names[2]]))
             for ordinal, row in complete
             if row[names[2]] > 0.0
         ]
-        xs = [
-            trial_ordinals,
-            trial_ordinals,
-            trial_ordinals,
-            trial_ordinals,
-            [ordinal for ordinal, _ in kl_points],
-        ]
-        ys = [
-            [
-                1.0 - (false_value * truth_value * capability_value) ** (1.0 / 3.0)
-                for false_value, truth_value, capability_value in zip(
-                    false_report, retained_truth, capability, strict=True
-                )
-            ],
-            [1.0 - value for value in false_report],
-            [1.0 - value for value in retained_truth],
-            [1.0 - value for value in capability],
-            [value for _, value in kl_points],
-        ]
         try:
-            chart = line_series(
-                xs=xs,
-                ys=ys,
+            overview = line_series(
+                xs=[trial_ordinals, trial_ordinals],
+                ys=[overall_loss, best_loss_so_far],
                 keys=[
-                    "Overall loss",
+                    "Trial overall loss",
+                    "Best overall loss so far",
+                ],
+                title="Optimization loss (live; lower is better)",
+                xname="Trial",
+            )
+            components = line_series(
+                xs=[trial_ordinals, trial_ordinals, trial_ordinals],
+                ys=[
+                    [1.0 - value for value in false_report],
+                    [1.0 - value for value in retained_truth],
+                    [1.0 - value for value in capability],
+                ],
+                keys=[
                     "False-report loss",
                     "Retained-truth loss",
                     "Capability loss",
-                    "Worst preservation KL",
                 ],
-                title="Loss overview (lower is better)",
+                title="Loss components by trial",
                 xname="Trial",
             )
-            self._commit_wandb_row({"charts/loss_overview": chart}, record_attempt=False)
+            charts: dict[str, Any] = {
+                "charts/loss_overview": overview,
+                "charts/loss_components": components,
+            }
+            if kl_points:
+                charts["charts/preservation_kl"] = line_series(
+                    xs=[[ordinal for ordinal, _ in kl_points]],
+                    ys=[[value for _, value in kl_points]],
+                    keys=["Worst preservation KL"],
+                    title="Preservation KL by trial",
+                    xname="Trial",
+                )
+            self._commit_wandb_row(charts, record_attempt=False)
         except Exception as error:
             self._failure("log", error)
 

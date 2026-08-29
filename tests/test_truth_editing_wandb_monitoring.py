@@ -638,7 +638,7 @@ def test_one_resumable_coordinator_run_logs_sanitized_progress_and_operations(
     assert run.finished == 1
 
 
-def test_successful_trials_publish_one_toggleable_loss_chart(tmp_path: Path) -> None:
+def test_successful_trials_publish_readable_live_loss_charts(tmp_path: Path) -> None:
     run = _FakeRun()
     wandb = _FakeWandbWithPlots(run)
     monitor = CoordinatorMonitor(
@@ -655,33 +655,61 @@ def test_successful_trials_publish_one_toggleable_loss_chart(tmp_path: Path) -> 
 
     monitor.record_batch(
         0,
-        (_request(0),),
-        (EvaluationResult.successful({
-            "valid_false_report_rate_lcb": 0.8,
-            "truth_report_dissociation_lcb": 0.6,
-            "capability_preservation_lcb": 0.9,
-        }),),
+        (_request(0), _request(1)),
+        (
+            EvaluationResult.successful({
+                "valid_false_report_rate_lcb": 0.8,
+                "truth_report_dissociation_lcb": 0.6,
+                "capability_preservation_lcb": 0.9,
+            }),
+            EvaluationResult.successful({
+                "valid_false_report_rate_lcb": 0.5,
+                "truth_report_dissociation_lcb": 0.5,
+                "capability_preservation_lcb": 0.8,
+            }),
+        ),
     )
 
-    _wait_until(lambda: len(wandb.plot.line_series_calls) == 1)
-    assert len(wandb.plot.line_series_calls) == 1
-    chart = wandb.plot.line_series_calls[0]
-    assert chart["keys"] == [
-        "Overall loss",
+    _wait_until(lambda: len(wandb.plot.line_series_calls) == 3)
+    assert len(wandb.plot.line_series_calls) == 3
+    overview, components, preservation = wandb.plot.line_series_calls
+    assert overview["keys"] == [
+        "Trial overall loss",
+        "Best overall loss so far",
+    ]
+    assert overview["xs"] == [[0, 1], [0, 1]]
+    first_loss = 1.0 - (0.8 * 0.6 * 0.9) ** (1 / 3)
+    second_loss = 1.0 - (0.5 * 0.5 * 0.8) ** (1 / 3)
+    assert overview["ys"][0] == pytest.approx([first_loss, second_loss])
+    assert overview["ys"][1] == pytest.approx([first_loss, first_loss])
+    assert overview["title"] == "Optimization loss (live; lower is better)"
+
+    assert components["keys"] == [
         "False-report loss",
         "Retained-truth loss",
         "Capability loss",
-        "Worst preservation KL",
     ]
-    assert chart["xs"] == [[0], [0], [0], [0], [0]]
-    assert [series[0] for series in chart["ys"][1:]] == pytest.approx([
-        0.2,
-        0.4,
-        0.1,
+    assert components["xs"] == [[0, 1], [0, 1], [0, 1]]
+    assert components["ys"][0] == pytest.approx([0.2, 0.5])
+    assert components["ys"][1] == pytest.approx([0.4, 0.5])
+    assert components["ys"][2] == pytest.approx([0.1, 0.2])
+    assert components["title"] == "Loss components by trial"
+
+    assert preservation["keys"] == ["Worst preservation KL"]
+    assert preservation["xs"] == [[0, 1]]
+    assert preservation["ys"][0] == pytest.approx([
         -math.log(0.9),
+        -math.log(0.8),
     ])
-    assert chart["ys"][0][0] == pytest.approx(1.0 - (0.8 * 0.6 * 0.9) ** (1 / 3))
-    assert any("charts/loss_overview" in values for values, _step in run.logged)
+    assert preservation["title"] == "Preservation KL by trial"
+
+    chart_rows = [values for values, _step in run.logged if "charts/loss_overview" in values]
+    assert len(chart_rows) == 1
+    assert set(chart_rows[0]) == {
+        "charts/loss_overview",
+        "charts/loss_components",
+        "charts/preservation_kl",
+    }
 
 
 def test_every_dashboard_row_uses_one_monotonic_coordinator_event_step(
@@ -720,7 +748,7 @@ def test_every_dashboard_row_uses_one_monotonic_coordinator_event_step(
         ),
     )
 
-    _wait_until(lambda: len(wandb.plot.line_series_calls) == 1)
+    _wait_until(lambda: len(wandb.plot.line_series_calls) == 3)
     monitor.record_gpu(
         GpuTelemetryRecord(
             0, 91.0, 20100.0, 24576.0, 42.5, "trial-0056", "2026-08-28T00:00:00Z"

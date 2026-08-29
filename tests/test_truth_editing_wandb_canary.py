@@ -254,9 +254,13 @@ def test_dashboard_readback_rejects_any_extra_unapproved_key(tmp_path: Path) -> 
         )
 
 
-def test_dashboard_readback_allows_loss_overview_chart(tmp_path: Path) -> None:
+def test_dashboard_readback_allows_loss_charts(tmp_path: Path) -> None:
     trace = _trace()
-    trace["dashboard_readback"]["metric_keys"].append("charts/loss_overview")
+    trace["dashboard_readback"]["metric_keys"].extend([
+        "charts/loss_overview",
+        "charts/loss_components",
+        "charts/preservation_kl",
+    ])
 
     receipt = verify_wandb_canary(
         trace=trace,

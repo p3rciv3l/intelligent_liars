@@ -105,7 +105,11 @@ REQUIRED_WANDB_METRIC_KEYS = (
     "operations/error_fingerprint",
     "canary/resumed_session",
 )
-OPTIONAL_WANDB_METRIC_KEYS = ("charts/loss_overview",)
+OPTIONAL_WANDB_METRIC_KEYS = (
+    "charts/loss_overview",
+    "charts/loss_components",
+    "charts/preservation_kl",
+)
 
 _TRACE_FIELDS = {
     "format",
