@@ -83,6 +83,18 @@ class _StrictMonotonicFakeRun(_FakeRun):
         self._next_step = committed_step + 1
 
 
+class _ResumedServerCursorFakeRun(_StrictMonotonicFakeRun):
+    """Model W&B resume before the local ``step`` property catches up."""
+
+    def __init__(self, *, starting_step: int) -> None:
+        super().__init__(resumed_step=starting_step)
+        self.starting_step = starting_step
+
+    @property
+    def step(self) -> int:
+        return 0
+
+
 class _UnreadableStepFakeRun(_FakeRun):
     @property
     def step(self) -> int:
@@ -308,6 +320,27 @@ def test_every_dashboard_row_uses_one_monotonic_coordinator_event_step(
     assert [row["trial/ordinal"] for row in trial_rows] == [56.0, 57.0]
     assert any("progress/completed_trials" in values for values, _step in run.logged)
     assert any("charts/loss_overview" in values for values, _step in run.logged)
+
+
+def test_resumed_server_cursor_precedes_stale_local_step(tmp_path: Path) -> None:
+    run = _ResumedServerCursorFakeRun(starting_step=64)
+    monitor = CoordinatorMonitor(
+        run_id="server-resume-cursor",
+        project="intelligent-liars",
+        entity="centipawn",
+        run_name="ignored",
+        receipt_path=tmp_path / "events.jsonl",
+        total_trials=800,
+        batch_size=8,
+        wandb_module=_FakeWandb(run),
+    )
+
+    monitor.record_judge(calls=1, failures=0, latency_ms=20.0, cost_usd=0.001)
+    monitor.record_operational(retries=0, stopped_trials=0, errors=0)
+
+    assert [step for _values, step in run.logged] == [64, 65]
+    assert run.commits == [True, True]
+    assert monitor.verification_snapshot()["nonfatal_error_count"] == 0
 
 
 def test_unreadable_resumed_step_does_not_discard_initialized_run(

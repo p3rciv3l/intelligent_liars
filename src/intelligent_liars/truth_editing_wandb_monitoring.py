@@ -658,11 +658,20 @@ class CoordinatorMonitor:
             )
             self._run = self._wandb.init(**kwargs)
             try:
-                resumed_step = getattr(self._run, "step", None)
+                resumed_step = getattr(self._run, "starting_step", None)
             except Exception:
-                # A successfully initialized SDK run remains usable even when
-                # its optional resumed-step metadata is transiently unreadable.
                 resumed_step = None
+            if not (
+                not isinstance(resumed_step, bool)
+                and isinstance(resumed_step, int)
+                and resumed_step >= 0
+            ):
+                try:
+                    resumed_step = getattr(self._run, "step", None)
+                except Exception:
+                    # A successfully initialized SDK run remains usable even when
+                    # its optional resumed-step metadata is transiently unreadable.
+                    resumed_step = None
             if (
                 not isinstance(resumed_step, bool)
                 and isinstance(resumed_step, int)
