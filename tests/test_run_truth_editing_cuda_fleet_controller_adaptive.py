@@ -593,6 +593,7 @@ def test_rolling_capacity_signs_conservative_observation_when_telemetry_is_missi
         judge_budget=judge,
         clock=lambda: NOW,
     )
+    assert json.loads(rolling_path.read_text()) == _receipt()
     commit = SimpleNamespace(
         batch_ordinal=0,
         batch_sha256="e" * 64,

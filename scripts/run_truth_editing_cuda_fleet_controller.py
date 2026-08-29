@@ -387,6 +387,8 @@ class _RollingCapacityController:
             judge_budget.path / "controller-capacity-snapshot.json"
         )
         self._batch_clock_path = judge_budget.path / "controller-batch-clock.json"
+        if not self._rolling_receipt_path.exists():
+            self._write_rolling_receipt(self._initial_receipt)
         current_receipt = self.current_receipt()
         expected_judge_sha = current_receipt[
             "source_judge_ledger_after_receipt_sha256"
