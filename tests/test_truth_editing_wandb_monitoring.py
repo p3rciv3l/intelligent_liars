@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import math
 import os
+import threading
 from pathlib import Path
 from dataclasses import replace
 from types import SimpleNamespace
@@ -28,16 +29,82 @@ from intelligent_liars.truth_editing_wandb_checkpoint import (
 class _FakeRun:
     def __init__(self, *, fail_log: bool = False) -> None:
         self.logged: list[tuple[dict[str, Any], int | None]] = []
+        self.commits: list[bool | None] = []
         self.finished = 0
         self.fail_log = fail_log
 
-    def log(self, values: dict[str, Any], *, step: int | None = None) -> None:
+    @property
+    def step(self) -> int:
+        return len(self.logged)
+
+    def log(
+        self,
+        values: dict[str, Any],
+        *,
+        step: int | None = None,
+        commit: bool | None = None,
+    ) -> None:
         if self.fail_log:
             raise RuntimeError("dashboard unavailable")
         self.logged.append((values, step))
+        self.commits.append(commit)
 
     def finish(self, *, exit_code: int = 0) -> None:
         self.finished += 1
+
+
+class _StrictMonotonicFakeRun(_FakeRun):
+    """Model W&B's committed-history rule for explicit steps.
+
+    Every call commits its row, so a later call at the same or an earlier step
+    is stale and rejected.  ``step`` exposes the next server-accepted row on a
+    resumed run, matching the SDK seam used by the coordinator.
+    """
+
+    def __init__(self, *, resumed_step: int = 0) -> None:
+        super().__init__()
+        self._next_step = resumed_step
+
+    @property
+    def step(self) -> int:
+        return self._next_step
+
+    def log(
+        self,
+        values: dict[str, Any],
+        *,
+        step: int | None = None,
+        commit: bool | None = None,
+    ) -> None:
+        committed_step = self._next_step if step is None else step
+        if committed_step < self._next_step:
+            raise RuntimeError("W&B rejected a stale explicit step")
+        super().log(values, step=committed_step, commit=commit)
+        self._next_step = committed_step + 1
+
+
+class _UnreadableStepFakeRun(_FakeRun):
+    @property
+    def step(self) -> int:
+        raise RuntimeError("resumed step metadata unavailable")
+
+
+class _BlockingFakeRun(_FakeRun):
+    def __init__(self) -> None:
+        super().__init__()
+        self.log_started = threading.Event()
+        self.release_log = threading.Event()
+
+    def log(
+        self,
+        values: dict[str, Any],
+        *,
+        step: int | None = None,
+        commit: bool | None = None,
+    ) -> None:
+        self.log_started.set()
+        assert self.release_log.wait(timeout=5.0)
+        super().log(values, step=step, commit=commit)
 
 
 class _FakeWandb:
@@ -188,6 +255,124 @@ def test_successful_trials_publish_one_toggleable_loss_chart(tmp_path: Path) -> 
     ])
     assert chart["ys"][0][0] == pytest.approx(1.0 - (0.8 * 0.6 * 0.9) ** (1 / 3))
     assert any("charts/loss_overview" in values for values, _step in run.logged)
+
+
+def test_every_dashboard_row_uses_one_monotonic_coordinator_event_step(
+    tmp_path: Path,
+) -> None:
+    run = _StrictMonotonicFakeRun(resumed_step=41)
+    wandb = _FakeWandbWithPlots(run)
+    monitor = CoordinatorMonitor(
+        run_id="monotonic-events",
+        project="intelligent-liars",
+        entity="centipawn",
+        run_name="ignored",
+        receipt_path=tmp_path / "events.jsonl",
+        total_trials=800,
+        batch_size=8,
+        wandb_module=wandb,
+        monotonic=lambda: 10.0,
+    )
+
+    # Logical trial ordinals deliberately have no relationship to the resumed
+    # W&B history step. Trial identity belongs in metrics, not in W&B's row ID.
+    monitor.record_batch(
+        7,
+        (_request(56), _request(57)),
+        (
+            EvaluationResult.successful({
+                "valid_false_report_rate_lcb": 0.8,
+                "truth_report_dissociation_lcb": 0.7,
+                "capability_preservation_lcb": 0.9,
+            }),
+            EvaluationResult.successful({
+                "valid_false_report_rate_lcb": 0.9,
+                "truth_report_dissociation_lcb": 0.6,
+                "capability_preservation_lcb": 0.8,
+            }),
+        ),
+    )
+    monitor.record_gpu(
+        GpuTelemetryRecord(
+            0, 91.0, 20100.0, 24576.0, 42.5, "trial-0056", "2026-08-28T00:00:00Z"
+        )
+    )
+
+    snapshot = monitor.verification_snapshot()
+    assert snapshot["nonfatal_error_count"] == 0
+    assert [step for _values, step in run.logged] == list(
+        range(41, 41 + len(run.logged))
+    )
+    assert run.commits == [True] * len(run.logged)
+    trial_rows = [values for values, _step in run.logged if "trial/ordinal" in values]
+    assert [row["trial/ordinal"] for row in trial_rows] == [56.0, 57.0]
+    assert any("progress/completed_trials" in values for values, _step in run.logged)
+    assert any("charts/loss_overview" in values for values, _step in run.logged)
+
+
+def test_unreadable_resumed_step_does_not_discard_initialized_run(
+    tmp_path: Path,
+) -> None:
+    run = _UnreadableStepFakeRun()
+    monitor = CoordinatorMonitor(
+        run_id="step-read-failure",
+        project="intelligent-liars",
+        entity="centipawn",
+        run_name="ignored",
+        receipt_path=tmp_path / "events.jsonl",
+        total_trials=8,
+        batch_size=8,
+        wandb_module=_FakeWandb(run),
+    )
+
+    monitor.record_judge(calls=1, failures=0, latency_ms=20.0, cost_usd=0.001)
+
+    snapshot = monitor.verification_snapshot()
+    assert snapshot["initialized_coordinator_count"] == 1
+    assert run.logged == [({
+        "judge/calls": 1.0,
+        "judge/failures": 0.0,
+        "judge/latency_ms": 20.0,
+        "judge/cost_usd": 0.001,
+    }, None)]
+    assert run.commits == [True]
+
+
+def test_close_waits_for_inflight_log_and_blocks_later_rows(tmp_path: Path) -> None:
+    run = _BlockingFakeRun()
+    monitor = CoordinatorMonitor(
+        run_id="close-serialization",
+        project="intelligent-liars",
+        entity="centipawn",
+        run_name="ignored",
+        receipt_path=tmp_path / "events.jsonl",
+        total_trials=8,
+        batch_size=8,
+        wandb_module=_FakeWandb(run),
+    )
+
+    logger = threading.Thread(
+        target=lambda: monitor.record_judge(
+            calls=1, failures=0, latency_ms=20.0, cost_usd=0.001
+        )
+    )
+    closer = threading.Thread(target=monitor.close)
+    logger.start()
+    assert run.log_started.wait(timeout=5.0)
+    closer.start()
+    assert closer.is_alive()
+    assert run.finished == 0
+    run.release_log.set()
+    logger.join(timeout=5.0)
+    closer.join(timeout=5.0)
+    assert not logger.is_alive()
+    assert not closer.is_alive()
+
+    monitor.record_judge(calls=2, failures=0, latency_ms=40.0, cost_usd=0.002)
+
+    assert len(run.logged) == 1
+    assert run.commits == [True]
+    assert run.finished == 1
 
 
 def test_sdk_metadata_and_job_creation_are_disabled_in_coordinator_environment(

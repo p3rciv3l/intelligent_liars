@@ -34,7 +34,14 @@ class _RecordingRun:
         self.logged: list[tuple[dict[str, Any], int | None]] = []
         self.finished = 0
 
-    def log(self, values: dict[str, Any], *, step: int | None = None) -> None:
+    def log(
+        self,
+        values: dict[str, Any],
+        *,
+        step: int | None = None,
+        commit: bool | None = None,
+    ) -> None:
+        del commit
         if self.fail_log:
             raise _SecretNamedException(
                 "W&B failed with sk-or-v1-private and /private/path"

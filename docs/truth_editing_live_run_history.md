@@ -82,17 +82,19 @@ Purpose: prevent repeated operational mistakes. Read this file before every paid
 | Adaptive attempt r9 | Instance `49076488` passed model verification, durable scheduler/checkpoint initialization, W&B resume, and eight-GPU worker startup. During the first batch, one response-less paid judge transport failed ambiguously; the shared circuit then stopped the entire fleet before trial 0 could commit. It was destroyed; estimated compute `$0.4146584810`. | Keep the failed raw request permanently blocked and count its full reservation. Persist the affected trial as an unscored operational failure, checkpoint its judge cache and ledger off-host, retire only the transient ambiguous-transport circuit after the full batch barrier, and continue distinct trials. Cap-exhaustion and price-overrun circuits remain terminal. |
 | Adaptive main r11, replay batch 48–55 | Six exact replays produced real scientifically-infeasible outcomes; trials 50–51 remained operational failures because interrupted judge calls left reservation-only ledger entries. The controller then counted repair downtime as an 87-minute batch and falsely aborted the 200-trial guarantee; W&B masked that reason with a coverage-stage validation error. | Preserve the aborted output tree and S3 partial receipts. On restart, fully charge and append-only supersede orphaned judge reservations, retry the exact requests under deterministic attempt identities, time only active controller intervals for throughput forecasts, and allow terminal aborted progress to be recorded without weakening the broad-coverage gate for adaptive search. |
 | Adaptive main r11, first clean restore | The verified S3 partial checkpoint restored through trial 55, but startup orphan recovery changed the judge-ledger bytes before the restored receipt callback republished the same immutable partial frontier. The publisher rejected the conflict before GPU or provider work. | Replay and publish the full trial-56 boundary first, then recover orphaned reservations synchronously before the next batch is admitted. Preserve the failed restore tree as audit evidence and repeat the clean partial restore. |
+| Adaptive main r11, second clean restore | No new failure as of `2026-08-29T10:36:53Z`: the full trial-56 checkpoint published locally and to S3, two orphaned judge reservations were recovered, and exact replay trials 56–63 were admitted. The controller and all eight GPU workers are active. | Continue from this durable boundary; keep the exact replay batch in broad coverage and do not let Optuna learn from the earlier operational failures. |
 
 ## Current attempt
 
-### Preservation capture r10 — 2026-08-28
+### Adaptive main r11, resume 2 — 2026-08-29
 
-- Vast instance: `48998471`
-- GPU: one RTX 3090
-- State at launch: streaming OOM fix tested; 153 combined preservation, judge, and W&B tests passed.
-- Bundle: `artifacts/truth-editing/vast/preservation-capture-v2-r4-r10.tar.gz`
-- Lifecycle receipt: `artifacts/truth-editing/vast/preservation-capture-v2-r4-r10-lifecycle.json`
-- Result: passed. Workload and verified archive fetch completed; instance destroyed; estimated compute `$0.0315202813`.
+- Vast instance: `49087336`
+- GPUs: eight RTX 3090s
+- Controller attempt: `r11-resume-2`
+- Durable boundary: full trial-56 checkpoint published locally and to S3.
+- Recovery: two orphaned judge reservations recovered after boundary publication.
+- Active work: exact replay trials 56–63 admitted; controller and all eight GPU workers active.
+- Status at `2026-08-29T10:36:53Z`: no new failure observed.
 
 ## Spend ledger
 

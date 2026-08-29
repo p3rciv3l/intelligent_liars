@@ -362,8 +362,8 @@ def test_failure_probe_rejects_changed_optimizer_or_checkpoint_bytes() -> None:
 
 def test_gate_accepts_actual_coordinator_snapshot_surface(tmp_path: Path) -> None:
     class Run:
-        def log(self, _values, *, step=None):
-            pass
+        def log(self, _values, *, step=None, commit=None):
+            del step, commit
 
         def finish(self, *, exit_code=0):
             pass

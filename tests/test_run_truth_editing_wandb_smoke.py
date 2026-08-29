@@ -19,7 +19,14 @@ class _RemoteRun:
         self.rows: list[dict[str, Any]] = []
         self.summary: dict[str, Any] = {}
 
-    def log(self, values: dict[str, Any], *, step: int | None = None) -> None:
+    def log(
+        self,
+        values: dict[str, Any],
+        *,
+        step: int | None = None,
+        commit: bool | None = None,
+    ) -> None:
+        del step, commit
         self.rows.append(dict(values))
         self.summary.update(values)
 

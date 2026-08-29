@@ -155,7 +155,13 @@ _COVERAGE_METRIC = re.compile(
 
 
 class _WandbRun(Protocol):
-    def log(self, values: Mapping[str, Any], *, step: int | None = None) -> None: ...
+    def log(
+        self,
+        values: Mapping[str, Any],
+        *,
+        step: int | None = None,
+        commit: bool | None = None,
+    ) -> None: ...
 
     def finish(self, *, exit_code: int = 0) -> None: ...
 
@@ -419,6 +425,8 @@ class CoordinatorMonitor:
         self._objective_parameters: list[dict[str, Any]] = []
         self._loss_chart_points: dict[int, dict[str, float]] = {}
         self._attempted_logs: list[dict[str, Any]] = []
+        self._wandb_log_lock = threading.Lock()
+        self._wandb_event_step: int | None = 0
         self._closed = False
         self._wandb = wandb_module
         self._run_checkpoint_sha256 = run_checkpoint_sha256
@@ -551,7 +559,7 @@ class CoordinatorMonitor:
             values[f"coverage/{name}/completed"] = completed
             values[f"coverage/{name}/required"] = required
             values[f"coverage/{name}/fraction"] = completed / required
-        self._safe_log(values, step=max(0, progress.completed_search_trials - 1))
+        self._safe_log(values)
         self._receipt(
             "adaptive_progress_mirrored",
             {
@@ -649,13 +657,71 @@ class CoordinatorMonitor:
                 }
             )
             self._run = self._wandb.init(**kwargs)
+            try:
+                resumed_step = getattr(self._run, "step", None)
+            except Exception:
+                # A successfully initialized SDK run remains usable even when
+                # its optional resumed-step metadata is transiently unreadable.
+                resumed_step = None
+            if (
+                not isinstance(resumed_step, bool)
+                and isinstance(resumed_step, int)
+                and resumed_step >= 0
+            ):
+                self._wandb_event_step = resumed_step
+            else:
+                self._wandb_event_step = None
             self._initialized_coordinator_count = 1
             self._receipt("wandb_initialized", {"coordinator_runs": 1})
         except Exception as error:
             self._run = None
             self._failure("init", error)
 
-    def _safe_log(self, values: Mapping[str, Any], *, step: int | None = None) -> None:
+    def _commit_wandb_row(
+        self, values: Mapping[str, Any], *, record_attempt: bool
+    ) -> None:
+        """Commit one dashboard row under the coordinator's event clock.
+
+        Trial ordinals and adaptive progress are metrics, not W&B history row
+        IDs. Serializing allocation with transport prevents telemetry and the
+        study thread from publishing the same or a regressing explicit step.
+        The resumed SDK run supplies the first acceptable event step.
+        """
+
+        with self._wandb_log_lock:
+            if self._run is None or self._closed:
+                return
+            event_step = self._wandb_event_step
+            # Advance before transport: a connection failure can be ambiguous,
+            # so reusing its event step could overwrite a row that arrived.
+            if event_step is not None:
+                self._wandb_event_step = event_step + 1
+            if record_attempt and len(self._attempted_logs) < 4096:
+                self._attempted_logs.append(
+                    {"step": event_step, "values": dict(values)}
+                )
+            try:
+                if event_step is None:
+                    # Let the resumed SDK advance its own server-backed clock
+                    # until its current step becomes readable again.
+                    self._run.log(values, commit=True)
+                    try:
+                        recovered_step = getattr(self._run, "step", None)
+                    except Exception:
+                        recovered_step = None
+                    if (
+                        not isinstance(recovered_step, bool)
+                        and isinstance(recovered_step, int)
+                        and recovered_step >= 0
+                    ):
+                        self._wandb_event_step = recovered_step
+                else:
+                    self._run.log(values, step=event_step, commit=True)
+                self._logged_metric_keys.update(values)
+            except Exception as error:
+                self._failure("log", error)
+
+    def _safe_log(self, values: Mapping[str, Any]) -> None:
         if self._run is None or self._closed:
             return
         clean: dict[str, Any] = {}
@@ -665,15 +731,9 @@ class CoordinatorMonitor:
                 clean[str(name)] = checked
         if not clean:
             return
-        if len(self._attempted_logs) < 4096:
-            self._attempted_logs.append({"step": step, "values": dict(clean)})
-        try:
-            self._run.log(clean, step=step)
-            self._logged_metric_keys.update(clean)
-        except Exception as error:
-            self._failure("log", error)
+        self._commit_wandb_row(clean, record_attempt=True)
 
-    def _log_loss_chart(self, *, step: int) -> None:
+    def _log_loss_chart(self) -> None:
         """Publish one interactive, lower-is-better view of trial quality.
 
         W&B's line-series chart supplies the clickable legend. The aggregate
@@ -745,8 +805,9 @@ class CoordinatorMonitor:
                 title="Loss overview (lower is better)",
                 xname="Trial",
             )
-            self._run.log({"charts/loss_overview": chart}, step=step)
-            self._logged_metric_keys.add("charts/loss_overview")
+            self._commit_wandb_row(
+                {"charts/loss_overview": chart}, record_attempt=False
+            )
         except Exception as error:
             self._failure("log", error)
 
@@ -812,8 +873,8 @@ class CoordinatorMonitor:
                     self._objective_ordinals.append(request.ordinal)
                     self._objective_parameters.append(parameters)
                 self._completed_trials = max(self._completed_trials, request.ordinal + 1)
-                self._safe_log(values, step=request.ordinal)
-            self._log_loss_chart(step=max(0, self._completed_trials - 1))
+                self._safe_log(values)
+            self._log_loss_chart()
             elapsed = max(0.0, float(self._monotonic()) - self._started_at)
             eta = (
                 elapsed
@@ -857,7 +918,7 @@ class CoordinatorMonitor:
                     summary[
                         f"pareto/candidate/{frontier_rank}/params/{parameter}"
                     ] = value
-            self._safe_log(summary, step=max(0, self._completed_trials - 1))
+            self._safe_log(summary)
             heartbeat = monitoring_heartbeat(
                 completed_trials=self._completed_trials,
                 total_trials=self._display_total_trials,
@@ -958,7 +1019,7 @@ class CoordinatorMonitor:
                 )
             except ValueError:
                 pass
-        self._safe_log(values, step=max(0, self._completed_trials - 1))
+        self._safe_log(values)
 
     def record_worker_telemetry(
         self, gpu_slot: int, trial_id: str, telemetry: Mapping[str, float]
@@ -985,7 +1046,6 @@ class CoordinatorMonitor:
                 f"gpu/{gpu_slot}/tps": tps,
                 f"gpu/{gpu_slot}/active_trial_ordinal": ordinal,
             },
-            step=ordinal,
         )
 
     def record_judge(
@@ -1009,7 +1069,6 @@ class CoordinatorMonitor:
                 "judge/latency_ms": latency_ms,
                 "judge/cost_usd": cost_usd,
             },
-            step=max(0, self._completed_trials - 1),
         )
 
     def record_cost(
@@ -1038,7 +1097,6 @@ class CoordinatorMonitor:
                 "cost/total_actual_usd": gpu_actual_usd + judge_actual_usd,
                 "cost/total_projected_usd": gpu_projected_usd + judge_projected_usd,
             },
-            step=max(0, self._completed_trials - 1),
         )
 
     def record_operational(
@@ -1071,7 +1129,7 @@ class CoordinatorMonitor:
         ):
             values["operations/error_category"] = error_category
             values["operations/error_fingerprint"] = error_fingerprint
-        self._safe_log(values, step=max(0, self._completed_trials - 1))
+        self._safe_log(values)
 
     def verification_snapshot(self) -> Mapping[str, Any]:
         return {
@@ -1095,22 +1153,26 @@ class CoordinatorMonitor:
         }
 
     def close(self) -> None:
-        if self._closed:
-            return
-        if self._run is not None:
-            try:
-                self._run.finish(exit_code=0)
-                self._finish_calls += 1
-            except Exception as error:
-                self._failure("finish", error)
-        self._receipt(
-            "wandb_closed",
-            {
-                "initialized_coordinator_count": self._initialized_coordinator_count,
-                "nonfatal_error_count": self._nonfatal_errors,
-            },
-        )
-        self._closed = True
+        with self._wandb_log_lock:
+            if self._closed:
+                return
+            # Mark closed while holding the same lock used by every log. This
+            # drains an in-flight row and prevents a later row from racing
+            # W&B's finish call.
+            self._closed = True
+            if self._run is not None:
+                try:
+                    self._run.finish(exit_code=0)
+                    self._finish_calls += 1
+                except Exception as error:
+                    self._failure("finish", error)
+            self._receipt(
+                "wandb_closed",
+                {
+                    "initialized_coordinator_count": self._initialized_coordinator_count,
+                    "nonfatal_error_count": self._nonfatal_errors,
+                },
+            )
 
 
 class MonitoredSearchDriver:
