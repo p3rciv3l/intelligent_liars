@@ -1031,7 +1031,7 @@ def test_execute_injects_optional_wandb_secret_over_stdin_without_exposing_value
     )
     assert observed_workload["input"] == (
         f"{openrouter_value}\n{wandb_value}\n{aws_access_value}\n"
-        f"{aws_secret_value}\n\n"
+        f"{aws_secret_value}\n\n\n"
     )
     for value in expected_secrets:
         assert value not in command_text
@@ -1087,6 +1087,7 @@ def test_adaptive_secret_resolves_environment_aws_credentials_and_keeps_values_s
         "AWS_ACCESS_KEY_ID",
         "AWS_SECRET_ACCESS_KEY",
         "AWS_SESSION_TOKEN",
+        "AWS_CREDENTIAL_EXPIRATION",
     )
     assert secret.stdin_payload().splitlines() == [
         "openrouter-secret-value",
@@ -1094,6 +1095,7 @@ def test_adaptive_secret_resolves_environment_aws_credentials_and_keeps_values_s
         "AKIAEXAMPLE12345678",
         "aws-secret-value-that-must-not-leak",
         "aws-session-value-that-must-not-leak",
+        expiration.isoformat(),
     ]
     assert "aws-secret-value" not in repr(secret)
     assert "aws-session-value" not in repr(secret)
@@ -1202,6 +1204,7 @@ def test_aws_stdin_wrapper_exports_credentials_only_inside_remote_shell() -> Non
         "AWS_ACCESS_KEY_ID",
         "AWS_SECRET_ACCESS_KEY",
         "AWS_SESSION_TOKEN",
+        "AWS_CREDENTIAL_EXPIRATION",
     )
     wrapped = _secret_stdin_wrapper(
         'test -n "$AWS_SECRET_ACCESS_KEY" && printf ok',
@@ -1209,7 +1212,7 @@ def test_aws_stdin_wrapper_exports_credentials_only_inside_remote_shell() -> Non
     )
     payload = (
         "openrouter-secret\nwandb-secret\nAKIAEXAMPLE12345678\n"
-        "aws-secret-that-must-not-leak\n\n"
+        "aws-secret-that-must-not-leak\n\n\n"
     )
 
     completed = subprocess.run(

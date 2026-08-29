@@ -506,6 +506,17 @@ def _remote_production_command(
         if config.phase == "adaptive"
         else f"mkdir -p {checkpoint_dir}; "
     )
+    aws_refresh_setup = (
+        "python scripts/configure_truth_editing_aws_refresh.py initialize "
+        "--root /workspace/.truth-editing-aws; "
+        "unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN "
+        "AWS_CREDENTIAL_EXPIRATION; "
+        "export AWS_PROFILE=truth-editing-refresh; "
+        "export AWS_CONFIG_FILE=/workspace/.truth-editing-aws/config; "
+        "export AWS_SHARED_CREDENTIALS_FILE=/workspace/.truth-editing-aws/credentials; "
+        if config.phase == "adaptive"
+        else ""
+    )
     return (
         "set -euo pipefail; "
         f"{hourly_rate_environment}"
@@ -515,6 +526,7 @@ def _remote_production_command(
         "export TRUTH_EDITING_EXPECTED_SNAPSHOT_MANIFEST_SHA256="
         f"{config.expected_snapshot_manifest_sha256}; "
         f"{checkpoint_setup}"
+        f"{aws_refresh_setup}"
         f"{hydrate}; {verify}; {read_only_cache}"
         f"({workload}) & worker_pid=$!; "
         "(set +e; while kill -0 \"$worker_pid\" 2>/dev/null; do "

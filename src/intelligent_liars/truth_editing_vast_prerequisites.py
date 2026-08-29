@@ -99,11 +99,12 @@ class AwsWorkloadCredentials:
                 "AWS credentials expire before the paid workload can finish"
             )
 
-    def stdin_values(self) -> tuple[str, str, str]:
+    def stdin_values(self) -> tuple[str, str, str, str]:
         return (
             self._access_key_id,
             self._secret_access_key,
             self._session_token,
+            self.expires_at.isoformat() if self.expires_at is not None else "",
         )
 
 
@@ -316,12 +317,13 @@ class EphemeralWorkloadSecret:
         if secondary_environment_name is not None:
             entries.append((secondary_environment_name, secondary_value or ""))
         if aws_credentials is not None:
-            access, secret, token = aws_credentials.stdin_values()
+            access, secret, token, expiration = aws_credentials.stdin_values()
             entries.extend(
                 (
                     ("AWS_ACCESS_KEY_ID", access),
                     ("AWS_SECRET_ACCESS_KEY", secret),
                     ("AWS_SESSION_TOKEN", token),
+                    ("AWS_CREDENTIAL_EXPIRATION", expiration),
                 )
             )
         object.__setattr__(self, "_entries", tuple(entries))
@@ -1128,6 +1130,7 @@ def _secret_stdin_wrapper(
             "AWS_ACCESS_KEY_ID",
             "AWS_SECRET_ACCESS_KEY",
             "AWS_SESSION_TOKEN",
+            "AWS_CREDENTIAL_EXPIRATION",
         ),
     }
     if names not in allowed:

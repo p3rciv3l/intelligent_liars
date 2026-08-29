@@ -82,6 +82,9 @@ def _repo(tmp_path: Path, *, adaptive: bool = False) -> Path:
         path = repo / relative
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text("{}\n" if path.suffix == ".json" else "fixture\n")
+    if adaptive:
+        refresh_helper = repo / "scripts/configure_truth_editing_aws_refresh.py"
+        refresh_helper.write_text("# adaptive fixture\n")
     (repo / "configs/truth_editing_direction_bank_qualified_v1.json").write_text(
         json.dumps({"artifact_path": "artifacts/probes/direction.npy"})
     )
@@ -510,6 +513,10 @@ def test_builder_emits_adaptive_24_hour_job_without_a_fixed_trial_barrier(
     assert FLEET_CONFIG in raw["base_job"]["bundle_paths"]
     assert (
         "scripts/run_truth_editing_causal_activation_controls.py"
+        in raw["base_job"]["bundle_paths"]
+    )
+    assert (
+        "scripts/configure_truth_editing_aws_refresh.py"
         in raw["base_job"]["bundle_paths"]
     )
     assert "configs/capacity-policy.json" in raw["base_job"]["bundle_paths"]

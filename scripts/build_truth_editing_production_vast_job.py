@@ -892,6 +892,7 @@ def build_production_job(
         bundle_paths = sorted(
             {
                 *bundle_paths,
+                "scripts/configure_truth_editing_aws_refresh.py",
                 "scripts/run_truth_editing_causal_activation_controls.py",
                 adaptive_fleet_relative,
                 _relative(repo, adaptive_policy_path),
