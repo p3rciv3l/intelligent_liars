@@ -31,6 +31,11 @@ from intelligent_liars.truth_editing_live_judge import (
     StoredJudgeTransport,
     TruthEditingLiveJudge,
 )
+from intelligent_liars.truth_editing_production_judge_budget import (
+    ProductionJudgeBudget,
+    ProductionJudgeBudgetConfig,
+    ProductionJudgeBudgetCircuitOpen,
+)
 
 
 def _sha_text(value: str) -> str:
@@ -963,6 +968,141 @@ def test_transport_timeout_receipt_binds_attempts_and_has_no_response_hash() -> 
     assert receipt.raw_response_sha256 is None
     assert receipt.parsed_result_sha256 is None
     assert cache.failure_receipts(receipt.cache_key_sha256) == (receipt,)
+
+
+def test_pretransport_budget_circuit_does_not_poison_semantic_cache(
+    tmp_path: Path,
+) -> None:
+    class BlockedBeforeTransport:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def complete(self, request):
+            del request
+            self.calls += 1
+            raise ProductionJudgeBudgetCircuitOpen(
+                "production judge budget circuit is open"
+            )
+
+    cache = FileJudgeCache(tmp_path / "judge-cache")
+    blocked = BlockedBeforeTransport()
+    with pytest.raises(OperationalJudgeFailure) as captured:
+        TruthEditingLiveJudge(transport=blocked, cache=cache).judge(_record())
+
+    receipt = captured.value.receipt
+    assert blocked.calls == 1
+    assert receipt.operational_failure is not None
+    assert receipt.operational_failure.message == (
+        "error_class=ProductionJudgeBudgetCircuitOpen"
+    )
+    assert cache.failure_receipts(receipt.cache_key_sha256) == (receipt,)
+    assert cache.terminal_failure(receipt.cache_key_sha256) is None
+    assert list((cache.path / "terminal-failures").glob("*.json")) == []
+
+    valid = StoredJudgeTransport([_transport_response(_absolute_response())])
+    evidence = TruthEditingLiveJudge(transport=valid, cache=cache).judge(_record())
+    assert evidence.result.operational_status == "succeeded"
+    assert len(valid.requests) == 1
+
+
+def test_legacy_budget_circuit_terminal_alias_is_ignored_but_preserved(
+    tmp_path: Path,
+) -> None:
+    class BlockedBeforeTransport:
+        def complete(self, request):
+            del request
+            raise ProductionJudgeBudgetCircuitOpen(
+                "production judge budget circuit is open"
+            )
+
+    cache = FileJudgeCache(tmp_path / "judge-cache")
+    with pytest.raises(OperationalJudgeFailure) as captured:
+        TruthEditingLiveJudge(transport=BlockedBeforeTransport(), cache=cache).judge(
+            _record()
+        )
+    receipt = captured.value.receipt
+    alias = cache.path / "terminal-failures" / f"{receipt.cache_key_sha256}.json"
+    alias.parent.mkdir(parents=True)
+    unsigned = {
+        "format": "truth_editing_live_judge_terminal_failure_v1",
+        "cache_key_sha256": receipt.cache_key_sha256,
+        "failure_receipt": receipt.to_payload(),
+    }
+    alias.write_text(json.dumps({**unsigned, "content_sha256": _sha_json(unsigned)}))
+    assert alias.is_file()
+    original = alias.read_bytes()
+
+    valid = StoredJudgeTransport([_transport_response(_absolute_response())])
+    evidence = TruthEditingLiveJudge(transport=valid, cache=cache).judge(_record())
+    assert evidence.result.operational_status == "succeeded"
+    assert len(valid.requests) == 1
+    assert alias.read_bytes() == original
+
+
+def test_direct_response_less_timeout_remains_terminal_in_semantic_cache(
+    tmp_path: Path,
+) -> None:
+    class TimeoutTransport:
+        def complete(self, request):
+            del request
+            raise TimeoutError("response outcome is unknown")
+
+    cache = FileJudgeCache(tmp_path / "judge-cache")
+    with pytest.raises(OperationalJudgeFailure) as first:
+        TruthEditingLiveJudge(transport=TimeoutTransport(), cache=cache).judge(
+            _record()
+        )
+    key = first.value.receipt.cache_key_sha256
+    assert cache.terminal_failure(key) == first.value.receipt
+
+    valid = StoredJudgeTransport([_transport_response(_absolute_response())])
+    with pytest.raises(OperationalJudgeFailure) as repeated:
+        TruthEditingLiveJudge(transport=valid, cache=cache).judge(_record())
+    assert repeated.value.receipt == first.value.receipt
+    assert valid.requests == []
+
+
+def test_budget_ledger_remains_authoritative_for_exact_ambiguous_request(
+    tmp_path: Path,
+) -> None:
+    class ResponseLessFailure:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def complete(self, request):
+            del request
+            self.calls += 1
+            raise TimeoutError("possibly charged")
+
+    config = ProductionJudgeBudgetConfig.from_mapping(
+        {
+            "format": "truth_editing_production_judge_budget_config_v1",
+            "all_in_maximum_spend_usd": "50",
+            "non_judge_reserved_spend_usd": "45",
+            "maximum_judge_spend_usd": "5",
+            "per_call_reservation_usd": "0.025",
+            "judge_config_sha256": FROZEN_JUDGE_CONFIG_SHA256,
+        }
+    )
+    budget = ProductionJudgeBudget(tmp_path / "judge-budget", config=config)
+    cache = FileJudgeCache(tmp_path / "judge-cache")
+    failed_transport = ResponseLessFailure()
+    with pytest.raises(OperationalJudgeFailure):
+        TruthEditingLiveJudge(
+            transport=budget.transport(failed_transport), cache=cache
+        ).judge(_record())
+    assert failed_transport.calls == 1
+
+    budget.acknowledge_ambiguous_transport_circuit()
+    exact_retry = StoredJudgeTransport(
+        [_transport_response(_absolute_response())]
+    )
+    with pytest.raises(OperationalJudgeFailure) as repeated:
+        TruthEditingLiveJudge(
+            transport=budget.transport(exact_retry), cache=cache
+        ).judge(_record())
+    assert isinstance(repeated.value.__cause__, ProductionJudgeBudgetCircuitOpen)
+    assert exact_retry.requests == []
 
 
 @pytest.mark.parametrize("response", [["bad"], "bad", 7])

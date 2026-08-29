@@ -39,6 +39,16 @@ _THREAD_LOCKS_GUARD = threading.Lock()
 _SECRET_FIELD_NAMES = frozenset(
     {"api_key", "authorization", "openrouter_api_key", "x-api-key", "cookie", "set-cookie"}
 )
+_SAFE_FAILURE_LABEL_CHARACTERS = frozenset(
+    "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._:/-"
+)
+_SECRET_LIKE_LABEL_PREFIXES = (
+    "api-key",
+    "apikey",
+    "authorization",
+    "bearer",
+    "sk-",
+)
 
 
 class ProductionJudgeBudgetError(RuntimeError):
@@ -172,27 +182,33 @@ class ProductionJudgeBudget:
 
         class BudgetedTransport:
             def complete(self, request: Mapping[str, Any]) -> Mapping[str, Any]:
-                request_copy = copy.deepcopy(dict(request))
-                request_sha = _sha(request_copy)
-                replay = ledger._reserve_or_replay(request_sha, request_copy)
-                if replay is not None:
-                    return replay
-                try:
-                    response = downstream.complete(request_copy)
-                except Exception as error:
-                    ledger._record_ambiguous(request_sha, error.__class__.__name__)
-                    raise ProductionJudgeBudgetCircuitOpen(
-                        "production judge transport outcome is ambiguous; circuit is open"
-                    ) from error
-                try:
-                    return ledger._reconcile(request_sha, response)
-                except ProductionJudgeBudgetCircuitOpen:
-                    raise
-                except Exception as error:
-                    ledger._record_ambiguous(request_sha, error.__class__.__name__)
-                    raise ProductionJudgeBudgetCircuitOpen(
-                        "production judge response cost is ambiguous; circuit is open"
-                    ) from error
+                # Keep the complete paid boundary behind a separate gate.  The
+                # ledger lock remains short-lived and can therefore be acquired
+                # by reservation/reconciliation without deadlocking this call.
+                # Waiting workers enter only after the prior call commits, then
+                # re-check replay/circuit state before touching the provider.
+                with ledger._transport_locked():
+                    request_copy = copy.deepcopy(dict(request))
+                    request_sha = _sha(request_copy)
+                    replay = ledger._reserve_or_replay(request_sha, request_copy)
+                    if replay is not None:
+                        return replay
+                    try:
+                        response = downstream.complete(request_copy)
+                    except Exception as error:
+                        ledger._record_ambiguous(request_sha, error)
+                        raise ProductionJudgeBudgetCircuitOpen(
+                            "production judge transport outcome is ambiguous; circuit is open"
+                        ) from error
+                    try:
+                        return ledger._reconcile(request_sha, response)
+                    except ProductionJudgeBudgetCircuitOpen:
+                        raise
+                    except Exception as error:
+                        ledger._record_ambiguous(request_sha, error)
+                        raise ProductionJudgeBudgetCircuitOpen(
+                            "production judge response cost is ambiguous; circuit is open"
+                        ) from error
 
         return BudgetedTransport()
 
@@ -359,7 +375,8 @@ class ProductionJudgeBudget:
             self._write_once(reservation_path, unsigned)
             return None
 
-    def _record_ambiguous(self, request_sha: str, error_class: str) -> None:
+    def _record_ambiguous(self, request_sha: str, error: Exception) -> None:
+        failure = _safe_transport_failure(error)
         with self._locked():
             call_dir = self.path / "calls" / request_sha
             self._write_once(
@@ -368,7 +385,11 @@ class ProductionJudgeBudget:
                     "ambiguous",
                     request_sha,
                     authorized_usd=_money_text(self.config.per_call_reservation_usd),
-                    error_class=error_class,
+                    # Retain the legacy scalar while adding a fixed-field,
+                    # content-bound diagnostic that never contains exception
+                    # text, response payloads, prompts, headers, or credentials.
+                    error_class=failure["error_class"],
+                    transport_failure=failure,
                 ),
             )
             self._open_circuit("ambiguous_transport", request_sha)
@@ -561,6 +582,28 @@ class ProductionJudgeBudget:
                 fcntl.flock(descriptor, fcntl.LOCK_UN)
                 os.close(descriptor)
 
+    @contextmanager
+    def _transport_locked(self) -> Iterator[None]:
+        """Serialize the paid boundary across both threads and processes.
+
+        ``flock`` is released by the kernel if a worker exits, while the
+        process-local lock supplies the thread exclusion that process-scoped
+        advisory locks cannot provide reliably on their own.
+        """
+
+        key = f"{self.path.resolve()}::transport"
+        with _THREAD_LOCKS_GUARD:
+            thread_lock = _THREAD_LOCKS.setdefault(key, threading.RLock())
+        with thread_lock:
+            lock_path = self.path / ".transport.lock"
+            descriptor = os.open(lock_path, os.O_RDWR | os.O_CREAT, 0o600)
+            try:
+                fcntl.flock(descriptor, fcntl.LOCK_EX)
+                yield
+            finally:
+                fcntl.flock(descriptor, fcntl.LOCK_UN)
+                os.close(descriptor)
+
 
 def parse_production_judge_budget_receipt(value: Any) -> dict[str, Any]:
     expected = {
@@ -637,6 +680,54 @@ def _contains_secret_field(value: Any) -> bool:
     if isinstance(value, list | tuple):
         return any(_contains_secret_field(item) for item in value)
     return False
+
+
+def _safe_failure_label(value: Any) -> str | None:
+    """Return one short diagnostic label, never arbitrary provider text."""
+
+    if not isinstance(value, str) or not 1 <= len(value) <= 64:
+        return None
+    if any(character not in _SAFE_FAILURE_LABEL_CHARACTERS for character in value):
+        return None
+    if value.casefold().startswith(_SECRET_LIKE_LABEL_PREFIXES):
+        return None
+    return value
+
+
+def _exception_attribute(error: Exception, name: str) -> Any:
+    """Read one diagnostic attribute without trusting custom descriptors."""
+
+    try:
+        return getattr(error, name, None)
+    except Exception:
+        return None
+
+
+def _safe_transport_failure(error: Exception) -> dict[str, Any]:
+    """Extract only fixed, non-content metadata from a transport exception."""
+
+    error_class = _safe_failure_label(error.__class__.__name__) or "Exception"
+    raw_status = _exception_attribute(error, "status_code")
+    status_code = (
+        raw_status
+        if isinstance(raw_status, int)
+        and not isinstance(raw_status, bool)
+        and 100 <= raw_status <= 599
+        else None
+    )
+    raw_retryable = _exception_attribute(error, "retryable")
+    retryable = (
+        raw_retryable
+        if isinstance(raw_retryable, bool)
+        else isinstance(error, TimeoutError | OSError)
+    )
+    return {
+        "error_class": error_class,
+        "status_code": status_code,
+        "error_type": _safe_failure_label(_exception_attribute(error, "error_type")),
+        "provider": _safe_failure_label(_exception_attribute(error, "provider_name")),
+        "retryable": retryable,
+    }
 
 
 __all__ = [

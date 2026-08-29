@@ -55,6 +55,11 @@ from intelligent_liars.truth_editing_pairwise_reconciliation import (
 
 _PROVIDER_ROUTE = "z-ai/fp8"
 _COMPATIBLE_ADAPTER_CODE_SHA256S = {
+    # Same frozen request/parser contract before derivative upstream circuit
+    # failures stopped poisoning the semantic terminal-cache namespace.
+    # Existing successful and true response-owned failure receipts remain
+    # readable; the production budget ledger still owns ambiguous requests.
+    "7e75a1989326058a2af57f27a8cbed1f3905c8ecaf67500dc3fbd2780eb58f9f",
     # Frozen v4 JSON-object request/parser used by the in-progress development
     # calibration. The subsequent change only lets the outer calibration
     # runner report an already terminal transport receipt and continue to
@@ -519,6 +524,23 @@ class JudgeCache(Protocol):
     ) -> JudgeCacheReceipt: ...
 
 
+def _is_derivative_budget_circuit_failure(receipt: JudgeCacheReceipt) -> bool:
+    """Return whether the semantic adapter only observed an upstream circuit.
+
+    The production judge-budget ledger owns the durable ambiguity decision for
+    these failures.  A semantic-cache alias would incorrectly turn the
+    temporary global circuit into a permanent block for a distinct request
+    that never crossed the paid transport seam.
+    """
+
+    failure = receipt.operational_failure
+    return (
+        failure is not None
+        and failure.message
+        == "error_class=ProductionJudgeBudgetCircuitOpen"
+    )
+
+
 class MemoryJudgeCache:
     """Process-local exact-identity cache; safe to replace with a durable mapping."""
 
@@ -546,8 +568,13 @@ class MemoryJudgeCache:
         )
 
     def terminal_failure(self, key: str) -> JudgeCacheReceipt | None:
-        return self._terminal_failures.get(key) or _infer_terminal_failure(
+        receipt = self._terminal_failures.get(key) or _infer_terminal_failure(
             self.failure_receipts(key)
+        )
+        return (
+            None
+            if receipt is not None and _is_derivative_budget_circuit_failure(receipt)
+            else receipt
         )
 
     def record_terminal_failure(
@@ -557,6 +584,8 @@ class MemoryJudgeCache:
         parsed = parse_judge_cache_receipt(receipt.to_payload(), result=None)
         if parsed.operational_status == "succeeded":
             raise LiveJudgeError("terminal failure cannot contain a successful receipt")
+        if _is_derivative_budget_circuit_failure(parsed):
+            return parsed
         return self._terminal_failures.setdefault(key, parsed)
 
 
@@ -723,7 +752,7 @@ class FileJudgeCache:
             raise LiveJudgeError(
                 f"judge terminal failure {key} was produced by different adapter code"
             )
-        return receipt
+        return None if _is_derivative_budget_circuit_failure(receipt) else receipt
 
     def record_terminal_failure(
         self, key: str, receipt: JudgeCacheReceipt
@@ -731,6 +760,8 @@ class FileJudgeCache:
         parsed = parse_judge_cache_receipt(receipt.to_payload(), result=None)
         if parsed.operational_status == "succeeded":
             raise LiveJudgeError("terminal failure cannot contain a successful receipt")
+        if _is_derivative_budget_circuit_failure(parsed):
+            return parsed
         target = self._terminal_target(key)
         target.parent.mkdir(parents=True, exist_ok=True)
         _fsync_directory(self.path)
@@ -789,16 +820,21 @@ def _infer_terminal_failure(
     frozen retry allowance. The latest immutable receipt is returned verbatim.
     """
 
-    if not receipts:
+    terminal_candidates = tuple(
+        receipt
+        for receipt in receipts
+        if not _is_derivative_budget_circuit_failure(receipt)
+    )
+    if not terminal_candidates:
         return None
-    for receipt in reversed(receipts):
+    for receipt in reversed(terminal_candidates):
         failure = receipt.operational_failure
         if failure is None:
             raise LiveJudgeError("failure cache contains a successful receipt")
         if receipt.raw_response_sha256 is None or not failure.retryable:
             return receipt
-    if len(receipts) >= 3:
-        return receipts[-1]
+    if len(terminal_candidates) >= 3:
+        return terminal_candidates[-1]
     return None
 
 
@@ -1563,7 +1599,9 @@ class TruthEditingLiveJudge:
             response=response,
             elapsed_ms=elapsed_ms,
         )
-        if terminal_cache_key is not None:
+        if terminal_cache_key is not None and not isinstance(
+            error, PaidJudgeCircuitOpen
+        ):
             committed = self._cache.record_terminal_failure(
                 terminal_cache_key, failure.receipt
             )
@@ -2377,9 +2415,11 @@ def _semantic_validation_categories(error: Exception) -> tuple[str, ...]:
     return tuple(categories)
 
 
-def _terminal_correction_failure(error: Exception) -> _ResponseFailure:
+def _terminal_correction_failure(error: Exception) -> Exception:
     """A correction call is the final call, irrespective of failure category."""
 
+    if isinstance(error, PaidJudgeCircuitOpen):
+        return error
     status, code, _retryable, error_class = _classify_operational_error(error)
     return _ResponseFailure(
         status=status, code=code, retryable=False, error_class=error_class
