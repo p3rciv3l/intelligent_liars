@@ -381,6 +381,7 @@ def execute_production_lifecycle(
     base_execute: BaseExecute = execute_lifecycle,
     run_command: RunCommand = subprocess.run,
     sleeper: Callable[[float], None] = time.sleep,
+    minimum_aws_validity_seconds: int | None = None,
 ) -> dict[str, Any]:
     """Execute the base lifecycle and prove no instance from its label remains.
 
@@ -413,9 +414,17 @@ def execute_production_lifecycle(
                 "adaptive production execution requires AWS credentials"
             )
         try:
-            aws_credentials.assert_valid_for(
-                config.base_job.maximum_elapsed_seconds + 300
+            full_lease_validity = config.base_job.maximum_elapsed_seconds + 300
+            required_validity = (
+                full_lease_validity
+                if minimum_aws_validity_seconds is None
+                else minimum_aws_validity_seconds
             )
+            if not 600 <= required_validity <= full_lease_validity:
+                raise ProductionVastError(
+                    "adaptive AWS validity override is outside the safe range"
+                )
+            aws_credentials.assert_valid_for(required_validity)
         except VastPrerequisiteError as error:
             raise ProductionVastError(str(error)) from error
     base_metadata = metadata_path.with_name(metadata_path.name + ".base.json")

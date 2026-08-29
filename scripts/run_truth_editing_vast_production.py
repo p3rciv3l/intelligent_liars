@@ -135,6 +135,9 @@ def main() -> int:
             config=config,
             metadata_path=args.metadata,
             workload_secret=secret,
+            minimum_aws_validity_seconds=(
+                required_validity if config.phase == "adaptive" else None
+            ),
         )
         result["mode"] = "executed"
     print(json.dumps(result, indent=2, sort_keys=True))
