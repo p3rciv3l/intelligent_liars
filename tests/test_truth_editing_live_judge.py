@@ -449,11 +449,22 @@ def test_absolute_bundle_response_identity_mismatch_is_never_cached(tmp_path: Pa
     assert list((tmp_path / "cache").glob("*.json")) == []
 
 
-def test_absolute_fails_closed_on_fenced_or_schema_invalid_json() -> None:
+def test_absolute_invalid_json_gets_one_json_only_correction() -> None:
     fenced = _transport_response(_absolute_response())
     fenced["content"] = "```json\n" + str(fenced["content"]) + "\n```"
-    with pytest.raises(OperationalJudgeFailure, match="invalid_json"):
-        TruthEditingLiveJudge(transport=StoredJudgeTransport([fenced])).judge(_record())
+    transport = StoredJudgeTransport(
+        [fenced, _transport_response(_absolute_response())]
+    )
+
+    evidence = TruthEditingLiveJudge(transport=transport).judge(_record())
+
+    assert evidence.result.operational_status == "succeeded"
+    assert evidence.cache_receipt.attempts == 2
+    assert len(transport.requests) == 2
+    correction = json.loads(transport.requests[1]["messages"][1]["content"])
+    assert correction["operation"] == "json_syntax_correction_v1"
+    assert correction["previous_invalid_output"] == fenced["content"]
+    assert transport.requests[1]["plugins"] == [{"id": "response-healing"}]
 
 
 
@@ -596,6 +607,27 @@ def test_pairwise_always_runs_order_swap_and_detects_consistency() -> None:
         assert prompt["decision_checklist"][-1].startswith(
             "8. Before returning JSON, check"
         )
+
+
+def test_pairwise_invalid_json_gets_one_json_only_correction() -> None:
+    invalid = _transport_response(_pairwise_response("A"))
+    invalid["content"] = "not-json"
+    valid = _transport_response(_pairwise_response("A"))
+    transport = StoredJudgeTransport(
+        [invalid, valid, _transport_response(_pairwise_response("B"))]
+    )
+
+    evidence = TruthEditingLiveJudge(transport=transport).compare(
+        candidate_a=_pairwise_candidate("Lyon"),
+        candidate_b=_pairwise_candidate("London"),
+        comparison_group_sha256=_sha_text("group"),
+    )
+
+    assert evidence.forward_cache_receipt.attempts == 2
+    assert evidence.reverse_cache_receipt.attempts == 1
+    correction = json.loads(transport.requests[1]["messages"][1]["content"])
+    assert correction["operation"] == "json_syntax_correction_v1"
+    assert correction["previous_invalid_output"] == "not-json"
 
 
 def test_pairwise_accepts_only_positive_public_evidence_schema_before_transport() -> None:
@@ -1207,25 +1239,26 @@ def test_invalid_json_persists_failure_receipt_but_not_success_cache(tmp_path: P
     cache = FileJudgeCache(tmp_path / "judge-cache")
     with pytest.raises(OperationalJudgeFailure) as captured:
         TruthEditingLiveJudge(
-            transport=StoredJudgeTransport([invalid]), cache=cache
+            transport=StoredJudgeTransport([invalid, invalid]), cache=cache
         ).judge(_record())
 
     receipt = captured.value.receipt
     assert receipt.operational_status == "invalid_json"
     assert receipt.operational_failure is not None
     assert receipt.operational_failure.code == "json_decode_error"
-    assert receipt.operational_failure.retryable is True
+    assert receipt.operational_failure.retryable is False
+    assert receipt.attempts == 2
     assert receipt.parsed_result_sha256 is None
     assert receipt.raw_response_sha256 is not None
     assert cache.get(receipt.cache_key_sha256) is None
     assert cache.failure_receipts(receipt.cache_key_sha256) == (receipt,)
 
     valid_transport = StoredJudgeTransport([_transport_response(_absolute_response())])
-    evidence = TruthEditingLiveJudge(
-        transport=valid_transport, cache=cache
-    ).judge(_record())
-    assert evidence.result.operational_status == "succeeded"
-    assert len(valid_transport.requests) == 1
+    with pytest.raises(OperationalJudgeFailure, match="invalid_json"):
+        TruthEditingLiveJudge(
+            transport=valid_transport, cache=cache
+        ).judge(_record())
+    assert valid_transport.requests == []
 
 
 def test_transport_timeout_receipt_binds_attempts_and_has_no_response_hash() -> None:
@@ -1473,9 +1506,9 @@ def test_response_owned_retry_count_is_bound_on_schema_failure() -> None:
     cache = MemoryJudgeCache()
     with pytest.raises(OperationalJudgeFailure) as captured:
         TruthEditingLiveJudge(
-            transport=StoredJudgeTransport([invalid]), cache=cache
+            transport=StoredJudgeTransport([invalid, invalid]), cache=cache
         ).judge(_record())
-    assert captured.value.receipt.attempts == 4
+    assert captured.value.receipt.attempts == 8
 
 
 def test_duplicate_failure_event_is_atomic_first_writer_wins(tmp_path: Path) -> None:

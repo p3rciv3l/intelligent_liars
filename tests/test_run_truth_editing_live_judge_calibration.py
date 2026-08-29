@@ -144,7 +144,9 @@ def test_budget_guard_blocks_before_transport(tmp_path: Path) -> None:
     assert transport.requests == []
 
 
-def test_retryable_json_response_is_retried_once_under_same_budget(tmp_path: Path) -> None:
+def test_invalid_json_response_gets_one_explicit_correction_under_same_budget(
+    tmp_path: Path,
+) -> None:
     invalid = _response()
     invalid["content"] = "not json"
     invalid["price_usd"] = 0.001
@@ -157,8 +159,14 @@ def test_retryable_json_response_is_retried_once_under_same_budget(tmp_path: Pat
     assert report["actual_spend_usd"] == 0.003
     assert len(transport.requests) == 2
     request_roots = [path for path in (tmp_path / "attempts").iterdir() if path.is_dir()]
-    assert len(request_roots) == 1
-    assert sorted(path.name for path in request_roots[0].iterdir()) == ["000", "001"]
+    assert len(request_roots) == 2
+    assert all(
+        sorted(path.name for path in request_root.iterdir()) == ["000"]
+        for request_root in request_roots
+    )
+    correction_prompt = json.loads(transport.requests[1]["messages"][1]["content"])
+    assert correction_prompt["operation"] == "json_syntax_correction_v1"
+    assert correction_prompt["previous_invalid_output"] == "not json"
 
 
 def test_schema_invalid_completed_response_gets_one_explicit_correction_call(tmp_path: Path) -> None:
