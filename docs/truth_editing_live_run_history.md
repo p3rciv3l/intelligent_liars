@@ -98,11 +98,11 @@ Purpose: prevent repeated operational mistakes. Read this file before every paid
 - Vast instance: `49087336`
 - GPUs: eight RTX 3090s
 - Controller attempt: `r11-resume-10`
-- Durable boundary: trial 88 committed locally; the prior aborted trial-88 S3 version and host tree remain preserved.
+- Durable boundary: trial 96 committed locally; the prior aborted trial-88 S3 version and host tree remain preserved.
 - Recovery: the trial-80 partial checkpoint reused seven receipts and recomputed only missing trial 85 before committing a new trial-88 continuation.
-- Capacity: minimum guarantee restored; advisory target `224`, time limit `224`, evaluation limit `232`, infrastructure limit `288`, total limit `280`.
-- Active work: trials 88–95 authorized; controller and all eight GPU workers active under the same W&B run ID `2c8c9039985846a3b1f979422604756a`.
-- Status at `2026-08-29T13:22:23Z`: phase `broad_coverage`, no stop reason, no successful scientific candidate yet.
+- Capacity: minimum guarantee remains restored; advisory target `216` after the fresh expanded batch.
+- Active work: trials 96–103 authorized; controller and all eight GPU workers active under the same W&B run ID `2c8c9039985846a3b1f979422604756a`.
+- Status at `2026-08-29T13:43:49Z`: phase `broad_coverage`, no stop reason, and no judge JSON/schema/transport failure in trials 88–95.
 
 ## Spend ledger
 
