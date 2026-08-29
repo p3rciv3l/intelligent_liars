@@ -16,6 +16,7 @@ from intelligent_liars.truth_editing_vast_prerequisites import (
     FROZEN_MODEL_REVISION,
     FROZEN_RUNTIME_ID,
     Offer,
+    adaptive_aws_required_validity_seconds,
     resolve_aws_workload_credentials,
 )
 from intelligent_liars.truth_editing_vast_production import (
@@ -31,6 +32,17 @@ from intelligent_liars.truth_editing_vast_production import (
 
 _PRODUCTION_PATH = "configs/truth_editing_production_v4_fixture_deadbeef.json"
 _PRODUCTION_SHA256 = "d" * 64
+
+
+def test_refreshable_aws_validity_accepts_one_refresh_interval_plus_margin() -> None:
+    full_lease = 24 * 3600 + 300
+
+    assert adaptive_aws_required_validity_seconds(300, full_lease) == 300
+    assert adaptive_aws_required_validity_seconds(None, full_lease) == full_lease
+    with pytest.raises(ValueError, match="between 300 seconds"):
+        adaptive_aws_required_validity_seconds(299, full_lease)
+    with pytest.raises(ValueError, match="between 300 seconds"):
+        adaptive_aws_required_validity_seconds(full_lease + 1, full_lease)
 
 
 def _raw() -> dict[str, object]:

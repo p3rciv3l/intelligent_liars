@@ -11,6 +11,7 @@ from pathlib import Path
 from intelligent_liars.truth_editing_vast_prerequisites import Offer
 from intelligent_liars.truth_editing_vast_prerequisites import (
     EphemeralWorkloadSecret,
+    adaptive_aws_required_validity_seconds,
     resolve_aws_cli_profile_credentials,
     resolve_aws_workload_credentials,
 )
@@ -91,16 +92,13 @@ def main() -> int:
         aws_credentials = None
         if config.phase == "adaptive":
             full_lease_validity = config.base_job.maximum_elapsed_seconds + 300
-            required_validity = (
-                full_lease_validity
-                if args.aws_minimum_validity_seconds is None
-                else args.aws_minimum_validity_seconds
-            )
-            if not 600 <= required_validity <= full_lease_validity:
-                raise SystemExit(
-                    "--aws-minimum-validity-seconds must be between 600 seconds "
-                    "and the adaptive lease plus cleanup window"
+            try:
+                required_validity = adaptive_aws_required_validity_seconds(
+                    args.aws_minimum_validity_seconds,
+                    full_lease_validity,
                 )
+            except ValueError as error:
+                raise SystemExit(str(error)) from None
             if args.aws_profile is not None and args.aws_credentials_file is None:
                 aws_credentials = resolve_aws_cli_profile_credentials(
                     profile_name=args.aws_profile,

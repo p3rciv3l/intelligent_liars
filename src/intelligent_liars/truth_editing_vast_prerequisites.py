@@ -1674,3 +1674,23 @@ def _absolute_remote_path(value: Any, name: str) -> str:
 def _normalize_vram(value: Any) -> float:
     raw = _number(value, "offer.gpu_ram", 1)
     return raw / 1024 if raw > 1024 else raw
+MINIMUM_REFRESHABLE_AWS_VALIDITY_SECONDS = 300
+
+
+def adaptive_aws_required_validity_seconds(
+    requested_seconds: int | None,
+    full_lease_validity_seconds: int,
+) -> int:
+    """Resolve the admission window for credentials refreshed every four minutes."""
+
+    required = (
+        full_lease_validity_seconds
+        if requested_seconds is None
+        else requested_seconds
+    )
+    if not MINIMUM_REFRESHABLE_AWS_VALIDITY_SECONDS <= required <= full_lease_validity_seconds:
+        raise ValueError(
+            "AWS minimum validity must be between 300 seconds and the adaptive "
+            "lease plus cleanup window"
+        )
+    return required
