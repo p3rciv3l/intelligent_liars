@@ -916,6 +916,15 @@ def _validate_adaptive_lineage(
     new_trials = _journal_trial_rows(new_payloads[ADAPTIVE_STATE_FILES[0]])
     if new_trials[:prior_completed] != prior_trials or len(new_trials) != completed:
         raise PhaseCheckpointError("adaptive journal is not an exact prior extension")
+    if completed == prior_completed and all(
+        new_payloads[name] == prior_payloads[name] for name in ADAPTIVE_STATE_FILES
+    ):
+        parent = prior["parent_manifest_sha256"]
+        if parent is not None and (
+            not isinstance(parent, str) or _SHA256.fullmatch(parent) is None
+        ):
+            raise PhaseCheckpointError("adaptive checkpoint parent identity is invalid")
+        return parent
     prior_optuna = prior_payloads[ADAPTIVE_STATE_FILES[1]]
     new_optuna = new_payloads[ADAPTIVE_STATE_FILES[1]]
     if completed == prior_completed:

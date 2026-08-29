@@ -324,6 +324,34 @@ def test_adaptive_checkpoint_round_trip_preserves_scheduler_progress_and_wandb(
     assert {name: (tmp_path / "restored" / name).read_bytes() for name in expected_names} == original
 
 
+def test_republishing_identical_adaptive_checkpoint_is_idempotent(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "source"
+    publication = tmp_path / "published"
+    _write_adaptive_state(source)
+
+    first = publish_adaptive_checkpoint(
+        source,
+        publication,
+        expected_study_identity_sha256=STUDY_ID,
+        expected_study_config_sha256=STUDY_CONFIG_SHA,
+        expected_completed_trials=80,
+        expected_optuna_study_name=OPTUNA_STUDY_NAME,
+    )
+    second = publish_adaptive_checkpoint(
+        source,
+        publication,
+        expected_study_identity_sha256=STUDY_ID,
+        expected_study_config_sha256=STUDY_CONFIG_SHA,
+        expected_completed_trials=80,
+        expected_optuna_study_name=OPTUNA_STUDY_NAME,
+    )
+
+    assert second == first
+    assert len(list((publication / "adaptive-generations").iterdir())) == 1
+
+
 def test_preminimum_abort_checkpoint_publishes_and_restores(tmp_path: Path) -> None:
     source = tmp_path / "source"
     _write_adaptive_state(source, completed=8, abort_minimum=True)
