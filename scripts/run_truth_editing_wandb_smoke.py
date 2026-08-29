@@ -290,6 +290,8 @@ def _run(
             )
             if session == 1:
                 _record_safe_smoke_metrics(monitor)
+            else:
+                monitor.record_resume_marker(session_ordinal=2)
             monitor.close()
             snapshots.append(dict(monitor.verification_snapshot()))
 

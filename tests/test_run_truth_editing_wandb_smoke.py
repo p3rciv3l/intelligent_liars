@@ -97,6 +97,13 @@ def test_smoke_runs_two_sessions_one_remote_run_and_publishes_gate(
         "wandb-smoke-test-001",
         "wandb-smoke-test-001",
     ]
+    markers = [
+        row["canary/resumed_session"]
+        for row in wandb.runs["wandb-smoke-test-001"].rows
+        if "canary/resumed_session" in row
+    ]
+    assert markers == [2.0]
+    assert trace["dashboard_readback"]["resumed_session_marker_seen"] is True
     assert json.loads(capsys.readouterr().out.splitlines()[-1])["kind"] == "wandb_transport_smoke"
     all_bytes = b"".join(path.read_bytes() for path in output.rglob("*") if path.is_file())
     assert b"test-key-never-persist" not in all_bytes

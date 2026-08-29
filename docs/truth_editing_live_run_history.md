@@ -85,18 +85,19 @@ Purpose: prevent repeated operational mistakes. Read this file before every paid
 | Adaptive main r11, second clean restore | No new failure as of `2026-08-29T10:36:53Z`: the full trial-56 checkpoint published locally and to S3, two orphaned judge reservations were recovered, and exact replay trials 56–63 were admitted. The controller and all eight GPU workers are active. | Continue from this durable boundary; keep the exact replay batch in broad coverage and do not let Optuna learn from the earlier operational failures. |
 | Adaptive main r11, W&B resume ordering | W&B stayed on the correct run but rejected replayed trial rows after GPU telemetry advanced its shared history step, leaving the dashboard stale at trial 48 while local checkpoints remained authoritative. | Give every coordinator event one lock-serialized monotonic W&B step, keep trial ordinal as a metric, commit every row explicitly, preserve nonfatal behavior, and replay the durable journal to backfill the dashboard. |
 | Adaptive main r11, W&B server cursor | Resume 3 backfilled every trial through 63 and restored live telemetry, but W&B emitted old-row warnings because `run.step` initially reported local step 0 while the server was already ahead. | Prefer W&B 0.29's server-derived `run.starting_step`, then fall back to `run.step` or implicit committed logging. The hotfix changes monitoring only; Optuna, checkpoints, judge settings, and scores are unchanged. |
+| Adaptive main r11, resume-3 batch 64–71 | Planned monitoring maintenance interrupted an in-flight broad-coverage batch after the full trial-64 boundary. Seven replayed trials produced real scientific scores; trial 64 recorded one retryable, near-instant judge-circuit failure. | Preserve the full trial-72 checkpoint, exclude trial 64 from coverage and Optuna learning, and replay its exact parameters first as trial 72. No other result from the batch is discarded. |
 
 ## Current attempt
 
-### Adaptive main r11, resume 2 — 2026-08-29
+### Adaptive main r11, resume 3 — 2026-08-29
 
 - Vast instance: `49087336`
 - GPUs: eight RTX 3090s
-- Controller attempt: `r11-resume-2`
-- Durable boundary: full trial-56 checkpoint published locally and to S3.
-- Recovery: two orphaned judge reservations recovered after boundary publication.
-- Active work: exact replay trials 56–63 admitted; controller and all eight GPU workers active.
-- Status at `2026-08-29T10:36:53Z`: no new failure observed.
+- Controller attempt: `r11-resume-3`
+- Durable boundary: full trial-72 checkpoint published locally and to S3.
+- Recovery: trial 64's retryable operational failure is excluded and exactly replayed as trial 72.
+- Active work: trials 72–79 admitted; controller and all eight GPU workers active.
+- Status at `2026-08-29T11:11:43Z`: seven new scientific outcomes committed, one exact operational replay in flight, and no stop reason.
 
 ## Spend ledger
 

@@ -14,6 +14,7 @@ import os
 import re
 import threading
 import time
+from collections import deque
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any, Protocol
@@ -33,7 +34,7 @@ from .truth_editing_wandb_checkpoint import (
 
 
 MONITORING_RECEIPT_FORMAT = "truth_editing_wandb_monitoring_event_v1"
-VERIFICATION_FORMAT = "truth_editing_wandb_verification_snapshot_v1"
+VERIFICATION_FORMAT = "truth_editing_wandb_verification_snapshot_v2"
 _ALLOWED_PROPOSAL_PARAMETERS = frozenset(
     {
         "attention_edge_strength",
@@ -133,7 +134,15 @@ _PARAMETER_DIGESTS = frozenset(
     {"direction_ids_sha256", "selected_domains_sha256", "writer_layers_sha256"}
 )
 _FAILURE_OPERATIONS = frozenset(
-    {"init", "log", "finish", "record_batch", "record_trials", "telemetry_poll"}
+    {
+        "init",
+        "log",
+        "finish",
+        "transport",
+        "record_batch",
+        "record_trials",
+        "telemetry_poll",
+    }
 )
 _ADAPTIVE_STAGES = frozenset(
     {
@@ -152,6 +161,14 @@ _COVERAGE_METRIC = re.compile(
     r"attention_mlp_configuration|refusal_setting|strength_range)/"
     r"(?:completed|required|fraction)$"
 )
+_RECEIPT_LOCKS_GUARD = threading.Lock()
+_RECEIPT_LOCKS: dict[str, threading.Lock] = {}
+
+
+def _receipt_lock(path: Path) -> threading.Lock:
+    identity = str(path.resolve())
+    with _RECEIPT_LOCKS_GUARD:
+        return _RECEIPT_LOCKS.setdefault(identity, threading.Lock())
 
 
 class _WandbRun(Protocol):
@@ -309,6 +326,7 @@ def _safe_metric_value(name: object, value: Any) -> str | bool | float | None:
         "canary/tokens_per_second",
         "canary/judge_latency_ms",
         "canary/judge_cost_usd_per_trial",
+        "canary/resumed_session",
         "pareto/size",
         "trial/ordinal",
         "judge/calls",
@@ -384,6 +402,8 @@ class CoordinatorMonitor:
 
     All methods are intentionally best-effort and never raise.  ``run_id`` is
     created and restored by the separate strict durable-checkpoint module.
+    Trial/progress aggregation has one coordinator-study writer; telemetry and
+    transport state cross threads only through their locked seams.
     """
 
     def __init__(
@@ -400,6 +420,8 @@ class CoordinatorMonitor:
         monotonic: Any = time.monotonic,
         run_checkpoint_sha256: str | None = None,
         adaptive_progress_path: Path | None = None,
+        transport_queue_capacity: int = 1024,
+        transport_close_timeout_seconds: float = 1.0,
     ) -> None:
         self.run_id = run_id
         self.project = project
@@ -425,13 +447,43 @@ class CoordinatorMonitor:
         self._objective_parameters: list[dict[str, Any]] = []
         self._loss_chart_points: dict[int, dict[str, float]] = {}
         self._attempted_logs: list[dict[str, Any]] = []
-        self._wandb_log_lock = threading.Lock()
+        self._state_lock = threading.Lock()
+        self._transport_condition = threading.Condition(self._state_lock)
+        self._receipt_lock = _receipt_lock(receipt_path)
+        self._receipt_writable = True
+        self._receipt_terminal = False
         self._wandb_event_step: int | None = 0
         self._closed = False
+        self._close_requested = False
+        self._transport_state = "starting"
+        self._transport_drained = False
+        self._dropped_event_count = 0
+        self._coalesced_telemetry_count = 0
+        self._critical_events: deque[tuple[str, Any, bool]] = deque()
+        self._telemetry_events: dict[str, tuple[str, Any, bool]] = {}
+        self._inflight_operation: str | None = "init"
+        if (
+            isinstance(transport_queue_capacity, bool)
+            or not isinstance(transport_queue_capacity, int)
+            or transport_queue_capacity < 1
+        ):
+            raise ValueError("transport_queue_capacity must be a positive integer")
+        close_timeout = float(transport_close_timeout_seconds)
+        if not math.isfinite(close_timeout) or close_timeout < 0.0:
+            raise ValueError("transport_close_timeout_seconds must be non-negative")
+        self._transport_queue_capacity = transport_queue_capacity
+        self._transport_close_timeout_seconds = close_timeout
         self._wandb = wandb_module
         self._run_checkpoint_sha256 = run_checkpoint_sha256
         self._adaptive_progress_path = adaptive_progress_path
-        self._initialize(run_name)
+        self._restore_receipt_chain_head()
+        self._transport_thread = threading.Thread(
+            target=self._transport_main,
+            args=(run_name,),
+            name="truth-editing-wandb-transport",
+            daemon=True,
+        )
+        self._transport_thread.start()
 
     @classmethod
     def open(
@@ -569,30 +621,82 @@ class CoordinatorMonitor:
         )
         return checkpoint
 
-    def _receipt(self, kind: str, payload: Mapping[str, Any]) -> None:
-        unsigned = {
-            "format": MONITORING_RECEIPT_FORMAT,
-            "kind": kind,
-            "run_id": self.run_id,
-            "previous_receipt_sha256": self._previous_receipt_sha256,
-            "payload": dict(payload),
-        }
-        digest = hashlib.sha256(_canonical(unsigned)).hexdigest()
-        row = {**unsigned, "receipt_sha256": digest}
+    def _validated_receipt_tail(self) -> str | None:
+        if not self._receipt_path.exists():
+            return None
+        previous: str | None = None
+        for raw_line in self._receipt_path.read_text(encoding="utf-8").splitlines():
+            if not raw_line.strip():
+                continue
+            row = json.loads(raw_line)
+            if (
+                not isinstance(row, Mapping)
+                or row.get("format") != MONITORING_RECEIPT_FORMAT
+                or row.get("run_id") != self.run_id
+                or row.get("previous_receipt_sha256") != previous
+            ):
+                raise ValueError("monitoring receipt chain differs")
+            claimed = row.get("receipt_sha256")
+            unsigned = {key: value for key, value in row.items() if key != "receipt_sha256"}
+            if not isinstance(claimed, str) or hashlib.sha256(
+                _canonical(unsigned)
+            ).hexdigest() != claimed:
+                raise ValueError("monitoring receipt hash differs")
+            previous = claimed
+        return previous
+
+    def _restore_receipt_chain_head(self) -> None:
         try:
-            self._receipt_path.parent.mkdir(parents=True, exist_ok=True)
-            with self._receipt_path.open("a", encoding="utf-8") as handle:
-                handle.write(json.dumps(row, allow_nan=False, sort_keys=True) + "\n")
-                handle.flush()
-                os.fsync(handle.fileno())
-            self._previous_receipt_sha256 = digest
+            with self._receipt_lock:
+                self._previous_receipt_sha256 = self._validated_receipt_tail()
         except Exception:
-            # Monitoring storage is non-authoritative too. The optimizer must
-            # continue even when both W&B and the monitoring audit sink fail.
+            self._receipt_writable = False
             self._nonfatal_errors += 1
 
+    def _receipt(
+        self, kind: str, payload: Mapping[str, Any], *, terminal: bool = False
+    ) -> None:
+        # Receipt construction, append, and chain-head advance are one critical
+        # section shared by every monitor using this path in the process.
+        with self._receipt_lock:
+            if not self._receipt_writable or self._receipt_terminal:
+                return
+            try:
+                # A sequential reopen or another same-process monitor may have
+                # advanced the path after this instance restored its head.
+                self._previous_receipt_sha256 = self._validated_receipt_tail()
+            except Exception:
+                self._receipt_writable = False
+                with self._state_lock:
+                    self._nonfatal_errors += 1
+                return
+            unsigned = {
+                "format": MONITORING_RECEIPT_FORMAT,
+                "kind": kind,
+                "run_id": self.run_id,
+                "previous_receipt_sha256": self._previous_receipt_sha256,
+                "payload": dict(payload),
+            }
+            digest = hashlib.sha256(_canonical(unsigned)).hexdigest()
+            row = {**unsigned, "receipt_sha256": digest}
+            try:
+                self._receipt_path.parent.mkdir(parents=True, exist_ok=True)
+                with self._receipt_path.open("a", encoding="utf-8") as handle:
+                    handle.write(json.dumps(row, allow_nan=False, sort_keys=True) + "\n")
+                    handle.flush()
+                    os.fsync(handle.fileno())
+                self._previous_receipt_sha256 = digest
+                if terminal:
+                    self._receipt_terminal = True
+            except Exception:
+                # Monitoring storage is non-authoritative too. The optimizer must
+                # continue even when both W&B and the monitoring audit sink fail.
+                with self._state_lock:
+                    self._nonfatal_errors += 1
+
     def _failure(self, operation: str, error: BaseException) -> None:
-        self._nonfatal_errors += 1
+        with self._state_lock:
+            self._nonfatal_errors += 1
         del error  # Raw exception types and text are intentionally private.
         safe_operation = operation if operation in _FAILURE_OPERATIONS else "monitoring"
         category = f"{safe_operation}_failure"
@@ -605,7 +709,7 @@ class CoordinatorMonitor:
             },
         )
 
-    def _initialize(self, run_name: str) -> None:
+    def _initialize_transport(self, run_name: str) -> None:
         try:
             # These affect only W&B's coordinator process. CUDA trial workers
             # independently strip every WANDB_* variable before launch.
@@ -640,22 +744,22 @@ class CoordinatorMonitor:
                     x_disable_meta=True,
                     x_disable_machine_info=True,
                 )
-            self._init_calls.append(
-                {
-                    "id": self.run_id,
-                    "project": self.project,
-                    "entity": self.entity,
-                    "resume": "allow",
-                    "reinit": False,
-                    "privacy_settings": {
-                        "console": "off",
-                        "disable_git": True,
-                        "save_code": False,
-                        "log_model": False,
-                        "automatic_system_metrics": False,
-                    },
-                }
-            )
+            init_call = {
+                "id": self.run_id,
+                "project": self.project,
+                "entity": self.entity,
+                "resume": "allow",
+                "reinit": False,
+                "privacy_settings": {
+                    "console": "off",
+                    "disable_git": True,
+                    "save_code": False,
+                    "log_model": False,
+                    "automatic_system_metrics": False,
+                },
+            }
+            with self._state_lock:
+                self._init_calls.append(init_call)
             self._run = self._wandb.init(**kwargs)
             try:
                 resumed_step = getattr(self._run, "starting_step", None)
@@ -680,11 +784,124 @@ class CoordinatorMonitor:
                 self._wandb_event_step = resumed_step
             else:
                 self._wandb_event_step = None
-            self._initialized_coordinator_count = 1
+            with self._state_lock:
+                self._initialized_coordinator_count = 1
             self._receipt("wandb_initialized", {"coordinator_runs": 1})
         except Exception as error:
             self._run = None
             self._failure("init", error)
+
+    def _transport_main(self, run_name: str) -> None:
+        """Own every potentially blocking W&B SDK call on one daemon."""
+
+        try:
+            self._initialize_transport(run_name)
+            with self._transport_condition:
+                self._inflight_operation = None
+                if self._transport_state == "starting":
+                    self._transport_state = "running"
+                self._transport_condition.notify_all()
+            while True:
+                with self._transport_condition:
+                    while (
+                        not self._critical_events
+                        and not self._telemetry_events
+                        and not self._close_requested
+                    ):
+                        self._transport_condition.wait()
+                    if self._critical_events:
+                        kind, payload, record_attempt = self._critical_events.popleft()
+                    elif self._telemetry_events:
+                        telemetry_key = min(self._telemetry_events)
+                        kind, payload, record_attempt = self._telemetry_events.pop(
+                            telemetry_key
+                        )
+                    else:
+                        self._inflight_operation = "finish"
+                        break
+                    self._inflight_operation = kind
+                try:
+                    if self._run is None:
+                        continue
+                    if kind == "log":
+                        self._commit_wandb_row(payload, record_attempt=record_attempt)
+                    elif kind == "chart":
+                        self._publish_loss_chart(payload)
+                except Exception as error:
+                    self._failure("transport", error)
+                finally:
+                    with self._transport_condition:
+                        self._inflight_operation = None
+                        self._transport_condition.notify_all()
+            finish_failed = False
+            if self._run is not None:
+                try:
+                    self._run.finish(exit_code=0)
+                    with self._state_lock:
+                        self._finish_calls += 1
+                except Exception as error:
+                    finish_failed = True
+                    self._failure("finish", error)
+            with self._transport_condition:
+                self._inflight_operation = None
+                if self._transport_state != "close_timed_out":
+                    self._transport_state = (
+                        "finish_failed" if finish_failed else "drained"
+                    )
+                    self._transport_drained = True
+                self._transport_condition.notify_all()
+        except BaseException as error:
+            self._failure("transport", error)
+            with self._transport_condition:
+                self._inflight_operation = None
+                self._transport_state = "failed"
+                self._transport_drained = False
+                pending_events = len(self._critical_events) + len(
+                    self._telemetry_events
+                )
+                self._transport_condition.notify_all()
+            self._receipt(
+                "wandb_transport_terminated",
+                {
+                    "transport_state": "failed",
+                    "transport_drained": False,
+                    "pending_event_count": pending_events,
+                    "in_flight_event_count": 0,
+                },
+                terminal=True,
+            )
+
+    def _enqueue_transport(
+        self,
+        kind: str,
+        payload: Any,
+        *,
+        record_attempt: bool = False,
+        telemetry_key: str | None = None,
+    ) -> None:
+        dropped_now = False
+        with self._transport_condition:
+            if self._closed:
+                return
+            event = (kind, payload, record_attempt)
+            if telemetry_key is not None:
+                if telemetry_key in self._telemetry_events:
+                    self._coalesced_telemetry_count += 1
+                self._telemetry_events[telemetry_key] = event
+                self._transport_condition.notify()
+                return
+            if len(self._critical_events) >= self._transport_queue_capacity:
+                self._dropped_event_count += 1
+                self._nonfatal_errors += 1
+                dropped_now = True
+            else:
+                self._critical_events.append(event)
+                self._transport_condition.notify()
+        if dropped_now:
+            self._receipt(
+                "wandb_critical_event_dropped",
+                {"reason": "critical_fifo_full", "dropped_event_count": 1},
+            )
 
     def _commit_wandb_row(
         self, values: Mapping[str, Any], *, record_attempt: bool
@@ -697,42 +914,42 @@ class CoordinatorMonitor:
         The resumed SDK run supplies the first acceptable event step.
         """
 
-        with self._wandb_log_lock:
-            if self._run is None or self._closed:
-                return
-            event_step = self._wandb_event_step
-            # Advance before transport: a connection failure can be ambiguous,
-            # so reusing its event step could overwrite a row that arrived.
-            if event_step is not None:
-                self._wandb_event_step = event_step + 1
-            if record_attempt and len(self._attempted_logs) < 4096:
-                self._attempted_logs.append(
-                    {"step": event_step, "values": dict(values)}
-                )
-            try:
-                if event_step is None:
-                    # Let the resumed SDK advance its own server-backed clock
-                    # until its current step becomes readable again.
-                    self._run.log(values, commit=True)
-                    try:
-                        recovered_step = getattr(self._run, "step", None)
-                    except Exception:
-                        recovered_step = None
-                    if (
-                        not isinstance(recovered_step, bool)
-                        and isinstance(recovered_step, int)
-                        and recovered_step >= 0
-                    ):
-                        self._wandb_event_step = recovered_step
-                else:
-                    self._run.log(values, step=event_step, commit=True)
-                self._logged_metric_keys.update(values)
-            except Exception as error:
-                self._failure("log", error)
-
-    def _safe_log(self, values: Mapping[str, Any]) -> None:
-        if self._run is None or self._closed:
+        if self._run is None:
             return
+        event_step = self._wandb_event_step
+        # Advance before transport: a connection failure can be ambiguous, so
+        # reusing its event step could overwrite a row that arrived.
+        if event_step is not None:
+            self._wandb_event_step = event_step + 1
+        if record_attempt:
+            with self._state_lock:
+                if len(self._attempted_logs) < 4096:
+                    self._attempted_logs.append(
+                        {"step": event_step, "values": dict(values)}
+                    )
+        try:
+            if event_step is None:
+                self._run.log(values, commit=True)
+                try:
+                    recovered_step = getattr(self._run, "step", None)
+                except Exception:
+                    recovered_step = None
+                if (
+                    not isinstance(recovered_step, bool)
+                    and isinstance(recovered_step, int)
+                    and recovered_step >= 0
+                ):
+                    self._wandb_event_step = recovered_step
+            else:
+                self._run.log(values, step=event_step, commit=True)
+            with self._state_lock:
+                self._logged_metric_keys.update(values)
+        except Exception as error:
+            self._failure("log", error)
+
+    def _safe_log(
+        self, values: Mapping[str, Any], *, telemetry_key: str | None = None
+    ) -> None:
         clean: dict[str, Any] = {}
         for name, value in values.items():
             checked = _safe_metric_value(name, value)
@@ -740,7 +957,9 @@ class CoordinatorMonitor:
                 clean[str(name)] = checked
         if not clean:
             return
-        self._commit_wandb_row(clean, record_attempt=True)
+        self._enqueue_transport(
+            "log", clean, record_attempt=True, telemetry_key=telemetry_key
+        )
 
     def _log_loss_chart(self) -> None:
         """Publish one interactive, lower-is-better view of trial quality.
@@ -749,24 +968,35 @@ class CoordinatorMonitor:
         is display-only: it never enters Optuna, the journal, or selection.
         """
 
-        if self._run is None or self._closed or self._wandb is None:
+        if not self._loss_chart_points:
+            return
+        self._enqueue_transport(
+            "chart",
+            {ordinal: dict(values) for ordinal, values in self._loss_chart_points.items()},
+            telemetry_key="chart/loss_overview",
+        )
+
+    def _publish_loss_chart(self, points: Mapping[int, Mapping[str, float]]) -> None:
+        """Create and publish the plot only from the transport daemon."""
+
+        if self._run is None or self._wandb is None:
             return
         plot = getattr(self._wandb, "plot", None)
         line_series = getattr(plot, "line_series", None)
-        if not callable(line_series) or not self._loss_chart_points:
+        if not callable(line_series) or not points:
             return
-        ordinals = sorted(self._loss_chart_points)
+        ordinals = sorted(points)
         names = (
             "valid_false_report_rate_lcb",
             "truth_report_dissociation_lcb",
             "capability_preservation_lcb",
         )
         complete = [
-            (ordinal, self._loss_chart_points[ordinal])
+            (ordinal, points[ordinal])
             for ordinal in ordinals
             if all(
-                name in self._loss_chart_points[ordinal]
-                and 0.0 <= self._loss_chart_points[ordinal][name] <= 1.0
+                name in points[ordinal]
+                and 0.0 <= points[ordinal][name] <= 1.0
                 for name in names
             )
         ]
@@ -814,9 +1044,7 @@ class CoordinatorMonitor:
                 title="Loss overview (lower is better)",
                 xname="Trial",
             )
-            self._commit_wandb_row(
-                {"charts/loss_overview": chart}, record_attempt=False
-            )
+            self._commit_wandb_row({"charts/loss_overview": chart}, record_attempt=False)
         except Exception as error:
             self._failure("log", error)
 
@@ -936,7 +1164,8 @@ class CoordinatorMonitor:
                 elapsed_seconds=elapsed,
                 eta_seconds=eta,
             )
-            self._heartbeat_lines.append(heartbeat)
+            with self._state_lock:
+                self._heartbeat_lines.append(heartbeat)
             print(heartbeat, flush=True)
         except Exception as error:
             self._failure("record_batch", error)
@@ -1028,7 +1257,7 @@ class CoordinatorMonitor:
                 )
             except ValueError:
                 pass
-        self._safe_log(values)
+        self._safe_log(values, telemetry_key=f"gpu/{snapshot.gpu_slot}")
 
     def record_worker_telemetry(
         self, gpu_slot: int, trial_id: str, telemetry: Mapping[str, float]
@@ -1055,6 +1284,7 @@ class CoordinatorMonitor:
                 f"gpu/{gpu_slot}/tps": tps,
                 f"gpu/{gpu_slot}/active_trial_ordinal": ordinal,
             },
+            telemetry_key=f"gpu/{gpu_slot}",
         )
 
     def record_judge(
@@ -1078,6 +1308,7 @@ class CoordinatorMonitor:
                 "judge/latency_ms": latency_ms,
                 "judge/cost_usd": cost_usd,
             },
+            telemetry_key="judge",
         )
 
     def record_cost(
@@ -1106,6 +1337,7 @@ class CoordinatorMonitor:
                 "cost/total_actual_usd": gpu_actual_usd + judge_actual_usd,
                 "cost/total_projected_usd": gpu_projected_usd + judge_projected_usd,
             },
+            telemetry_key="cost",
         )
 
     def record_operational(
@@ -1140,48 +1372,87 @@ class CoordinatorMonitor:
             values["operations/error_fingerprint"] = error_fingerprint
         self._safe_log(values)
 
+    def record_resume_marker(self, *, session_ordinal: int) -> None:
+        """Emit the safe marker used to prove post-resume delivery."""
+
+        if session_ordinal != 2:
+            self._receipt(
+                "monitoring_input_rejected", {"category": "resume_marker_shape"}
+            )
+            return
+        self._safe_log({"canary/resumed_session": session_ordinal})
+
     def verification_snapshot(self) -> Mapping[str, Any]:
-        return {
-            "format": VERIFICATION_FORMAT,
-            "run_id": self.run_id,
-            "initialized_coordinator_count": self._initialized_coordinator_count,
-            "logged_metric_keys": sorted(self._logged_metric_keys),
-            "nonfatal_error_count": self._nonfatal_errors,
-            "heartbeat_lines": list(self._heartbeat_lines),
-            "privacy_controls": {
-                "console_capture": False,
-                "code_capture": False,
-                "git_capture": False,
-                "artifact_upload": False,
-                "model_upload": False,
-                "automatic_system_metrics": False,
-            },
-            "attempted_logs": list(self._attempted_logs),
-            "init_calls": list(self._init_calls),
-            "finish_calls": self._finish_calls,
-        }
+        with self._state_lock:
+            snapshot = {
+                "format": VERIFICATION_FORMAT,
+                "run_id": self.run_id,
+                "initialized_coordinator_count": self._initialized_coordinator_count,
+                "logged_metric_keys": sorted(self._logged_metric_keys),
+                "nonfatal_error_count": self._nonfatal_errors,
+                "heartbeat_lines": list(self._heartbeat_lines),
+                "privacy_controls": {
+                    "console_capture": False,
+                    "code_capture": False,
+                    "git_capture": False,
+                    "artifact_upload": False,
+                    "model_upload": False,
+                    "automatic_system_metrics": False,
+                },
+                "attempted_logs": list(self._attempted_logs),
+                "init_calls": list(self._init_calls),
+                "finish_calls": self._finish_calls,
+                "transport_state": self._transport_state,
+                "transport_drained": self._transport_drained,
+                "pending_event_count": (
+                    len(self._critical_events) + len(self._telemetry_events)
+                ),
+                "in_flight_event_count": int(self._inflight_operation is not None),
+                "dropped_event_count": self._dropped_event_count,
+                "coalesced_telemetry_count": self._coalesced_telemetry_count,
+            }
+        return snapshot
 
     def close(self) -> None:
-        with self._wandb_log_lock:
+        with self._transport_condition:
             if self._closed:
                 return
-            # Mark closed while holding the same lock used by every log. This
-            # drains an in-flight row and prevents a later row from racing
-            # W&B's finish call.
             self._closed = True
-            if self._run is not None:
-                try:
-                    self._run.finish(exit_code=0)
-                    self._finish_calls += 1
-                except Exception as error:
-                    self._failure("finish", error)
-            self._receipt(
-                "wandb_closed",
-                {
-                    "initialized_coordinator_count": self._initialized_coordinator_count,
-                    "nonfatal_error_count": self._nonfatal_errors,
-                },
-            )
+            self._close_requested = True
+            self._transport_condition.notify_all()
+        self._transport_thread.join(timeout=self._transport_close_timeout_seconds)
+        alive = self._transport_thread.is_alive()
+        with self._transport_condition:
+            if alive:
+                self._transport_state = "close_timed_out"
+                self._transport_drained = False
+                self._nonfatal_errors += 1
+            initialized = self._initialized_coordinator_count
+            errors = self._nonfatal_errors
+            dropped_events = self._dropped_event_count
+            pending_events = len(self._critical_events) + len(self._telemetry_events)
+            inflight_events = int(self._inflight_operation is not None)
+            coalesced = self._coalesced_telemetry_count
+            state = self._transport_state
+            drained = self._transport_drained
+        payload = {
+            "initialized_coordinator_count": initialized,
+            "nonfatal_error_count": errors,
+            "transport_state": state,
+            "transport_drained": drained,
+            "pending_event_count": pending_events,
+            "in_flight_event_count": inflight_events,
+            "dropped_event_count": dropped_events,
+            "coalesced_telemetry_count": coalesced,
+        }
+        kind = (
+            "wandb_close_timeout"
+            if alive
+            else "wandb_closed"
+            if drained
+            else "wandb_transport_terminated"
+        )
+        self._receipt(kind, payload, terminal=True)
 
 
 class MonitoredSearchDriver:

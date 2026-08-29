@@ -4,6 +4,7 @@ import json
 import math
 import os
 import threading
+import time
 from pathlib import Path
 from dataclasses import replace
 from types import SimpleNamespace
@@ -119,6 +120,18 @@ class _BlockingFakeRun(_FakeRun):
         super().log(values, step=step, commit=commit)
 
 
+class _BlockingFinishRun(_FakeRun):
+    def __init__(self) -> None:
+        super().__init__()
+        self.finish_started = threading.Event()
+        self.release_finish = threading.Event()
+
+    def finish(self, *, exit_code: int = 0) -> None:
+        self.finish_started.set()
+        assert self.release_finish.wait(timeout=5.0)
+        super().finish(exit_code=exit_code)
+
+
 class _FakeWandb:
     def __init__(self, run: _FakeRun) -> None:
         self.run = run
@@ -126,6 +139,19 @@ class _FakeWandb:
 
     def init(self, **kwargs: Any) -> _FakeRun:
         self.init_calls.append(kwargs)
+        return self.run
+
+
+class _BlockingInitWandb(_FakeWandb):
+    def __init__(self, run: _FakeRun) -> None:
+        super().__init__(run)
+        self.init_started = threading.Event()
+        self.release_init = threading.Event()
+
+    def init(self, **kwargs: Any) -> _FakeRun:
+        self.init_calls.append(kwargs)
+        self.init_started.set()
+        assert self.release_init.wait(timeout=5.0)
         return self.run
 
 
@@ -144,6 +170,14 @@ class _FakeWandbWithPlots(_FakeWandb):
         self.plot = _FakePlot()
 
 
+def _wait_until(predicate, *, timeout: float = 1.0) -> None:
+    deadline = time.monotonic() + timeout
+    while not predicate():
+        if time.monotonic() >= deadline:
+            raise AssertionError("timed out waiting for monitoring transport")
+        time.sleep(0.001)
+
+
 def test_wandb_host_cost_includes_elapsed_setup_before_monitor_started() -> None:
     pump = CoordinatorTelemetryPump(
         SimpleNamespace(poll=lambda: (), last_error=None),
@@ -154,6 +188,386 @@ def test_wandb_host_cost_includes_elapsed_setup_before_monitor_started() -> None
     )
 
     assert pump.estimated_host_cost_usd() == pytest.approx(4.8)
+
+
+def test_blocked_wandb_init_log_and_finish_never_block_optimizer_callers(
+    tmp_path: Path,
+) -> None:
+    run = _BlockingFakeRun()
+    wandb = _BlockingInitWandb(run)
+
+    started = time.monotonic()
+    monitor = CoordinatorMonitor(
+        run_id="nonblocking-transport",
+        project="intelligent-liars",
+        entity="centipawn",
+        run_name="ignored",
+        receipt_path=tmp_path / "events.jsonl",
+        total_trials=8,
+        batch_size=8,
+        wandb_module=wandb,
+        transport_close_timeout_seconds=0.05,
+    )
+    assert time.monotonic() - started < 0.25
+    assert wandb.init_started.wait(timeout=1.0)
+
+    started = time.monotonic()
+    monitor.record_judge(calls=1, failures=0, latency_ms=20.0, cost_usd=0.001)
+    assert time.monotonic() - started < 0.25
+
+    started = time.monotonic()
+    monitor.close()
+    assert time.monotonic() - started < 0.25
+    assert run.finished == 0
+    snapshot = monitor.verification_snapshot()
+    assert snapshot["transport_state"] == "close_timed_out"
+    assert snapshot["transport_drained"] is False
+    assert snapshot["in_flight_event_count"] == 1
+    receipt_rows = [
+        json.loads(line)
+        for line in (tmp_path / "events.jsonl").read_text().splitlines()
+    ]
+    assert receipt_rows[-1]["kind"] == "wandb_close_timeout"
+    assert receipt_rows[-1]["payload"]["transport_drained"] is False
+    terminal_receipts = (tmp_path / "events.jsonl").read_bytes()
+
+    # The daemon may remain stuck in an external SDK call, but optimizer
+    # shutdown is bounded and no caller is held hostage by it.
+    wandb.release_init.set()
+    run.release_log.set()
+    _wait_until(lambda: run.finished == 1)
+    assert (tmp_path / "events.jsonl").read_bytes() == terminal_receipts
+    assert monitor.verification_snapshot()["transport_state"] == "close_timed_out"
+
+
+def test_blocked_wandb_log_does_not_block_more_metrics_or_bounded_close(
+    tmp_path: Path,
+) -> None:
+    run = _BlockingFakeRun()
+    monitor = CoordinatorMonitor(
+        run_id="blocked-log",
+        project="intelligent-liars",
+        entity="centipawn",
+        run_name="ignored",
+        receipt_path=tmp_path / "events.jsonl",
+        total_trials=8,
+        batch_size=8,
+        wandb_module=_FakeWandb(run),
+        transport_close_timeout_seconds=0.05,
+    )
+    monitor.record_judge(calls=1, failures=0, latency_ms=20.0, cost_usd=0.001)
+    assert run.log_started.wait(timeout=1.0)
+
+    started = time.monotonic()
+    monitor.record_judge(calls=2, failures=0, latency_ms=40.0, cost_usd=0.002)
+    assert time.monotonic() - started < 0.25
+    started = time.monotonic()
+    monitor.close()
+    assert time.monotonic() - started < 0.25
+    assert run.finished == 0
+    assert monitor.verification_snapshot()["transport_state"] == "close_timed_out"
+    run.release_log.set()
+
+
+def test_blocked_wandb_finish_keeps_close_bounded(tmp_path: Path) -> None:
+    run = _BlockingFinishRun()
+    monitor = CoordinatorMonitor(
+        run_id="blocked-finish",
+        project="intelligent-liars",
+        entity="centipawn",
+        run_name="ignored",
+        receipt_path=tmp_path / "events.jsonl",
+        total_trials=8,
+        batch_size=8,
+        wandb_module=_FakeWandb(run),
+        transport_close_timeout_seconds=0.05,
+    )
+    _wait_until(lambda: bool(monitor.verification_snapshot()["init_calls"]))
+
+    started = time.monotonic()
+    monitor.close()
+    assert time.monotonic() - started < 0.25
+    assert run.finish_started.wait(timeout=1.0)
+    assert monitor.verification_snapshot()["transport_state"] == "close_timed_out"
+    run.release_finish.set()
+
+
+def test_critical_fifo_saturation_accounts_for_drop_then_recovers(tmp_path: Path) -> None:
+    run = _FakeRun()
+    wandb = _BlockingInitWandb(run)
+    monitor = CoordinatorMonitor(
+        run_id="bounded-fifo",
+        project="intelligent-liars",
+        entity="centipawn",
+        run_name="ignored",
+        receipt_path=tmp_path / "events.jsonl",
+        total_trials=8,
+        batch_size=8,
+        wandb_module=wandb,
+        transport_queue_capacity=1,
+        transport_close_timeout_seconds=0.05,
+    )
+    assert wandb.init_started.wait(timeout=1.0)
+
+    monitor.record_operational(retries=1, stopped_trials=0, errors=0)
+    monitor.record_operational(retries=2, stopped_trials=0, errors=0)
+
+    snapshot = monitor.verification_snapshot()
+    assert snapshot["nonfatal_error_count"] == 1
+    assert snapshot["dropped_event_count"] == 1
+    rows = [json.loads(line) for line in (tmp_path / "events.jsonl").read_text().splitlines()]
+    dropped = next(row for row in rows if row["kind"] == "wandb_critical_event_dropped")
+    assert dropped["payload"] == {
+        "reason": "critical_fifo_full",
+        "dropped_event_count": 1,
+    }
+    wandb.release_init.set()
+    _wait_until(lambda: len(run.logged) == 1)
+    monitor.record_operational(retries=3, stopped_trials=0, errors=0)
+    _wait_until(lambda: len(run.logged) == 2)
+    monitor.close()
+
+    assert [row["operations/retries"] for row, _step in run.logged] == [1.0, 3.0]
+
+
+def test_telemetry_flood_is_coalesced_without_crowding_out_critical_rows(
+    tmp_path: Path,
+) -> None:
+    run = _FakeRun()
+    wandb = _BlockingInitWandb(run)
+    monitor = CoordinatorMonitor(
+        run_id="telemetry-coalescing",
+        project="intelligent-liars",
+        entity="centipawn",
+        run_name="ignored",
+        receipt_path=tmp_path / "events.jsonl",
+        total_trials=8,
+        batch_size=8,
+        wandb_module=wandb,
+        transport_queue_capacity=4,
+    )
+    assert wandb.init_started.wait(timeout=1.0)
+    for index in range(1000):
+        monitor.record_gpu(
+            GpuTelemetryRecord(
+                0,
+                float(index % 100),
+                20_000.0,
+                24_576.0,
+                40.0,
+                "trial-0000",
+                "2026-08-28T00:00:00Z",
+            )
+        )
+        monitor.record_judge(
+            calls=index, failures=0, latency_ms=100.0, cost_usd=0.01
+        )
+        monitor.record_cost(gpu_actual_usd=1.0, gpu_projected_usd=2.0)
+    monitor.record_batch(
+        0,
+        (_request(0),),
+        (EvaluationResult.successful({
+            "valid_false_report_rate_lcb": 0.8,
+            "truth_report_dissociation_lcb": 0.7,
+            "capability_preservation_lcb": 0.9,
+        }),),
+    )
+
+    before = monitor.verification_snapshot()
+    assert before["pending_event_count"] <= 7  # 4 critical + 3 telemetry keys
+    assert before["coalesced_telemetry_count"] >= 2997
+    assert before["dropped_event_count"] == 0
+    wandb.release_init.set()
+    monitor.close()
+
+    logged_keys = {key for values, _step in run.logged for key in values}
+    assert "trial/ordinal" in logged_keys
+    assert "progress/completed_trials" in logged_keys
+    assert "judge/calls" in logged_keys
+    assert "cost/gpu_actual_usd" in logged_keys
+    assert "gpu/0/utilization_pct" in logged_keys
+
+
+def test_concurrent_monitoring_receipts_form_one_linear_hash_chain(tmp_path: Path) -> None:
+    monitor = CoordinatorMonitor(
+        run_id="linear-receipts",
+        project="intelligent-liars",
+        entity="centipawn",
+        run_name="ignored",
+        receipt_path=tmp_path / "events.jsonl",
+        total_trials=8,
+        batch_size=8,
+        wandb_module=_FakeWandb(_FakeRun()),
+    )
+    threads = [
+        threading.Thread(
+            target=lambda: monitor.record_judge(
+                calls=-1, failures=0, latency_ms=0.0, cost_usd=0.0
+            )
+        )
+        for _ in range(32)
+    ]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=1.0)
+    monitor.close()
+
+    rows = [json.loads(line) for line in (tmp_path / "events.jsonl").read_text().splitlines()]
+    assert len(rows) == 34  # initialized + 32 rejected inputs + closed
+    assert rows[0]["previous_receipt_sha256"] is None
+    for previous, current in zip(rows, rows[1:]):
+        assert current["previous_receipt_sha256"] == previous["receipt_sha256"]
+
+
+def test_reopened_monitor_restores_receipt_tail_and_continues_same_chain(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "events.jsonl"
+    for _ in range(2):
+        monitor = CoordinatorMonitor(
+            run_id="continuous-receipts",
+            project="intelligent-liars",
+            entity="centipawn",
+            run_name="ignored",
+            receipt_path=path,
+            total_trials=8,
+            batch_size=8,
+            wandb_module=_FakeWandb(_FakeRun()),
+        )
+        monitor.record_judge(calls=-1, failures=0, latency_ms=0.0, cost_usd=0.0)
+        monitor.close()
+
+    rows = [json.loads(line) for line in path.read_text().splitlines()]
+    assert len(rows) == 6
+    assert rows[0]["previous_receipt_sha256"] is None
+    for previous, current in zip(rows, rows[1:]):
+        assert current["previous_receipt_sha256"] == previous["receipt_sha256"]
+
+
+def test_same_process_monitors_share_receipt_path_without_forking_chain(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "events.jsonl"
+    monitors = [
+        CoordinatorMonitor(
+            run_id="shared-receipts",
+            project="intelligent-liars",
+            entity="centipawn",
+            run_name="ignored",
+            receipt_path=path,
+            total_trials=8,
+            batch_size=8,
+            wandb_module=_FakeWandb(_FakeRun()),
+        )
+        for _ in range(2)
+    ]
+    threads = [threading.Thread(target=monitor.close) for monitor in monitors]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=1.0)
+
+    rows = [json.loads(line) for line in path.read_text().splitlines()]
+    assert len(rows) == 4
+    for previous, current in zip(rows, rows[1:]):
+        assert current["previous_receipt_sha256"] == previous["receipt_sha256"]
+
+
+def test_one_daemon_owns_init_log_plot_and_finish_calls(tmp_path: Path) -> None:
+    owner_threads: list[int] = []
+
+    class Run(_FakeRun):
+        def log(self, values, *, step=None, commit=None):
+            owner_threads.append(threading.get_ident())
+            super().log(values, step=step, commit=commit)
+
+        def finish(self, *, exit_code=0):
+            owner_threads.append(threading.get_ident())
+            super().finish(exit_code=exit_code)
+
+    class Plot(_FakePlot):
+        def line_series(self, **kwargs):
+            owner_threads.append(threading.get_ident())
+            return super().line_series(**kwargs)
+
+    class Wandb(_FakeWandb):
+        def __init__(self):
+            super().__init__(Run())
+            self.plot = Plot()
+
+        def init(self, **kwargs):
+            owner_threads.append(threading.get_ident())
+            return super().init(**kwargs)
+
+    wandb = Wandb()
+    caller_thread = threading.get_ident()
+    monitor = CoordinatorMonitor(
+        run_id="one-transport-owner",
+        project="intelligent-liars",
+        entity="centipawn",
+        run_name="ignored",
+        receipt_path=tmp_path / "events.jsonl",
+        total_trials=8,
+        batch_size=8,
+        wandb_module=wandb,
+    )
+    monitor.record_batch(
+        0,
+        (_request(0),),
+        (EvaluationResult.successful({name: 0.5 for name in (
+            "valid_false_report_rate_lcb",
+            "truth_report_dissociation_lcb",
+            "capability_preservation_lcb",
+        )}),),
+    )
+    monitor.close()
+
+    assert len(owner_threads) >= 5
+    assert len(set(owner_threads)) == 1
+    assert owner_threads[0] != caller_thread
+
+
+def test_unexpected_daemon_termination_is_stateful_and_terminally_receipted(
+    tmp_path: Path,
+) -> None:
+    class FatalPlot(_FakePlot):
+        def line_series(self, **kwargs):
+            raise SystemExit("unexpected plot termination")
+
+    wandb = _FakeWandb(_FakeRun())
+    wandb.plot = FatalPlot()  # type: ignore[attr-defined]
+    path = tmp_path / "events.jsonl"
+    monitor = CoordinatorMonitor(
+        run_id="guarded-daemon",
+        project="intelligent-liars",
+        entity="centipawn",
+        run_name="ignored",
+        receipt_path=path,
+        total_trials=8,
+        batch_size=8,
+        wandb_module=wandb,
+    )
+    monitor.record_batch(
+        0,
+        (_request(0),),
+        (EvaluationResult.successful({
+            "valid_false_report_rate_lcb": 0.8,
+            "truth_report_dissociation_lcb": 0.7,
+            "capability_preservation_lcb": 0.9,
+        }),),
+    )
+    _wait_until(
+        lambda: monitor.verification_snapshot()["transport_state"] == "failed"
+    )
+    before_close = path.read_bytes()
+
+    monitor.close()
+
+    rows = [json.loads(line) for line in before_close.decode().splitlines()]
+    assert rows[-1]["kind"] == "wandb_transport_terminated"
+    assert rows[-1]["payload"]["transport_state"] == "failed"
+    assert path.read_bytes() == before_close
 
 
 def _request(ordinal: int) -> BatchEvaluationRequest[dict[str, Any]]:
@@ -249,6 +663,7 @@ def test_successful_trials_publish_one_toggleable_loss_chart(tmp_path: Path) -> 
         }),),
     )
 
+    _wait_until(lambda: len(wandb.plot.line_series_calls) == 1)
     assert len(wandb.plot.line_series_calls) == 1
     chart = wandb.plot.line_series_calls[0]
     assert chart["keys"] == [
@@ -304,11 +719,15 @@ def test_every_dashboard_row_uses_one_monotonic_coordinator_event_step(
             }),
         ),
     )
+
+    _wait_until(lambda: len(wandb.plot.line_series_calls) == 1)
     monitor.record_gpu(
         GpuTelemetryRecord(
             0, 91.0, 20100.0, 24576.0, 42.5, "trial-0056", "2026-08-28T00:00:00Z"
         )
     )
+
+    _wait_until(lambda: len(run.logged) == 5)
 
     snapshot = monitor.verification_snapshot()
     assert snapshot["nonfatal_error_count"] == 0
@@ -338,6 +757,8 @@ def test_resumed_server_cursor_precedes_stale_local_step(tmp_path: Path) -> None
     monitor.record_judge(calls=1, failures=0, latency_ms=20.0, cost_usd=0.001)
     monitor.record_operational(retries=0, stopped_trials=0, errors=0)
 
+    _wait_until(lambda: len(run.logged) == 2)
+
     assert [step for _values, step in run.logged] == [64, 65]
     assert run.commits == [True, True]
     assert monitor.verification_snapshot()["nonfatal_error_count"] == 0
@@ -359,6 +780,8 @@ def test_unreadable_resumed_step_does_not_discard_initialized_run(
     )
 
     monitor.record_judge(calls=1, failures=0, latency_ms=20.0, cost_usd=0.001)
+
+    _wait_until(lambda: len(run.logged) == 1)
 
     snapshot = monitor.verification_snapshot()
     assert snapshot["initialized_coordinator_count"] == 1
@@ -537,6 +960,8 @@ def test_monitoring_wrapper_preserves_search_identity_and_logs_after_observation
     wrapper.complete_history_replay()
     wrapper.observe((trial,))
 
+    _wait_until(lambda: bool(run.logged))
+
     assert wrapper.identity == Driver.identity
     assert order == [
         "history_replay_complete",
@@ -703,6 +1128,12 @@ def test_wandb_failure_does_not_prevent_authoritative_adaptive_checkpoint(
     )
 
     assert open_adaptive_progress_checkpoint(root / "adaptive-progress.json") == checkpoint
+    _wait_until(
+        lambda: any(
+            json.loads(line)["kind"] == "wandb_failure"
+            for line in (root / "events.jsonl").read_text().splitlines()
+        )
+    )
     assert any(
         json.loads(line)["kind"] == "wandb_failure"
         for line in (root / "events.jsonl").read_text().splitlines()

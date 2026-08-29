@@ -50,6 +50,7 @@ def _trace() -> dict[str, Any]:
     metrics["trial/outcome_kind"] = "successful"
     metrics["operations/error_category"] = "worker_operational_failure"
     metrics["operations/error_fingerprint"] = "f" * 64
+    metrics["canary/resumed_session"] = 2
     enum_values = {
         "backend_type": "persistent_weight",
         "basis_method": "qr",
@@ -71,7 +72,7 @@ def _trace() -> dict[str, Any]:
     for suffix in ("direction_ids_sha256", "selected_domains_sha256", "writer_layers_sha256"):
         metrics[f"trial/params/{suffix}"] = "a" * 64
     return {
-        "format": "truth_editing_wandb_canary_trace_v1",
+        "format": "truth_editing_wandb_canary_trace_v2",
         "mode": "real_canary",
         "init_calls": [
             {
@@ -104,6 +105,24 @@ def _trace() -> dict[str, Any]:
         "log_calls": [metrics],
         "artifact_calls": 0,
         "finish_calls": 2,
+        "transport_close_statuses": [
+            {
+                "state": "drained",
+                "drained": True,
+                "pending_event_count": 0,
+                "in_flight_event_count": 0,
+                "dropped_event_count": 0,
+                "coalesced_telemetry_count": 0,
+            },
+            {
+                "state": "drained",
+                "drained": True,
+                "pending_event_count": 0,
+                "in_flight_event_count": 0,
+                "dropped_event_count": 0,
+                "coalesced_telemetry_count": 0,
+            },
+        ],
         "heartbeat_lines": [
             "1/200 trials | batch 1/25 | elapsed 0h02m | ETA 6h38m"
         ],
@@ -114,6 +133,7 @@ def _trace() -> dict[str, Any]:
             "metric_keys": sorted(metrics),
             "history_rows": 1,
             "summary_readable": True,
+            "resumed_session_marker_seen": True,
         },
         "failure_probe": {
             "injected_failure_count": 1,
@@ -253,8 +273,7 @@ def test_dashboard_readback_queries_exact_remote_run_and_history() -> None:
         summary = {"progress/completed_trials": 1}
 
         def scan_history(self):
-            return [
-                {
+            row = {
                     key.replace("trial/params/*", "trial/params/strength")
                     .replace("trial/objectives/*", "trial/objectives/deception")
                     .replace("best/*", "best/deception")
@@ -267,7 +286,8 @@ def test_dashboard_readback_queries_exact_remote_run_and_history() -> None:
                     .replace("params/*", "params/strength"): 1
                     for key in REQUIRED_WANDB_METRIC_KEYS
                 }
-            ]
+            row["canary/resumed_session"] = 2
+            return [row]
 
     class Api:
         def __init__(self) -> None:
@@ -283,6 +303,7 @@ def test_dashboard_readback_queries_exact_remote_run_and_history() -> None:
     assert readback["run_id"] == RUN_ID
     assert readback["remote_run_count"] == 1
     assert readback["history_rows"] == 1
+    assert readback["resumed_session_marker_seen"] is True
 
 
 def test_trace_builder_combines_first_and_resumed_coordinator_snapshots() -> None:
@@ -299,7 +320,7 @@ def test_trace_builder_combines_first_and_resumed_coordinator_snapshots() -> Non
 
     def snapshot(logs, heartbeats):
         return {
-            "format": "truth_editing_wandb_verification_snapshot_v1",
+            "format": "truth_editing_wandb_verification_snapshot_v2",
             "run_id": RUN_ID,
             "initialized_coordinator_count": 1,
             "logged_metric_keys": sorted({key for row in logs for key in row}),
@@ -318,16 +339,96 @@ def test_trace_builder_combines_first_and_resumed_coordinator_snapshots() -> Non
             ],
             "init_calls": [monitor_init],
             "finish_calls": 1,
+            "transport_state": "drained",
+            "transport_drained": True,
+            "pending_event_count": 0,
+            "in_flight_event_count": 0,
+            "dropped_event_count": 0,
+            "coalesced_telemetry_count": 0,
         }
 
+    first_logs = [dict(row) for row in raw["log_calls"]]
+    first_logs[0].pop("canary/resumed_session")
+    resumed_logs = [{"canary/resumed_session": 2}]
     built = build_wandb_canary_trace(
-        coordinator_snapshots=(snapshot(raw["log_calls"], raw["heartbeat_lines"]), snapshot([], [])),
+        coordinator_snapshots=(
+            snapshot(first_logs, raw["heartbeat_lines"]),
+            snapshot(resumed_logs, []),
+        ),
         dashboard_readback=raw["dashboard_readback"],
         failure_probe=raw["failure_probe"],
     )
     assert built["init_calls"] == raw["init_calls"]
     assert built["checkpoint_run_ids"] == [RUN_ID, RUN_ID]
-    assert built["log_calls"] == raw["log_calls"]
+    assert built["log_calls"] == [*first_logs, *resumed_logs]
+
+
+def test_canary_rejects_truthful_timeout_with_unflushed_required_rows(
+    tmp_path: Path,
+) -> None:
+    trace = _trace()
+    trace["finish_calls"] = 0
+    trace["transport_close_statuses"] = [
+        {
+            "state": "close_timed_out",
+            "drained": False,
+            "pending_event_count": 0,
+            "in_flight_event_count": 1,
+            "dropped_event_count": 0,
+            "coalesced_telemetry_count": 0,
+        },
+        {
+            "state": "close_timed_out",
+            "drained": False,
+            "pending_event_count": 1,
+            "in_flight_event_count": 1,
+            "dropped_event_count": 0,
+            "coalesced_telemetry_count": 0,
+        },
+    ]
+
+    with pytest.raises(WandbCanaryError, match="did not flush required rows"):
+        verify_wandb_canary(
+            trace=trace,
+            checkpoint=_checkpoint(),
+            receipt_path=tmp_path / "receipt.json",
+        )
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("pending_event_count", 999),
+        ("in_flight_event_count", 1),
+        ("dropped_event_count", 999),
+    ],
+)
+def test_canary_rejects_drained_status_with_unflushed_or_dropped_rows(
+    tmp_path: Path, field: str, value: int
+) -> None:
+    trace = _trace()
+    trace["transport_close_statuses"][0][field] = value
+
+    with pytest.raises(WandbCanaryError, match="did not flush required rows"):
+        verify_wandb_canary(
+            trace=trace,
+            checkpoint=_checkpoint(),
+            receipt_path=tmp_path / "receipt.json",
+        )
+
+
+def test_canary_rejects_dashboard_without_resumed_session_marker(
+    tmp_path: Path,
+) -> None:
+    trace = _trace()
+    trace["dashboard_readback"]["resumed_session_marker_seen"] = False
+
+    with pytest.raises(WandbCanaryError, match="did not verify the real run"):
+        verify_wandb_canary(
+            trace=trace,
+            checkpoint=_checkpoint(),
+            receipt_path=tmp_path / "receipt.json",
+        )
 
 
 def test_failure_probe_hashes_actual_authoritative_bytes() -> None:
@@ -462,6 +563,8 @@ def test_gate_accepts_actual_coordinator_snapshot_surface(tmp_path: Path) -> Non
                 error_category="worker_operational_failure",
                 error_fingerprint="e" * 64,
             )
+        if index == 1:
+            monitor.record_resume_marker(session_ordinal=2)
         monitor.close()
         snapshots.append(monitor.verification_snapshot())
 
@@ -470,9 +573,13 @@ def test_gate_accepts_actual_coordinator_snapshot_surface(tmp_path: Path) -> Non
         dashboard_readback={
             "run_id": RUN_ID,
             "remote_run_count": 1,
-            "metric_keys": sorted(snapshots[0]["logged_metric_keys"]),
-            "history_rows": 6,
+            "metric_keys": sorted(
+                set(snapshots[0]["logged_metric_keys"])
+                | set(snapshots[1]["logged_metric_keys"])
+            ),
+            "history_rows": 7,
             "summary_readable": True,
+            "resumed_session_marker_seen": True,
         },
         failure_probe=_trace()["failure_probe"],
     )

@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Any
 
 
-TRACE_FORMAT = "truth_editing_wandb_canary_trace_v1"
+TRACE_FORMAT = "truth_editing_wandb_canary_trace_v2"
 CHECKPOINT_FORMAT = "truth_editing_wandb_run_checkpoint_v1"
 RECEIPT_FORMAT = "truth_editing_wandb_canary_receipt_v1"
 
@@ -103,6 +103,7 @@ REQUIRED_WANDB_METRIC_KEYS = (
     "operations/errors",
     "operations/error_category",
     "operations/error_fingerprint",
+    "canary/resumed_session",
 )
 OPTIONAL_WANDB_METRIC_KEYS = ("charts/loss_overview",)
 
@@ -117,6 +118,7 @@ _TRACE_FIELDS = {
     "checkpoint_run_ids",
     "dashboard_readback",
     "failure_probe",
+    "transport_close_statuses",
 }
 _CHECKPOINT_FIELDS = {"format", "run_id", "project", "entity", "checkpoint_sha256"}
 _INIT_FIELDS = {"run_id", "project", "entity", "resume", "reinit", "settings"}
@@ -140,6 +142,7 @@ _DASHBOARD_FIELDS = {
     "metric_keys",
     "history_rows",
     "summary_readable",
+    "resumed_session_marker_seen",
 }
 _SNAPSHOT_FIELDS = {
     "format",
@@ -152,6 +155,20 @@ _SNAPSHOT_FIELDS = {
     "attempted_logs",
     "init_calls",
     "finish_calls",
+    "transport_state",
+    "transport_drained",
+    "pending_event_count",
+    "in_flight_event_count",
+    "dropped_event_count",
+    "coalesced_telemetry_count",
+}
+_TRANSPORT_CLOSE_FIELDS = {
+    "state",
+    "drained",
+    "pending_event_count",
+    "in_flight_event_count",
+    "dropped_event_count",
+    "coalesced_telemetry_count",
 }
 _SNAPSHOT_PRIVACY = {
     "console_capture": False,
@@ -254,6 +271,34 @@ def _sequence(value: Any, label: str) -> list[Any]:
     return list(value)
 
 
+def _validate_transport_close_status(value: Any) -> dict[str, Any]:
+    status = _mapping(value, "W&B transport close status", _TRANSPORT_CLOSE_FIELDS)
+    state = status["state"]
+    drained = status["drained"]
+    counters = {
+        name: status[name]
+        for name in (
+            "pending_event_count",
+            "in_flight_event_count",
+            "dropped_event_count",
+            "coalesced_telemetry_count",
+        )
+    }
+    if state not in {
+        "drained",
+        "finish_failed",
+        "close_timed_out",
+        "failed",
+    } or not isinstance(drained, bool):
+        raise WandbCanaryError("W&B transport close state is invalid")
+    if drained != (state in {"drained", "finish_failed"}) or any(
+        isinstance(item, bool) or not isinstance(item, int) or item < 0
+        for item in counters.values()
+    ):
+        raise WandbCanaryError("W&B transport close accounting is invalid")
+    return status
+
+
 def _text(value: Any, label: str, pattern: re.Pattern[str]) -> str:
     if not isinstance(value, str) or pattern.fullmatch(value) is None:
         raise WandbCanaryError(f"{label} is invalid")
@@ -295,6 +340,10 @@ def _allowed_metric_key(key: str) -> bool:
 
 
 def _validate_metric_value(key: str, value: Any) -> None:
+    if key == "canary/resumed_session":
+        if value != 2 or isinstance(value, bool):
+            raise WandbCanaryError("W&B resumed-session marker is invalid")
+        return
     if key == "progress/phase":
         if value not in {"discovery", "expanded", "finalist", "canary"}:
             raise WandbCanaryError("W&B privacy allowlist rejected progress phase")
@@ -425,12 +474,18 @@ def read_wandb_dashboard(
         for key in summary
         if isinstance(key, str) and not key.startswith("_")
     )
+    resume_markers = [
+        row.get("canary/resumed_session")
+        for row in rows
+        if isinstance(row, Mapping) and "canary/resumed_session" in row
+    ]
     return {
         "run_id": checked["run_id"],
         "remote_run_count": 1,
         "metric_keys": sorted(keys),
         "history_rows": len(rows),
         "summary_readable": True,
+        "resumed_session_marker_seen": resume_markers == [2],
     }
 
 
@@ -450,9 +505,11 @@ def build_wandb_canary_trace(
     heartbeats: list[str] = []
     run_ids: list[str] = []
     finishes = 0
+    transport_close_statuses: list[dict[str, Any]] = []
+    resumed_marker_values: list[list[Any]] = []
     for item in snapshots:
         snapshot = _mapping(item, "W&B verification snapshot", _SNAPSHOT_FIELDS)
-        if snapshot["format"] != "truth_editing_wandb_verification_snapshot_v1":
+        if snapshot["format"] != "truth_editing_wandb_verification_snapshot_v2":
             raise WandbCanaryError("W&B verification snapshot format differs")
         if snapshot["initialized_coordinator_count"] != 1:
             raise WandbCanaryError("W&B snapshot did not initialize one coordinator")
@@ -485,6 +542,7 @@ def build_wandb_canary_trace(
                 "settings": dict(_SETTINGS),
             }
         )
+        session_markers: list[Any] = []
         for attempted in _sequence(snapshot["attempted_logs"], "attempted logs"):
             if not isinstance(attempted, Mapping) or set(attempted) != {"step", "values"}:
                 raise WandbCanaryError("attempted W&B log fields differ")
@@ -492,11 +550,32 @@ def build_wandb_canary_trace(
             if not isinstance(values, Mapping):
                 raise WandbCanaryError("attempted W&B log values must be an object")
             log_calls.append(dict(values))
+            if "canary/resumed_session" in values:
+                session_markers.append(values["canary/resumed_session"])
+        resumed_marker_values.append(session_markers)
         heartbeats.extend(_sequence(snapshot["heartbeat_lines"], "snapshot heartbeats"))
         finish_count = snapshot["finish_calls"]
         if isinstance(finish_count, bool) or not isinstance(finish_count, int):
             raise WandbCanaryError("W&B snapshot finish count is invalid")
         finishes += finish_count
+        transport_close_statuses.append(
+            _validate_transport_close_status(
+                {
+                    "state": snapshot["transport_state"],
+                    "drained": snapshot["transport_drained"],
+                    "pending_event_count": snapshot["pending_event_count"],
+                    "in_flight_event_count": snapshot["in_flight_event_count"],
+                    "dropped_event_count": snapshot["dropped_event_count"],
+                    "coalesced_telemetry_count": snapshot[
+                        "coalesced_telemetry_count"
+                    ],
+                }
+            )
+        )
+    if resumed_marker_values[0] or resumed_marker_values[1] != [2] or any(
+        values for values in resumed_marker_values[2:]
+    ):
+        raise WandbCanaryError("W&B resumed-session delivery marker differs")
     return {
         "format": TRACE_FORMAT,
         "mode": "real_canary",
@@ -508,6 +587,7 @@ def build_wandb_canary_trace(
         "checkpoint_run_ids": run_ids,
         "dashboard_readback": dict(dashboard_readback),
         "failure_probe": dict(failure_probe),
+        "transport_close_statuses": transport_close_statuses,
     }
 
 
@@ -585,8 +665,30 @@ def verify_wandb_canary(
             raise WandbCanaryError("W&B init did not disable console, code, git, and models")
     if raw["artifact_calls"] != 0:
         raise WandbCanaryError("W&B privacy allowlist forbids artifact uploads")
-    if raw["finish_calls"] != len(checked_inits):
-        raise WandbCanaryError("W&B coordinator sessions were not each finished once")
+    statuses = [
+        _validate_transport_close_status(item)
+        for item in _sequence(
+            raw["transport_close_statuses"], "W&B transport close statuses"
+        )
+    ]
+    if len(statuses) != len(checked_inits):
+        raise WandbCanaryError("W&B transport close status count differs")
+    if any(
+        item["state"] not in {"drained", "finish_failed"}
+        or item["drained"] is not True
+        or item["pending_event_count"] != 0
+        or item["in_flight_event_count"] != 0
+        or item["dropped_event_count"] != 0
+        for item in statuses
+    ):
+        raise WandbCanaryError("W&B canary transport did not flush required rows")
+    cleanly_finished_sessions = sum(item["state"] == "drained" for item in statuses)
+    if (
+        isinstance(raw["finish_calls"], bool)
+        or not isinstance(raw["finish_calls"], int)
+        or not cleanly_finished_sessions <= raw["finish_calls"] <= len(checked_inits)
+    ):
+        raise WandbCanaryError("W&B finish accounting differs from transport close state")
 
     logged_keys = _validate_log_calls(raw["log_calls"])
     checkpoint_ids = _sequence(raw["checkpoint_run_ids"], "checkpoint run IDs")
@@ -606,6 +708,7 @@ def verify_wandb_canary(
         or not isinstance(dashboard["history_rows"], int)
         or dashboard["history_rows"] < 1
         or dashboard["summary_readable"] is not True
+        or dashboard["resumed_session_marker_seen"] is not True
         or any(not isinstance(key, str) for key in dashboard_keys)
         or any(
             isinstance(key, str) and not _allowed_metric_key(key)
