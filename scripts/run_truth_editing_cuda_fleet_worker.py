@@ -75,8 +75,18 @@ def main() -> int:
             prefix = "paid semantic judge failed closed; failure_receipt_sha256="
             if prefix in str(error):
                 digest = str(error).split(prefix, 1)[1].split()[0]
-                print(json.dumps({"fatal": True, "failure_receipt_sha256": digest}), flush=True)
-                return 86
+                print(
+                    json.dumps(
+                        {
+                            "fatal": True,
+                            "request_sha256": request["request_sha256"],
+                            "failure_receipt_sha256": digest,
+                        },
+                        sort_keys=True,
+                    ),
+                    flush=True,
+                )
+                continue
             raise
         print(json.dumps(response, allow_nan=False, sort_keys=True), flush=True)
     return 0

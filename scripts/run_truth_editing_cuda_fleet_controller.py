@@ -1333,6 +1333,12 @@ def main(argv: list[str] | None = None) -> int:
         )
 
     def after_complete_batch(commit: CompletedBatchCommit) -> None:
+        # A response-less judge failure is conservatively charged at its full
+        # reservation and its exact request remains permanently blocked. Once
+        # the whole batch has durable unscored outcomes, retire only that
+        # transient global marker so different requests may continue. Hard cap
+        # and price-overrun circuits remain terminal.
+        judge_budget.acknowledge_ambiguous_transport_circuit()
         try:
             rolling_capacity.reforecast(commit)
         except MinimumTrialGuaranteeError:

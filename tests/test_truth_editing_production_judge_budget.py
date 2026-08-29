@@ -155,6 +155,48 @@ def test_ambiguous_transport_failure_is_durable_and_never_retried(tmp_path: Path
     assert "possibly charged" not in rendered
 
 
+def test_acknowledged_ambiguous_transport_keeps_exact_request_blocked_but_allows_fresh_work(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "ledger"
+    failed = _Transport(error=TimeoutError("possibly charged"))
+    budget = ProductionJudgeBudget(root, config=_config())
+    with pytest.raises(PaidJudgeCircuitOpen, match="ambiguous"):
+        budget.transport(failed).complete(_request(1))
+
+    resolution = budget.acknowledge_ambiguous_transport_circuit()
+    assert resolution["status"] == "circuit_resolution"
+    assert resolution["reason"] == "ambiguous_transport_accounted_at_reservation"
+    assert budget.receipt()["circuit_open"] is False
+
+    with pytest.raises(PaidJudgeCircuitOpen, match="ambiguous prior outcome"):
+        budget.transport(_Transport()).complete(_request(1))
+    fresh = _Transport(price=0.01)
+    budget.transport(fresh).complete(_request(2))
+    assert failed.calls == 1
+    assert fresh.calls == 1
+    assert budget.receipt()["reserved_or_spent_usd"] == "0.035"
+
+    assert budget.acknowledge_ambiguous_transport_circuit() is None
+
+
+def test_non_ambiguous_budget_circuit_cannot_be_acknowledged(tmp_path: Path) -> None:
+    budget = ProductionJudgeBudget(
+        tmp_path / "ledger",
+        config=_config(
+            non_judge_reserved_spend_usd="49.975",
+            maximum_judge_spend_usd="0.025",
+        ),
+    )
+    budget.transport(_Transport(price=0.025)).complete(_request(1))
+    with pytest.raises(PaidJudgeCircuitOpen, match="exhausted"):
+        budget.transport(_Transport()).complete(_request(2))
+
+    with pytest.raises(ProductionJudgeBudgetError, match="cannot be acknowledged"):
+        budget.acknowledge_ambiguous_transport_circuit()
+    assert budget.receipt()["circuit_open"] is True
+
+
 def test_eight_workers_share_one_cap_and_open_one_durable_circuit(tmp_path: Path) -> None:
     config = _config(
         non_judge_reserved_spend_usd="49.95",

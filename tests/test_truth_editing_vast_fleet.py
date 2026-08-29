@@ -701,7 +701,7 @@ def test_vast_worker_binds_dispatch_to_v3_bundle_and_fetched_result(tmp_path: Pa
     assert seen[0][0]["production_config_path"] == fleet.production_config_path
 
 
-def test_persistent_cuda_worker_is_gpu_isolated_reused_and_circuit_fatal(
+def test_persistent_cuda_worker_is_gpu_isolated_reused_and_paid_failure_is_unscored(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("OPENROUTER_API_KEY", "worker-needs-this")
@@ -728,7 +728,11 @@ def test_persistent_cuda_worker_is_gpu_isolated_reused_and_circuit_fatal(
                         "deception": 0.9, "retained_truth": 0.8,
                     }, "detail": None},
                 }) + "\n",
-                json.dumps({"fatal": True, "failure_receipt_sha256": _sha("d")}) + "\n",
+                json.dumps({
+                    "fatal": True,
+                    "request_sha256": _sha("c"),
+                    "failure_receipt_sha256": _sha("d"),
+                }) + "\n",
             ]
         def readline(self) -> str:
             return self.lines.pop(0)
@@ -758,8 +762,10 @@ def test_persistent_cuda_worker_is_gpu_isolated_reused_and_circuit_fatal(
     assert captured["env"]["OPENROUTER_API_KEY"] == "worker-needs-this"
     assert not any(name.startswith("WANDB_") for name in captured["env"])
     assert not any(name.startswith("AWS_") for name in captured["env"])
-    with pytest.raises(FleetCircuitOpen, match="circuit"):
-        worker.evaluate(dispatch)
+    failed = worker.evaluate(dispatch)
+    assert failed.outcome_kind == "operational_failure"
+    assert failed.metrics == {}
+    assert _sha("d") in (failed.detail or "")
     worker.close()
     assert process.stdin.lines[-1] == '{"command":"stop"}\n'
 

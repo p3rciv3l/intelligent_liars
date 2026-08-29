@@ -1107,7 +1107,22 @@ class SubprocessCudaWorker:
             raise FleetError(f"persistent CUDA worker {self.slot} returned no result")
         raw = _mapping(json.loads(line), "persistent worker response")
         if raw.get("fatal") is True:
-            raise FleetCircuitOpen("paid semantic judge circuit opened")
+            _exact(
+                raw,
+                {"fatal", "request_sha256", "failure_receipt_sha256"},
+                "persistent worker paid failure",
+            )
+            if raw["request_sha256"] != dispatch.get("request_sha256"):
+                raise FleetError("persistent worker paid failure identity differs")
+            failure_sha = _digest(
+                raw["failure_receipt_sha256"],
+                "persistent worker paid failure receipt",
+            )
+            self.last_telemetry = {}
+            return EvaluationResult.operational_failure(
+                "paid semantic judge failed closed; "
+                f"failure_receipt_sha256={failure_sha}"
+            )
         if set(raw) not in (
             {"request_sha256", "result"},
             {"request_sha256", "result", "telemetry"},

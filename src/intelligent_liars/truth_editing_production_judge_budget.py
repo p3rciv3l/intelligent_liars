@@ -254,6 +254,53 @@ class ProductionJudgeBudget:
                 "cost_usd": float(state["actual"]),
             }
 
+    def acknowledge_ambiguous_transport_circuit(self) -> dict[str, Any] | None:
+        """Retire only a fully-accounted transient transport circuit.
+
+        The exact request remains durably ambiguous and can never cross the
+        transport seam again. Its full reservation remains charged against the
+        judge budget. Retiring the global marker lets distinct requests proceed;
+        cap exhaustion and price-overrun circuits are never eligible.
+        """
+
+        with self._locked():
+            circuit_path = self.path / "circuit.json"
+            circuit = self._read_optional_event(circuit_path, "circuit")
+            if circuit is None:
+                return None
+            if circuit.get("reason") != "ambiguous_transport":
+                raise ProductionJudgeBudgetError(
+                    "non-ambiguous production judge circuit cannot be acknowledged"
+                )
+            request_sha = str(circuit["request_sha256"])
+            ambiguous = self._read_event(
+                self.path / "calls" / request_sha / "ambiguous.json", "ambiguous"
+            )
+            if ambiguous.get("authorized_usd") != _money_text(
+                self.config.per_call_reservation_usd
+            ):
+                raise ProductionJudgeBudgetError(
+                    "ambiguous production judge reservation differs"
+                )
+            circuit_sha = str(circuit["content_sha256"])
+            resolution_path = self.path / "circuit-resolutions" / f"{circuit_sha}.json"
+            resolution = self._event(
+                "circuit_resolution",
+                request_sha,
+                circuit_event_sha256=circuit_sha,
+                ambiguous_event_sha256=str(ambiguous["content_sha256"]),
+                reason="ambiguous_transport_accounted_at_reservation",
+            )
+            self._write_once(resolution_path, resolution)
+            committed = self._read_event(resolution_path, "circuit_resolution")
+            circuit_path.unlink()
+            directory = os.open(self.path, os.O_RDONLY)
+            try:
+                os.fsync(directory)
+            finally:
+                os.close(directory)
+            return committed
+
     def _reserve_or_replay(
         self, request_sha: str, request: Mapping[str, Any]
     ) -> dict[str, Any] | None:

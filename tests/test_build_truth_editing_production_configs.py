@@ -456,7 +456,7 @@ def test_r10_content_qualified_production_bundle_opens_strictly() -> None:
     )
     assert study.dataset_manifest_sha256 == evaluator.dataset_manifest_sha256
     assert run.planned_study_identity_sha256 == (
-        "5a45216e10c9059119231bccc1543c61863a7602ab4c75b535b793b3e90f7dda"
+        "0489d643546671159fc49b3d8fa1218d255eb0a70efb9930e334d942c810696c"
     )
 
 
@@ -507,5 +507,5 @@ def test_generated_adaptive_v5_bundle_strict_opens_without_broad_trial_barrier()
     assert "through_trial" not in study.search_policy.broad_coverage.to_dict()
     assert study.dataset_manifest_sha256 == evaluator.dataset_manifest_sha256
     assert run.planned_study_identity_sha256 == (
-        "e0bc523ff4f94f29b950681d6b43fef203ab80cd9be97dcd9ec85631875429e2"
+        "2d3b1885466bf257710d0c24d1bf46bebb59ee09f74ea8aa39cd15d9b2fbc9ed"
     )
