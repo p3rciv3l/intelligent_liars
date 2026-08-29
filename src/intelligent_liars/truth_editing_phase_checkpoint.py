@@ -1261,7 +1261,13 @@ def _validate_optuna_journal(
     *,
     expected_study_name: str,
 ) -> None:
-    """Bind the native Optuna state to every controller-journal trial."""
+    """Bind native Optuna state to every TPE-observed controller trial.
+
+    Matched-basis controls are scheduled by the controller rather than sampled by
+    TPE.  The study journal remains authoritative for those control results, while
+    the Optuna driver deliberately omits them so their outcomes cannot be
+    attributed to the parent truth-direction parameters.
+    """
 
     if not payload.endswith(b"\n"):
         raise PhaseCheckpointError("Optuna journal is unreadable or partially appended")
@@ -1302,7 +1308,15 @@ def _validate_optuna_journal(
     expected: dict[int, tuple[str, str]] = {}
     for trial in journal_trials:
         ordinal = int(trial["ordinal"])
-        proposal_sha = _json_sha(trial.get("proposal"))
+        proposal = trial.get("proposal")
+        if not isinstance(proposal, Mapping):
+            raise PhaseCheckpointError("study journal proposal is invalid")
+        matched_control = proposal.get("matched_basis_control")
+        if matched_control not in {"none", "orthogonal"}:
+            raise PhaseCheckpointError("study journal matched control is invalid")
+        if matched_control != "none":
+            continue
+        proposal_sha = _json_sha(proposal)
         result = trial.get("result")
         assert isinstance(result, Mapping)
         outcome = result.get("outcome_kind")
@@ -1340,7 +1354,7 @@ def _validate_optuna_journal(
             raise PhaseCheckpointError("Optuna objective values differ from study journal")
         seen.add(ordinal)
     if seen != set(expected):
-        raise PhaseCheckpointError("Optuna journal is missing completed study trials")
+        raise PhaseCheckpointError("Optuna journal is missing TPE-observed study trials")
 
 
 def _open_generation(path: Path, *, require_directory_name: bool = True) -> dict[str, Any]:

@@ -11,6 +11,7 @@ import optuna
 
 from intelligent_liars.truth_editing_phase_checkpoint import (
     PhaseCheckpointError,
+    _validate_optuna_journal,
     publish_phase_checkpoint,
     restore_phase_checkpoint,
 )
@@ -29,7 +30,12 @@ def _canonical_sha(value: object) -> str:
 
 
 def _write_state(
-    root: Path, *, completed: int = 80, wandb_run_id: str = "ab12cd34"
+    root: Path,
+    *,
+    completed: int = 80,
+    wandb_run_id: str = "ab12cd34",
+    matched_control_ordinals: frozenset[int] = frozenset(),
+    operational_failure_ordinals: frozenset[int] = frozenset(),
 ) -> None:
     (root / "study").mkdir(parents=True)
     trials = [
@@ -50,12 +56,23 @@ def _write_state(
                 writer_layers=(21,),
                 writer_policy="attention",
                 strength=(ordinal % 20) / 10,
+                matched_basis_control=(
+                    "orthogonal" if ordinal in matched_control_ordinals else "none"
+                ),
             ).to_dict(),
-            "result": {
-                "outcome_kind": "successful",
-                "metrics": {name: 0.5 for name in OBJECTIVES},
-                "detail": None,
-            },
+            "result": (
+                {
+                    "outcome_kind": "operational_failure",
+                    "metrics": {},
+                    "detail": "transient judge transport failure",
+                }
+                if ordinal in operational_failure_ordinals
+                else {
+                    "outcome_kind": "successful",
+                    "metrics": {name: 0.5 for name in OBJECTIVES},
+                    "detail": None,
+                }
+            ),
         }
         for ordinal in range(completed)
     ]
@@ -80,21 +97,88 @@ def _write_state(
         directions=["maximize"] * len(OBJECTIVES),
     )
     for trial in trials:
-        study.add_trial(
-            optuna.trial.create_trial(
-                values=[0.5] * len(OBJECTIVES),
-                user_attrs={
-                    "study_ordinal": trial["ordinal"],
-                    "proposal_sha256": _canonical_sha(trial["proposal"]),
-                },
+        if trial["ordinal"] in matched_control_ordinals:
+            continue
+        common = {
+            "user_attrs": {
+                "study_ordinal": trial["ordinal"],
+                "proposal_sha256": _canonical_sha(trial["proposal"]),
+            },
+        }
+        if trial["ordinal"] in operational_failure_ordinals:
+            study.add_trial(
+                optuna.trial.create_trial(
+                    state=optuna.trial.TrialState.FAIL,
+                    **common,
+                )
             )
-        )
+        else:
+            study.add_trial(
+                optuna.trial.create_trial(
+                    values=[0.5] * len(OBJECTIVES),
+                    **common,
+                )
+            )
     create_wandb_run_checkpoint(
         root / "monitoring/wandb-run.json",
         run_id=wandb_run_id,
         project="intelligent-liars",
         entity="truth-editing",
     )
+
+
+def test_optuna_checkpoint_accepts_matched_control_omitted_from_tpe_journal(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "source"
+    _write_state(
+        source,
+        completed=8,
+        matched_control_ordinals=frozenset({0}),
+        operational_failure_ordinals=frozenset(range(8)),
+    )
+    journal = json.loads((source / "study/study-journal.json").read_text())
+    journal_trials = [
+        trial for batch in journal["batches"] for trial in batch["trials"]
+    ]
+
+    _validate_optuna_journal(
+        (source / "study/study-journal.json.optuna.log").read_bytes(),
+        journal_trials,
+        expected_study_name=OPTUNA_STUDY_NAME,
+    )
+
+
+def test_optuna_checkpoint_rejects_matched_control_as_tpe_observation(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "source"
+    _write_state(source, completed=8, matched_control_ordinals=frozenset({0}))
+    journal = json.loads((source / "study/study-journal.json").read_text())
+    journal_trials = [
+        trial for batch in journal["batches"] for trial in batch["trials"]
+    ]
+    optuna_path = source / "study/study-journal.json.optuna.log"
+    storage = optuna.storages.JournalStorage(
+        optuna.storages.journal.JournalFileBackend(str(optuna_path))
+    )
+    study = optuna.load_study(study_name=OPTUNA_STUDY_NAME, storage=storage)
+    study.add_trial(
+        optuna.trial.create_trial(
+            state=optuna.trial.TrialState.FAIL,
+            user_attrs={
+                "study_ordinal": 0,
+                "proposal_sha256": _canonical_sha(journal_trials[0]["proposal"]),
+            },
+        )
+    )
+
+    with pytest.raises(PhaseCheckpointError, match="duplicate or extra"):
+        _validate_optuna_journal(
+            optuna_path.read_bytes(),
+            journal_trials,
+            expected_study_name=OPTUNA_STUDY_NAME,
+        )
 
 
 def test_phase_checkpoint_round_trip_preserves_exact_resume_bytes(tmp_path: Path) -> None:
