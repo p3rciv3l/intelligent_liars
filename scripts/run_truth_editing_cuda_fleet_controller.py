@@ -500,6 +500,7 @@ class _ControllerSpendReader:
         host_hourly_usd: Decimal,
         host_lease_started_at: datetime,
         worker_count: int,
+        prior_spend: SpendSnapshot | None = None,
         clock: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
     ) -> None:
         budget = capacity_receipt.get("budget")
@@ -526,6 +527,15 @@ class _ControllerSpendReader:
         self._judge_budget = judge_budget
         self._host_hourly_usd = host_hourly_usd
         self._host_lease_started_at = host_lease_started_at.astimezone(timezone.utc)
+        self._prior_infrastructure_carry = (
+            max(
+                Decimal("0"),
+                prior_spend.actual_infrastructure_usd
+                - self._baseline.actual_infrastructure_usd,
+            )
+            if prior_spend is not None
+            else Decimal("0")
+        )
         self._clock = clock
 
     def rebind_judge_budget(self, judge_budget: ProductionJudgeBudget) -> None:
@@ -544,7 +554,11 @@ class _ControllerSpendReader:
         judge = self._judge_budget.receipt()
         judge_actual = Decimal(str(judge["actual_spend_usd"]))
         judge_reserved = Decimal(str(judge["reserved_or_spent_usd"]))
-        infrastructure = self._baseline.actual_infrastructure_usd + host_cost
+        infrastructure = (
+            self._baseline.actual_infrastructure_usd
+            + self._prior_infrastructure_carry
+            + host_cost
+        )
         evaluation = self._baseline.actual_evaluation_usd + judge_actual
         return SpendSnapshot(
             actual_total_usd=infrastructure + evaluation,
@@ -1505,6 +1519,15 @@ def main(argv: list[str] | None = None) -> int:
         host_hourly_usd=Decimal(str(args.host_hourly_usd)),
         host_lease_started_at=host_lease_started_at,
         worker_count=fleet.worker_count,
+        prior_spend=(
+            SpendSnapshot.from_mapping(
+                _read_object(adaptive_checkpoint_path, "adaptive checkpoint")[
+                    "last_spend_snapshot"
+                ]
+            )
+            if args.rearm_minimum_guarantee and adaptive_checkpoint_path.exists()
+            else None
+        ),
     )
     rolling_capacity_path = (
         args.rolling_capacity_receipt

@@ -17,6 +17,7 @@ import pytest
 
 from test_truth_editing_adaptive_run import NOW, _policy, _receipt, _spend
 from intelligent_liars.truth_editing_capacity import (
+    SpendSnapshot,
     build_capacity_receipt,
     load_capacity_measurement,
 )
@@ -1051,6 +1052,41 @@ def test_live_spend_reader_counts_setup_before_controller_checkpoint_exists(
     snapshot = reader()
 
     assert snapshot.actual_infrastructure_usd == Decimal("5.8")
+
+
+def test_rearm_spend_reader_carries_prior_host_cost_into_new_lease(
+    tmp_path: Path,
+) -> None:
+    old_lease = datetime(2026, 8, 28, 12, 0, tzinfo=timezone.utc)
+    new_lease = old_lease + timedelta(hours=20)
+    prior = SpendSnapshot.from_mapping(
+        {
+            "actual_total_usd": "49.5",
+            "actual_infrastructure_usd": "48.9",
+            "actual_evaluation_usd": "0.6",
+            "pending_infrastructure_usd": "0",
+            "pending_evaluation_usd": "0.1",
+        }
+    )
+    reader = MODULE._ControllerSpendReader(
+        capacity_receipt=_capacity_receipt(),
+        judge_budget=SimpleNamespace(
+            receipt=lambda: {
+                "actual_spend_usd": "0.5",
+                "reserved_or_spent_usd": "0.6",
+            }
+        ),
+        host_hourly_usd=Decimal("1.26"),
+        host_lease_started_at=new_lease,
+        worker_count=8,
+        prior_spend=prior,
+        clock=lambda: new_lease,
+    )
+
+    snapshot = reader()
+
+    assert snapshot.actual_infrastructure_usd == Decimal("48.9")
+    assert snapshot.actual_evaluation_usd == Decimal("0.6")
 
 
 def test_rolling_capacity_signs_conservative_observation_when_telemetry_is_missing(
