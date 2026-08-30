@@ -1170,6 +1170,14 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--capacity-receipt", type=Path, required=True)
     parser.add_argument("--rolling-capacity-receipt", type=Path)
     parser.add_argument("--adaptive-checkpoint", type=Path)
+    parser.add_argument(
+        "--rearm-minimum-guarantee",
+        action="store_true",
+        help=(
+            "reopen a minimum-guarantee abort under the current host lease; "
+            "requires a fresh feasible rolling capacity receipt"
+        ),
+    )
     parser.add_argument("--checkpoint-publication-root", type=Path, required=True)
     parser.add_argument("--restore-study-identity-sha256")
     parser.add_argument("--restore-completed-trials", type=int)
@@ -1529,6 +1537,8 @@ def main(argv: list[str] | None = None) -> int:
         clock=lambda: datetime.now(timezone.utc),
         initial_started_at=host_lease_started_at,
     )
+    if args.rearm_minimum_guarantee:
+        scheduler.rearm_minimum_guarantee_abort(started_at=host_lease_started_at)
     durable_batch_admission = _DurableBatchAdmission(
         scheduler=scheduler,
         rolling_capacity=rolling_capacity,

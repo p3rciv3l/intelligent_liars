@@ -853,5 +853,86 @@ class AdaptiveBatchScheduler:
             projected_search_eta_seconds=0.0,
         )
 
+    def rearm_minimum_guarantee_abort(
+        self, *, started_at: datetime | None = None
+    ) -> None:
+        """Reopen a minimum-guarantee abort for a fresh host lease.
+
+        The prior run remains an immutable audit record.  Only its scheduler
+        phase and deadline are renewed; completed trials, spend, identities,
+        and the exact replay queue owned by the study journal are untouched.
+        A newly signed rolling capacity receipt must already cover the
+        completed boundary and restore the 200-trial guarantee.
+        """
+
+        if self._checkpoint is None:
+            raise AdaptiveRunError("cannot rearm before the first durable authorization")
+        if (
+            self._checkpoint["phase"] != "aborted"
+            or self._checkpoint["stop_reason"] != "minimum_trial_guarantee_lost"
+        ):
+            raise AdaptiveRunError(
+                "rearm requires a minimum-guarantee abort checkpoint"
+            )
+        completed = int(self._checkpoint["completed_trials"])
+        authorized = int(self._checkpoint["authorized_through_trial"])
+        if completed != authorized or completed >= self.policy.minimum_trials:
+            raise AdaptiveRunError("minimum-guarantee abort boundary is invalid")
+        now = _utc(self._clock(), "current time")
+        started = now if started_at is None else _utc(started_at, "started_at")
+        if started > now:
+            raise AdaptiveRunError("rearmed lease start cannot be in the future")
+        current_capacity_receipt = self._current_capacity_receipt()
+        if current_capacity_receipt["completed_through_trial"] != completed:
+            raise AdaptiveRunError(
+                "fresh capacity receipt must be bound to the completed trial boundary"
+            )
+        if current_capacity_receipt["decision"]["minimum_trial_guarantee_met"] is not True:
+            raise AdaptiveRunError(
+                "fresh capacity receipt does not restore the minimum-guarantee capacity"
+            )
+        spend = self._spend_reader()
+        if not isinstance(spend, SpendSnapshot):
+            raise AdaptiveRunError("spend reader must return SpendSnapshot")
+        previous_spend = SpendSnapshot.from_mapping(
+            self._checkpoint["last_spend_snapshot"]
+        )
+        self._reject_spend_rollback(previous_spend, spend)
+        next_completed = min(
+            self.policy.maximum_trials, completed + self.policy.batch_size
+        )
+        projection, _duration, _infrastructure, _evaluation, _total = (
+            self._next_batch_projection(
+                current_capacity_receipt,
+                next_completed_trials=next_completed,
+                batch_size=self.policy.batch_size,
+            )
+        )
+        phase = (
+            "adaptive_search"
+            if self._checkpoint["coverage_complete"]
+            else "broad_coverage"
+        )
+        self._save(
+            started=started,
+            authorized=authorized,
+            completed=completed,
+            coverage_complete=bool(self._checkpoint["coverage_complete"]),
+            phase=phase,
+            stop_reason=None,
+            spend=spend,
+            current_capacity_receipt=current_capacity_receipt,
+            current_next_batch_projection=projection,
+            accounted_infrastructure=Decimal(
+                self._checkpoint["accounted_infrastructure_usd"]
+            ),
+            accounted_evaluation=Decimal(
+                self._checkpoint["accounted_evaluation_usd"]
+            ),
+            projected_search_eta_seconds=float(
+                self._checkpoint["projected_search_eta_seconds"]
+            ),
+        )
+
 
 __all__ = ["AdaptiveBatchScheduler", "AdaptiveRunError", "CHECKPOINT_FORMAT"]

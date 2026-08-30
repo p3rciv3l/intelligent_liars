@@ -638,6 +638,105 @@ def test_lost_minimum_guarantee_is_a_durable_aborted_run_state(tmp_path: Path) -
     )
 
 
+def test_minimum_guarantee_abort_can_be_rearmed_under_a_fresh_lease(
+    tmp_path: Path,
+) -> None:
+    initial = _receipt()
+    rolling = [initial]
+    now = [NOW]
+    scheduler = _scheduler(
+        tmp_path, now=now, receipt=initial, rolling_receipt=rolling
+    )
+    assert scheduler.admit_batch(
+        completed_trials=0, batch_size=8, coverage_complete=False
+    )
+    _commit_with_observation(
+        scheduler, rolling, completed_trials=8, coverage_complete=False
+    )
+
+    # Sign an infeasible rolling forecast, which is what causes the durable
+    # minimum-guarantee abort in production.
+    unsigned = {
+        "format": "truth_editing_capacity_batch_observation_v2",
+        "observation_id": "batch-0008-rearm-infeasible",
+        "observed_at": "2026-08-28T12:00:00Z",
+        "timed_canary_receipt_sha256": initial["timed_canary_receipt_sha256"],
+        "completed_through_trial": 8,
+        "batch_size": 8,
+        "generated_tokens_per_trial_upper_bound": 120,
+        "generation_seconds_per_trial_upper_bound": 40.0,
+        "trial_wall_seconds_upper_bound": 90.0,
+        "judge_elapsed_seconds_per_trial_upper_bound": 45.0,
+        "judge_cost_usd_per_trial_upper_bound": "0.0002",
+        "judge_ledger_before_receipt_sha256": "c" * 64,
+        "judge_ledger_after_receipt_sha256": "c" * 64,
+        "judge_calls": 0,
+        "judge_failures": 0,
+        "judge_elapsed_seconds_total": 0.0,
+        "judge_cost_usd_total": "0",
+        "spend": {
+            "actual_total_usd": "1.1",
+            "actual_infrastructure_usd": "1",
+            "actual_evaluation_usd": "0.1",
+            "pending_infrastructure_usd": "0",
+            "pending_evaluation_usd": "0",
+        },
+    }
+    observation = {**unsigned, "self_sha256": canonical_sha256(unsigned)}
+    with pytest.raises(MinimumTrialGuaranteeError) as failure:
+        reforecast_capacity_receipt(
+            policy=_policy(), previous_receipt=rolling[0],
+            batch_observation=observation, planned_at=NOW,
+            remaining_search_seconds=1.0,
+        )
+    rolling[0] = failure.value.receipt
+    scheduler.abort_minimum_trial_guarantee(
+        completed_trials=8, coverage_complete=False
+    )
+
+    # A fresh lease must provide a new feasible rolling receipt before rearm.
+    rolling[0] = _receipt()
+    fresh_lease = NOW + timedelta(hours=1)
+    resumed = _scheduler(
+        tmp_path, now=[fresh_lease], receipt=initial, rolling_receipt=rolling
+    )
+    with pytest.raises(AdaptiveRunError, match="fresh capacity receipt"):
+        resumed.rearm_minimum_guarantee_abort(started_at=fresh_lease)
+
+    # Reforecast from the fresh receipt at the existing completed boundary.
+    fresh_observation = dict(observation)
+    fresh_observation["observation_id"] = "batch-0008-rearm-feasible"
+    fresh_observation["observed_at"] = "2026-08-28T12:30:00Z"
+    fresh_observation["self_sha256"] = canonical_sha256(
+        {key: value for key, value in fresh_observation.items() if key != "self_sha256"}
+    )
+    rolling[0] = reforecast_capacity_receipt(
+        policy=_policy(), previous_receipt=rolling[0],
+        batch_observation=fresh_observation, planned_at=fresh_lease,
+    )
+    rearmed = _scheduler(
+        tmp_path, now=[fresh_lease], receipt=initial, rolling_receipt=rolling
+    )
+    rearmed.rearm_minimum_guarantee_abort(started_at=fresh_lease)
+    checkpoint = json.loads((tmp_path / "adaptive-run-checkpoint.json").read_text())
+    assert checkpoint["phase"] == "broad_coverage"
+    assert checkpoint["stop_reason"] is None
+    assert checkpoint["completed_trials"] == 8
+    assert checkpoint["authorized_through_trial"] == 8
+    assert checkpoint["started_at_utc"] == fresh_lease.isoformat().replace(
+        "+00:00", "Z"
+    )
+    assert rearmed.admit_batch(
+        completed_trials=8, batch_size=8, coverage_complete=False
+    )
+
+
+def test_rearm_rejects_non_minimum_abort_checkpoint(tmp_path: Path) -> None:
+    scheduler = _scheduler(tmp_path)
+    with pytest.raises(AdaptiveRunError, match="rearm"):
+        scheduler.rearm_minimum_guarantee_abort(started_at=NOW)
+
+
 def test_resume_rejects_spend_rollback_and_identity_switch(tmp_path: Path) -> None:
     ledger = [_spend(infrastructure="2")]
     scheduler = _scheduler(tmp_path, spend=ledger)
