@@ -290,6 +290,7 @@ def publish_adaptive_checkpoint(
             new_payloads=payloads,
             new_progress=progress,
             new_scheduler=scheduler,
+            tier_through_trials=tier_through_trials,
         )
         generation_id = (
             f"adaptive-{expected_completed_trials:04d}-"
@@ -884,6 +885,7 @@ def _validate_adaptive_lineage(
     new_payloads: Mapping[str, bytes],
     new_progress: Any,
     new_scheduler: Mapping[str, Any],
+    tier_through_trials: tuple[int, ...] = (80, 160, 800),
 ) -> str | None:
     latest_path = root / "adaptive-latest.json"
     if not latest_path.exists() and not latest_path.is_symlink():
@@ -914,6 +916,7 @@ def _validate_adaptive_lineage(
             expected_study_config_sha256=expected_study_config_sha256,
             expected_completed_trials=prior_completed,
             expected_optuna_study_name=expected_optuna_study_name,
+            tier_through_trials=tier_through_trials,
         )
     )
     prior_trials = _journal_trial_rows(prior_payloads[ADAPTIVE_STATE_FILES[0]])
