@@ -718,6 +718,9 @@ def test_minimum_guarantee_abort_can_be_rearmed_under_a_fresh_lease(
         tmp_path, now=[fresh_lease], receipt=initial, rolling_receipt=rolling
     )
     rearmed.rearm_minimum_guarantee_abort(started_at=fresh_lease)
+    # A crash after the durable rearm checkpoint must be safe to resume with
+    # the same --rearm-minimum-guarantee invocation.
+    rearmed.rearm_minimum_guarantee_abort(started_at=fresh_lease)
     checkpoint = json.loads((tmp_path / "adaptive-run-checkpoint.json").read_text())
     assert checkpoint["phase"] == "broad_coverage"
     assert checkpoint["stop_reason"] is None

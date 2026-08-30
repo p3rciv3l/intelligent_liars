@@ -867,10 +867,24 @@ class AdaptiveBatchScheduler:
 
         if self._checkpoint is None:
             raise AdaptiveRunError("cannot rearm before the first durable authorization")
-        if (
-            self._checkpoint["phase"] != "aborted"
-            or self._checkpoint["stop_reason"] != "minimum_trial_guarantee_lost"
-        ):
+        if self._checkpoint["phase"] != "aborted":
+            # A controller can crash after this method durably saves the
+            # renewed lease but before the first resumed batch is published.
+            # Treat that already-rearmed state as idempotent so a restart can
+            # still carry forward the prior lease spend and continue safely.
+            if (
+                self._checkpoint["phase"] in {"broad_coverage", "adaptive_search"}
+                and self._checkpoint["stop_reason"] is None
+            ):
+                completed = int(self._checkpoint["completed_trials"])
+                current_capacity_receipt = self._current_capacity_receipt()
+                if (
+                    current_capacity_receipt["completed_through_trial"] == completed
+                    and current_capacity_receipt["decision"][
+                        "minimum_trial_guarantee_met"
+                    ] is True
+                ):
+                    return
             raise AdaptiveRunError(
                 "rearm requires a minimum-guarantee abort checkpoint"
             )
