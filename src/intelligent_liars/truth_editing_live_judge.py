@@ -93,6 +93,11 @@ def _bundle_size_from_prompt(prompt: Mapping[str, Any]) -> int:
         return 2
     return 1
 _COMPATIBLE_ADAPTER_CODE_SHA256S = {
+    # Production adapter immediately before bundle-size timeout identity was
+    # introduced. One-row requests retain the frozen 120-second timeout, and
+    # the result schemas/semantic normalization are unchanged, so these
+    # existing successful cache entries remain safe to read on replay.
+    "9ad0a568c252c02e81e1beef8275ec8c884a9bf9610d73361191d0d53709a6ea",
     # Same finalized normalizer before the complete historical success-code
     # inventory was pinned for resumable production cache reads.
     "85a8c30434d050cd0df7cda3cc888371f9bf9a95a54c4ea82e5a504862dfe533",
