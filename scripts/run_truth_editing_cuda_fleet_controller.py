@@ -168,15 +168,53 @@ class _OrderedDurableCallback:
             self._condition.notify_all()
 
 
-def publish_completed_boundary_then_recover_orphans(
+def publish_completed_boundary_then_reconcile_judge_budget(
     *,
     publish_completed_boundary: Callable[[], None],
     judge_budget: ProductionJudgeBudget,
-) -> tuple[dict[str, object], ...]:
-    """Preserve hydrated bytes through publication, then recover crashed calls."""
+) -> tuple[tuple[dict[str, object], ...], tuple[dict[str, object], ...]]:
+    """Durably publish a batch before resolving any uncertain paid calls."""
 
     publish_completed_boundary()
-    return judge_budget.recover_orphaned_reservations()
+    return _reconcile_judge_budget(judge_budget)
+
+
+def _reconcile_judge_budget(
+    judge_budget: ProductionJudgeBudget,
+) -> tuple[tuple[dict[str, object], ...], tuple[dict[str, object], ...]]:
+    orphaned = judge_budget.recover_orphaned_reservations()
+    reconciled = judge_budget.reconcile_ambiguous_requests()
+    return orphaned, reconciled
+
+
+def prepare_judge_budget_for_controller_resume(
+    *,
+    judge_budget: ProductionJudgeBudget,
+    restored_boundary_is_durable: bool,
+) -> tuple[tuple[dict[str, object], ...], tuple[dict[str, object], ...]]:
+    """Reconcile restored paid-call state without mutating unbound local work."""
+
+    if restored_boundary_is_durable:
+        return _reconcile_judge_budget(judge_budget)
+    receipt = judge_budget.receipt()
+    if receipt["pending_call_count"] or receipt["circuit_open"]:
+        raise ValueError(
+            "local judge ledger has unresolved paid calls without a durable "
+            "restored boundary"
+        )
+    return (), ()
+
+
+def reconcile_restored_finalization_judge_budget(
+    *,
+    judge_budget: ProductionJudgeBudget,
+    expected_receipt_sha256: str,
+) -> tuple[tuple[dict[str, object], ...], tuple[dict[str, object], ...]]:
+    """Validate finalization lineage before reconciling its restored ledger."""
+
+    if judge_budget.receipt()["content_sha256"] != expected_receipt_sha256:
+        raise ValueError("restored finalization judge ledger differs from its binding")
+    return _reconcile_judge_budget(judge_budget)
 
 
 def offhost_partial_event_is_already_published(
@@ -1297,6 +1335,8 @@ def main(argv: list[str] | None = None) -> int:
         args.restore_completed_trials,
         args.restore_optuna_study_name,
     )
+    latest_binding: SnapshotBinding | None = None
+    restored_judge_boundary_is_durable = False
     if any(value is not None for value in restore_values):
         if not all(value is not None for value in restore_values):
             raise ValueError("adaptive restore requires all exact resume identities")
@@ -1309,6 +1349,7 @@ def main(argv: list[str] | None = None) -> int:
                 expected_completed_trials=args.restore_completed_trials,
                 expected_optuna_study_name=args.restore_optuna_study_name,
             )
+            restored_judge_boundary_is_durable = True
         else:
             restore_binding = SnapshotBinding(
                 study_identity_sha256=args.restore_study_identity_sha256,
@@ -1330,6 +1371,8 @@ def main(argv: list[str] | None = None) -> int:
                     args.output_root.resolve(),
                     binding=restore_binding,
                 )
+            latest_binding = restore_binding
+            restored_judge_boundary_is_durable = True
     elif args.restore_offhost_wandb_run_id is not None:
         raise ValueError(
             "off-host restore requires all exact resume identities"
@@ -1378,6 +1421,7 @@ def main(argv: list[str] | None = None) -> int:
                         args.output_root.resolve(),
                         binding=partial_binding,
                     )
+            restored_judge_boundary_is_durable = True
     worker_script = Path(__file__).with_name("run_truth_editing_cuda_fleet_worker.py")
     telemetry = GpuTelemetryCollector(gpu_slots=fleet.worker_count)
     monitoring_root = production.journal_path.parent.parent / "monitoring"
@@ -1513,6 +1557,10 @@ def main(argv: list[str] | None = None) -> int:
     )
     if judge_budget is None:
         raise ValueError("adaptive production requires the durable judge ledger")
+    prepare_judge_budget_for_controller_resume(
+        judge_budget=judge_budget,
+        restored_boundary_is_durable=restored_judge_boundary_is_durable,
+    )
     spend_reader = _ControllerSpendReader(
         capacity_receipt=capacity_receipt,
         judge_budget=judge_budget,
@@ -1701,12 +1749,6 @@ def main(argv: list[str] | None = None) -> int:
         )
 
     def after_complete_batch(commit: CompletedBatchCommit) -> None:
-        # A response-less judge failure is conservatively charged at its full
-        # reservation and its exact request remains permanently blocked. Once
-        # the whole batch has durable unscored outcomes, retire only that
-        # transient global marker so different requests may continue. Hard cap
-        # and price-overrun circuits remain terminal.
-        judge_budget.acknowledge_ambiguous_transport_circuit()
         try:
             rolling_capacity.reforecast(commit)
         except MinimumTrialGuaranteeError:
@@ -1714,7 +1756,10 @@ def main(argv: list[str] | None = None) -> int:
                 completed_trials=commit.completed_trials,
                 coverage_complete=commit.coverage_complete,
             )
-            record_and_publish(commit)
+            publish_completed_boundary_then_reconcile_judge_budget(
+                publish_completed_boundary=lambda: record_and_publish(commit),
+                judge_budget=judge_budget,
+            )
             return
         # Commit and publish the completed boundary before the study asks the
         # durable admission adapter to authorize any further paid work.
@@ -1723,9 +1768,11 @@ def main(argv: list[str] | None = None) -> int:
             coverage_complete=commit.coverage_complete,
         )
         # Hydrated checkpoint bytes remain immutable through replay and
-        # publication. Only after that durable boundary may crashed paid-call
-        # reservations be superseded for exact retry before next admission.
-        publish_completed_boundary_then_recover_orphans(
+        # publication. Only after that durable boundary may crashed paid calls
+        # be classified and the transient global ambiguity gate be retired.
+        # Exact ambiguous requests remain blocked pending separate evidence.
+        # The next partial/full frontier carries those ledger events.
+        publish_completed_boundary_then_reconcile_judge_budget(
             publish_completed_boundary=lambda: record_and_publish(commit),
             judge_budget=judge_budget,
         )
@@ -1885,6 +1932,10 @@ def main(argv: list[str] | None = None) -> int:
         judge_budget = ProductionJudgeBudget(
             finalization_judge_ledger_dir,
             config=production.judge_budget,
+        )
+        reconcile_restored_finalization_judge_budget(
+            judge_budget=judge_budget,
+            expected_receipt_sha256=finalization_ledger_cursor,
         )
         spend_reader.rebind_judge_budget(judge_budget)
     finalization_event_ordinal = 0

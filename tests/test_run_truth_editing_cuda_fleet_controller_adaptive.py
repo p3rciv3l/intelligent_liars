@@ -399,7 +399,7 @@ def test_partial_checkpoint_mismatch_fails_before_republication() -> None:
     assert publication_calls == 0
 
 
-def test_controller_recovers_orphaned_judge_reservations_after_replay_publication() -> None:
+def test_controller_reconciles_ambiguous_judge_requests_after_replay_publication() -> None:
     tree = ast.parse(SCRIPT.read_text())
     main = next(
         node
@@ -416,7 +416,8 @@ def test_controller_recovers_orphaned_judge_reservations_after_replay_publicatio
         for node in ast.walk(callback)
         if isinstance(node, ast.Call)
         and isinstance(node.func, ast.Name)
-        and node.func.id == "publish_completed_boundary_then_recover_orphans"
+        and node.func.id
+        == "publish_completed_boundary_then_reconcile_judge_budget"
     )
     commit_call = next(
         node
@@ -434,12 +435,20 @@ def test_controller_recovers_orphaned_judge_reservations_after_replay_publicatio
         and node.func.value.id == "judge_budget"
         and node.func.attr == "recover_orphaned_reservations"
     ]
+    direct_acknowledgements = [
+        node
+        for node in ast.walk(callback)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "acknowledge_ambiguous_transport_circuit"
+    ]
 
     assert commit_call.lineno < lifecycle_call.lineno
     assert startup_recovery_calls == []
+    assert direct_acknowledgements == []
 
 
-def test_hydrated_partial_judge_bytes_publish_before_orphan_recovery(
+def test_hydrated_partial_judge_bytes_publish_before_orphan_reconciliation(
     tmp_path: Path,
 ) -> None:
     class SimulatedWorkerExit(BaseException):
@@ -481,20 +490,136 @@ def test_hydrated_partial_judge_bytes_publish_before_orphan_recovery(
             path.relative_to(root): path.read_bytes()
             for path in root.rglob("*.json")
         } == hydrated_bytes
-        assert not tuple(root.glob("calls/*/orphan-recovery.json"))
+        assert not tuple(root.glob("calls/*/ambiguous.json"))
         published = True
 
-    recovered = MODULE.publish_completed_boundary_then_recover_orphans(
-        publish_completed_boundary=publish_restored_partial,
-        judge_budget=budget,
+    recovered, reconciled = (
+        MODULE.publish_completed_boundary_then_reconcile_judge_budget(
+            publish_completed_boundary=publish_restored_partial,
+            judge_budget=budget,
+        )
     )
 
     assert published is True
     assert len(recovered) == 1
-    assert tuple(root.glob("calls/*/orphan-recovery.json"))
+    assert reconciled == ()
+    assert tuple(root.glob("calls/*/ambiguous.json"))
+    assert not tuple(root.glob("calls/*/recovery-supersession.json"))
+    budget_receipt = budget.receipt()
+    assert budget_receipt["pending_call_count"] == 0
+    assert budget_receipt["ambiguous_call_count"] == 1
+    assert budget_receipt["circuit_open"] is False
     assert next(root.glob("calls/*/reservation.json")).read_bytes() in (
         hydrated_bytes.values()
     )
+
+
+def test_post_batch_judge_reconciliation_starts_after_durable_publication() -> None:
+    events: list[str] = []
+    orphan = {"status": "ambiguous", "request_sha256": "a" * 64}
+    reconciled = {"status": "reconciled", "request_sha256": "a" * 64}
+
+    class JudgeBudget:
+        def recover_orphaned_reservations(self) -> tuple[dict[str, object], ...]:
+            events.append("recover_orphans")
+            return (orphan,)
+
+        def reconcile_ambiguous_requests(self) -> tuple[dict[str, object], ...]:
+            events.append("reconcile_ambiguous")
+            return (reconciled,)
+
+    result = MODULE.publish_completed_boundary_then_reconcile_judge_budget(
+        publish_completed_boundary=lambda: events.append("publish_boundary"),
+        judge_budget=JudgeBudget(),
+    )
+
+    assert events == [
+        "publish_boundary",
+        "recover_orphans",
+        "reconcile_ambiguous",
+    ]
+    assert result == ((orphan,), (reconciled,))
+
+
+def test_restored_judge_budget_reconciles_only_from_a_durable_boundary() -> None:
+    events: list[str] = []
+
+    class JudgeBudget:
+        def receipt(self) -> dict[str, object]:
+            return {
+                "pending_call_count": 1,
+                "ambiguous_call_count": 0,
+                "circuit_open": False,
+            }
+
+        def recover_orphaned_reservations(self) -> tuple[dict[str, object], ...]:
+            events.append("recover_orphans")
+            return ({"status": "ambiguous"},)
+
+        def reconcile_ambiguous_requests(self) -> tuple[dict[str, object], ...]:
+            events.append("reconcile_ambiguous")
+            return ({"status": "reconciled"},)
+
+    recovered, reconciled = MODULE.prepare_judge_budget_for_controller_resume(
+        judge_budget=JudgeBudget(),
+        restored_boundary_is_durable=True,
+    )
+
+    assert events == ["recover_orphans", "reconcile_ambiguous"]
+    assert recovered == ({"status": "ambiguous"},)
+    assert reconciled == ({"status": "reconciled"},)
+
+
+def test_local_resume_refuses_to_mutate_unbound_unresolved_paid_calls() -> None:
+    events: list[str] = []
+
+    class JudgeBudget:
+        def receipt(self) -> dict[str, object]:
+            return {
+                "pending_call_count": 1,
+                "ambiguous_call_count": 0,
+                "circuit_open": False,
+            }
+
+        def recover_orphaned_reservations(self) -> tuple[dict[str, object], ...]:
+            events.append("recover_orphans")
+            return ()
+
+        def reconcile_ambiguous_requests(self) -> tuple[dict[str, object], ...]:
+            events.append("reconcile_ambiguous")
+            return ()
+
+    with pytest.raises(ValueError, match="without a durable restored boundary"):
+        MODULE.prepare_judge_budget_for_controller_resume(
+            judge_budget=JudgeBudget(),
+            restored_boundary_is_durable=False,
+        )
+
+    assert events == []
+
+
+def test_finalization_resume_rejects_judge_ledger_drift_before_reconciliation() -> None:
+    events: list[str] = []
+
+    class JudgeBudget:
+        def receipt(self) -> dict[str, object]:
+            return {"content_sha256": "a" * 64}
+
+        def recover_orphaned_reservations(self) -> tuple[dict[str, object], ...]:
+            events.append("recover_orphans")
+            return ()
+
+        def reconcile_ambiguous_requests(self) -> tuple[dict[str, object], ...]:
+            events.append("reconcile_ambiguous")
+            return ()
+
+    with pytest.raises(ValueError, match="restored finalization judge ledger differs"):
+        MODULE.reconcile_restored_finalization_judge_budget(
+            judge_budget=JudgeBudget(),
+            expected_receipt_sha256="b" * 64,
+        )
+
+    assert events == []
 
 
 def test_real_main_publishes_committed_batch_before_next_batch_admission() -> None:
@@ -546,13 +671,15 @@ def test_real_main_publishes_committed_batch_before_next_batch_admission() -> No
     assert calls.index("reforecast") < calls.index("commit_batch")
     assert "admit_batch" not in calls
     assert "abort_minimum_trial_guarantee" in calls
-    publish_call = next(
+    publish_calls = [
         node
         for node in ast.walk(callback)
         if isinstance(node, ast.Call)
         and isinstance(node.func, ast.Name)
-        and node.func.id == "publish_completed_boundary_then_recover_orphans"
-    )
+        and node.func.id
+        == "publish_completed_boundary_then_reconcile_judge_budget"
+    ]
+    assert len(publish_calls) == 2
     commit_call = next(
         node
         for node in ast.walk(callback)
@@ -560,7 +687,7 @@ def test_real_main_publishes_committed_batch_before_next_batch_admission() -> No
         and isinstance(node.func, ast.Attribute)
         and node.func.attr == "commit_batch"
     )
-    assert commit_call.lineno < publish_call.lineno
+    assert commit_call.lineno < max(call.lineno for call in publish_calls)
 
     # The study asks this adapter for the next batch only after the callback
     # above returns, so authorization cannot precede verified publication.
@@ -602,6 +729,49 @@ def test_real_main_discovers_latest_offhost_resume_without_manual_tuple() -> Non
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
     }
     assert "read_latest_binding_if_present" in calls
+
+
+def test_real_main_reconciles_only_a_validated_restored_judge_boundary() -> None:
+    tree = ast.parse(SCRIPT.read_text())
+    main = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "main"
+    )
+    call = next(
+        node
+        for node in ast.walk(main)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "prepare_judge_budget_for_controller_resume"
+    )
+    keywords = {keyword.arg: keyword.value for keyword in call.keywords}
+
+    restored = keywords["restored_boundary_is_durable"]
+    assert isinstance(restored, ast.Name)
+    assert restored.id == "restored_judge_boundary_is_durable"
+    assert any(
+        isinstance(node, ast.Assign)
+        and any(
+            isinstance(target, ast.Name)
+            and target.id == "restored_judge_boundary_is_durable"
+            for target in node.targets
+        )
+        and isinstance(node.value, ast.Constant)
+        and node.value.value is False
+        for node in ast.walk(main)
+    )
+    assert sum(
+        isinstance(node, ast.Assign)
+        and any(
+            isinstance(target, ast.Name)
+            and target.id == "restored_judge_boundary_is_durable"
+            for target in node.targets
+        )
+        and isinstance(node.value, ast.Constant)
+        and node.value.value is True
+        for node in ast.walk(main)
+    ) >= 3
 
 
 def test_offhost_auto_resume_uses_complete_planned_study_identity() -> None:
