@@ -1322,7 +1322,12 @@ class OptunaSearchDriver(OfflineDeterministicSearchDriver):
     policy without changing the study or journal interfaces.
     """
 
-    def __init__(self, *, seed: int) -> None:
+    def __init__(
+        self,
+        *,
+        seed: int,
+        _auto_requeue_operational_failures: bool = True,
+    ) -> None:
         try:
             import optuna  # type: ignore
         except ImportError as error:
@@ -1351,6 +1356,9 @@ class OptunaSearchDriver(OfflineDeterministicSearchDriver):
         self._unresolved_operational_failures: dict[str, SearchProposal] = {}
         self._failure_replay_queue: list[str] = []
         self._failure_replays_inflight: dict[int, str] = {}
+        self._auto_requeue_operational_failures = (
+            _auto_requeue_operational_failures
+        )
 
     @property
     def identity(self) -> Mapping[str, Any]:
@@ -1899,6 +1907,8 @@ class OptunaSearchDriver(OfflineDeterministicSearchDriver):
                 if proposal_sha256 not in self._unresolved_operational_failures:
                     self._unresolved_operational_failures[proposal_sha256] = item.proposal
                 if (
+                    self._auto_requeue_operational_failures
+                    and
                     self._history_replay_is_complete
                     and proposal_sha256 not in self._failure_replay_queue
                     and proposal_sha256 not in self._failure_replays_inflight.values()
@@ -1920,11 +1930,12 @@ class OptunaSearchDriver(OfflineDeterministicSearchDriver):
         if self._history_replay_is_complete:
             return
         self._history_replay_is_complete = True
-        self._failure_replay_queue.extend(
-            proposal_sha256
-            for proposal_sha256 in self._unresolved_operational_failures
-            if proposal_sha256 not in self._failure_replay_queue
-        )
+        if self._auto_requeue_operational_failures:
+            self._failure_replay_queue.extend(
+                proposal_sha256
+                for proposal_sha256 in self._unresolved_operational_failures
+                if proposal_sha256 not in self._failure_replay_queue
+            )
 
 
 OutcomeKind = Literal["successful", "scientifically_infeasible", "operational_failure"]
@@ -2490,6 +2501,12 @@ class TruthEditingStudy:
             path.with_name(path.name + ".optuna.log"),
         )
         identity, identity_inputs = self._identity(driver, evaluator)
+        validate_lineage = getattr(driver, "validate_rescore_identity", None)
+        if callable(validate_lineage):
+            validate_lineage(
+                study_identity_sha256=identity,
+                identity_inputs=identity_inputs,
+            )
         if path.exists():
             if path.is_symlink() or not path.is_file():
                 raise StudyError("journal is not a regular file")
@@ -2506,12 +2523,21 @@ class TruthEditingStudy:
                 raise StudyError("journal content identity mismatch")
             self._validate_journal_structure(journal, identity_inputs)
         else:
+            initial_batches: Sequence[Mapping[str, Any]] = ()
+            seed_history = getattr(driver, "initial_journal_batches", None)
+            if callable(seed_history):
+                initial_batches = seed_history(
+                    study_identity_sha256=identity,
+                    identity_inputs=identity_inputs,
+                )
             journal = {
                 "format": STUDY_JOURNAL_FORMAT, "study_identity_sha256": identity,
-                "identity_inputs": identity_inputs, "batches": [],
+                "identity_inputs": identity_inputs,
+                "batches": json.loads(json.dumps(list(initial_batches))),
             }
             self._save(path, journal)
             journal = json.loads(path.read_text())
+            self._validate_journal_structure(journal, identity_inputs)
 
         completed = self._load_trials(journal)
         if any(item.ordinal >= target_trials for item in completed):
@@ -2601,12 +2627,40 @@ class TruthEditingStudy:
                         SearchRequest(ordinal, self.config, self.directions, coverage)
                     )
                     self._validate_proposal(proposal)
+                    record_ids = tuple(
+                        self.config.validation_record_ids[:tier.record_limit]
+                    )
+                    override_request = getattr(
+                        driver, "evaluation_request_override", None
+                    )
+                    if callable(override_request):
+                        override = override_request(
+                            ordinal=ordinal,
+                            proposal=proposal,
+                        )
+                        if override is not None:
+                            matching_tiers = tuple(
+                                item
+                                for item in self.config.evaluation_tiers
+                                if item.name == override.tier_name
+                            )
+                            if len(matching_tiers) != 1:
+                                raise StudyError(
+                                    "rescore evaluation tier is outside the frozen config"
+                                )
+                            tier = matching_tiers[0]
+                            record_ids = tuple(override.record_ids)
+                            expected_records = tuple(
+                                self.config.validation_record_ids[:tier.record_limit]
+                            )
+                            if record_ids != expected_records:
+                                raise StudyError(
+                                    "rescore evaluation records differ from the frozen tier"
+                                )
                     entries.append({
                         "trial_id": f"trial-{ordinal:04d}", "ordinal": ordinal,
                         "tier_name": tier.name,
-                        "evaluation_record_ids": list(
-                            self.config.validation_record_ids[:tier.record_limit]
-                        ),
+                        "evaluation_record_ids": list(record_ids),
                         "proposal": proposal.to_dict(), "result": None,
                     })
                 journal["batches"].append({"ordinal": batch_ordinal, "trials": entries})
