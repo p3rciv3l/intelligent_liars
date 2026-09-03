@@ -9,11 +9,14 @@ complete provider response needed for auditable cache receipts.
 from __future__ import annotations
 
 import copy
+import fcntl
 import hashlib
 import json
 import os
+import threading
 import time
 from collections.abc import Callable, Mapping, MutableMapping, Sequence
+from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 from datetime import datetime, timezone
@@ -54,6 +57,7 @@ from intelligent_liars.truth_editing_pairwise_reconciliation import (
 
 
 _PROVIDER_ROUTE = "z-ai/fp8"
+_LOADED_ADAPTER_CODE_SHA256 = hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
 # The frozen GLM request keeps its 120-second timeout for the smallest
 # requests. Larger bundles receive additional wall-clock allowance based on
 # the number of rows the judge must classify.
@@ -93,6 +97,18 @@ def _bundle_size_from_prompt(prompt: Mapping[str, Any]) -> int:
         return 2
     return 1
 _COMPATIBLE_ADAPTER_CODE_SHA256S = {
+    # Long-soak process loaded before crash-quarantine handling was added.
+    # These three identities differ only because the old implementation read
+    # the source file again for every receipt while this file was being edited;
+    # request construction, parsing, and normalized semantic results are the
+    # same. Adapter identity is now frozen once at process import below.
+    "0899419e3ab9d67736265782e7da3d120ac9a1805cc880561a029c53912b4321",
+    "16bc3f409f6ba6b8e67cf32aa2276c2014c29f8627c4d21c919d347bde345370",
+    "68ee9a2866df09d8f47a91d519993374324763699b9246f769b45905a492e032",
+    # Restarted soak build with crash quarantine and import-frozen identity;
+    # bounded task admission was added afterward without changing requests or
+    # semantic parsing.
+    "1a307ee56ffe84decbcd193a7de9f4d8c70397942e9e3d8f8b43097e3a03dfe9",
     # Recovery build immediately before finite rescore/controller integration.
     # The frozen request and semantic normalization contracts are unchanged.
     "879edde1e35a2aaac9d62ac43a44ca1116e182e2e49e9eb845692e41c23f070b",
@@ -183,6 +199,15 @@ _COMPATIBLE_ADAPTER_CODE_SHA256S = {
 
 class LiveJudgeError(RuntimeError):
     """A frozen judge request, transport response, or semantic result is invalid."""
+
+
+class AmbiguousPaidAttempt(LiveJudgeError):
+    """A durable reservation lacks a terminal receipt after process death.
+
+    The provider may have accepted this exact request, so automatic replay is
+    forbidden.  Distinct requests remain admissible and the operation is
+    surfaced as an explicit operationally unresolved result.
+    """
 
 
 class OperationalJudgeFailure(LiveJudgeError):
@@ -1211,6 +1236,12 @@ class TruthEditingLiveJudge:
         self._transport = transport
         self._cache = cache or MemoryJudgeCache()
         self._clock = clock or (lambda: datetime.now(timezone.utc))
+        self._singleflight_guard = threading.Lock()
+        self._singleflight_locks: dict[str, threading.Lock] = {}
+
+    def _singleflight_lock(self, cache_key: str) -> threading.Lock:
+        with self._singleflight_guard:
+            return self._singleflight_locks.setdefault(cache_key, threading.Lock())
 
     def judge(self, record: RuntimeRecord) -> JudgeEvidence:
         return self.judge_bundle((record,))
@@ -1443,6 +1474,7 @@ class TruthEditingLiveJudge:
         self, prompt: Mapping[str, Any], response_sha256s: tuple[str, ...],
         *, schema_name: str = "truth_editing_absolute_semantic_v1",
         response_format_type: str = "json_object",
+        _singleflight: bool = False,
     ) -> tuple[AbsoluteJudgeResult, JudgeCacheReceipt]:
         bundle_size = _bundle_size_from_prompt(prompt)
         request, identities = self._request(
@@ -1451,6 +1483,15 @@ class TruthEditingLiveJudge:
             bundle_size=bundle_size,
         )
         cache_key = identities["cache_key_sha256"]
+        if not _singleflight:
+            with self._singleflight_lock(cache_key):
+                return self._execute_absolute(
+                    prompt,
+                    response_sha256s,
+                    schema_name=schema_name,
+                    response_format_type=response_format_type,
+                    _singleflight=True,
+                )
         cached = self._validated_cached(cache_key, self._cache.get(cache_key))
         if cached is not None:
             if not isinstance(cached.result, AbsoluteJudgeResult):
@@ -1571,6 +1612,7 @@ class TruthEditingLiveJudge:
         operation: str = "pairwise_semantic_selection_v1",
         schema_name: str = "truth_editing_pairwise_semantic_v1",
         response_format_type: str = "json_object",
+        _singleflight: bool = False,
     ) -> tuple[PairwiseJudgeResult, JudgeCacheReceipt]:
         public_a = _pairwise_public_evidence(candidate_a, name="candidate_a")
         public_b = _pairwise_public_evidence(candidate_b, name="candidate_b")
@@ -1596,6 +1638,21 @@ class TruthEditingLiveJudge:
             bundle_size=2,
         )
         cache_key = identities["cache_key_sha256"]
+        if not _singleflight:
+            with self._singleflight_lock(cache_key):
+                return self._execute_pairwise(
+                    candidate_a=candidate_a,
+                    candidate_b=candidate_b,
+                    candidate_a_sha256=candidate_a_sha256,
+                    candidate_b_sha256=candidate_b_sha256,
+                    comparison_group_sha256=comparison_group_sha256,
+                    presentation_order=presentation_order,
+                    comparison_kind=comparison_kind,
+                    operation=operation,
+                    schema_name=schema_name,
+                    response_format_type=response_format_type,
+                    _singleflight=True,
+                )
         cached = self._validated_cached(cache_key, self._cache.get(cache_key))
         if cached is not None:
             if not isinstance(cached.result, PairwiseJudgeResult):
@@ -2256,68 +2313,80 @@ class _CalibrationAttemptJournal:
 
         class JournaledTransport:
             def complete(self, request: Mapping[str, Any]) -> Mapping[str, Any]:
-                request_sha = _sha(request)
-                request_dir = journal.path / request_sha
-                request_dir.mkdir(parents=False, exist_ok=True)
-                attempts = sorted(path for path in request_dir.iterdir() if path.is_dir())
-                if attempts:
-                    latest = attempts[-1]
-                    completed = latest / "completed.json"
-                    if completed.exists() and not (latest / "processed.json").exists():
-                        payload = journal._read_event(completed, request_sha, "completed")
-                        response = payload.get("response")
-                        if not isinstance(response, Mapping):
-                            raise LiveJudgeError("completed paid attempt has no stored response")
-                        return copy.deepcopy(dict(response))
-                    if not (latest / "processed.json").exists():
-                        raise LiveJudgeError(
-                            "paid attempt is pending or failed; refusing a possible duplicate paid call"
-                        )
-                attempt_number = len(attempts)
-                if attempt_number >= 3:
-                    raise LiveJudgeError("live judge retry limit is exhausted")
-                current = request_dir / f"{attempt_number:03d}"
-                try:
-                    current.mkdir(exist_ok=False)
-                except FileExistsError as error:
-                    raise LiveJudgeError(
-                        "paid attempt is concurrent; refusing a possible duplicate paid call"
-                    ) from error
-                reservation = _maximum_call_cost(request)
-                pending_unsigned = {
-                    "format": "truth_editing_live_judge_paid_attempt_v1",
-                    "status": "pending",
-                    "plan_sha256": journal.plan_sha256,
-                    "request_sha256": request_sha,
-                    "authorized_usd": float(reservation),
-                }
-                pending = current / "pending.json"
-                journal._reserve_pending(pending, pending_unsigned, reservation)
-                try:
-                    response = downstream.complete(request)
-                except Exception as error:
-                    failed_unsigned = {
-                        **pending_unsigned,
-                        "status": "failed",
-                        "error_class": error.__class__.__name__,
-                    }
-                    journal._exclusive_event(current / "failed.json", failed_unsigned)
-                    raise
-                if not isinstance(response, Mapping):
-                    raise LiveJudgeError("paid transport response must be an object")
-                price = _money(response.get("price_usd"), "paid response price_usd")
-                if price > reservation:
-                    raise LiveJudgeError("paid response exceeded its per-call authorization")
-                completed_unsigned = {
-                    **pending_unsigned,
-                    "status": "completed",
-                    "actual_usd": float(price),
-                    "response": copy.deepcopy(dict(response)),
-                }
-                journal._exclusive_event(current / "completed.json", completed_unsigned)
-                return copy.deepcopy(dict(response))
+                return journal._complete_request(downstream, request)
 
         return JournaledTransport()
+
+    def _complete_request(
+        self, downstream: JudgeTransport, request: Mapping[str, Any]
+    ) -> Mapping[str, Any]:
+        request_sha = _sha(request)
+        request_dir = self.path / request_sha
+        request_dir.mkdir(parents=False, exist_ok=True)
+        lock_descriptor = os.open(
+            self.path / f".request-{request_sha}.lock",
+            os.O_WRONLY | os.O_CREAT,
+            0o600,
+        )
+        try:
+            # A request identity is the paid unit. Concurrent operations sharing
+            # it wait for the first writer and then reuse its durable response.
+            fcntl.flock(lock_descriptor, fcntl.LOCK_EX)
+            attempts = sorted(path for path in request_dir.iterdir() if path.is_dir())
+            if attempts:
+                latest = attempts[-1]
+                completed = latest / "completed.json"
+                if completed.exists() and not (latest / "processed.json").exists():
+                    payload = self._read_event(completed, request_sha, "completed")
+                    response = payload.get("response")
+                    if not isinstance(response, Mapping):
+                        raise LiveJudgeError("completed paid attempt has no stored response")
+                    return copy.deepcopy(dict(response))
+                if not (latest / "processed.json").exists():
+                    raise AmbiguousPaidAttempt(
+                        "paid attempt is pending or failed; refusing a possible duplicate paid call"
+                    )
+            attempt_number = len(attempts)
+            if attempt_number >= 3:
+                raise LiveJudgeError("live judge retry limit is exhausted")
+            current = request_dir / f"{attempt_number:03d}"
+            current.mkdir(exist_ok=False)
+            reservation = _maximum_call_cost(request)
+            pending_unsigned = {
+                "format": "truth_editing_live_judge_paid_attempt_v1",
+                "status": "pending",
+                "plan_sha256": self.plan_sha256,
+                "request_sha256": request_sha,
+                "authorized_usd": float(reservation),
+            }
+            pending = current / "pending.json"
+            self._reserve_pending(pending, pending_unsigned, reservation)
+            try:
+                response = downstream.complete(request)
+            except Exception as error:
+                failed_unsigned = {
+                    **pending_unsigned,
+                    "status": "failed",
+                    "error_class": error.__class__.__name__,
+                }
+                self._exclusive_event(current / "failed.json", failed_unsigned)
+                raise
+            if not isinstance(response, Mapping):
+                raise LiveJudgeError("paid transport response must be an object")
+            price = _money(response.get("price_usd"), "paid response price_usd")
+            if price > reservation:
+                raise LiveJudgeError("paid response exceeded its per-call authorization")
+            completed_unsigned = {
+                **pending_unsigned,
+                "status": "completed",
+                "actual_usd": float(price),
+                "response": copy.deepcopy(dict(response)),
+            }
+            self._exclusive_event(current / "completed.json", completed_unsigned)
+            return copy.deepcopy(dict(response))
+        finally:
+            fcntl.flock(lock_descriptor, fcntl.LOCK_UN)
+            os.close(lock_descriptor)
 
     def mark_response_failure_processed(self, receipt: JudgeCacheReceipt) -> bool:
         """Permit one intentional retry only after a definite malformed response."""
@@ -2346,14 +2415,9 @@ class _CalibrationAttemptJournal:
         self, path: Path, unsigned: Mapping[str, Any], reservation: Decimal
     ) -> None:
         lock = self.path / ".budget.lock"
+        descriptor = os.open(lock, os.O_WRONLY | os.O_CREAT, 0o600)
         try:
-            descriptor = os.open(lock, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-        except FileExistsError as error:
-            raise LiveJudgeError(
-                "calibration budget is concurrently reserved; refusing a paid call"
-            ) from error
-        os.close(descriptor)
-        try:
+            fcntl.flock(descriptor, fcntl.LOCK_EX)
             if self.committed_or_reserved_spend() + reservation > self.maximum_spend:
                 raise LiveJudgeError(
                     "live judge spend ceiling would be exceeded before transport"
@@ -2363,7 +2427,8 @@ class _CalibrationAttemptJournal:
                     "paid attempt is pending; refusing a possible duplicate paid call"
                 )
         finally:
-            lock.unlink(missing_ok=True)
+            fcntl.flock(descriptor, fcntl.LOCK_UN)
+            os.close(descriptor)
             _fsync_directory(self.path)
 
     def committed_or_reserved_spend(self) -> Decimal:
@@ -2459,6 +2524,7 @@ def run_live_judge_calibration(
     attempt_dir: str | Path,
     transport: JudgeTransport,
     dry_run: bool = False,
+    max_concurrency: int = 1,
 ) -> dict[str, Any]:
     """Validate and execute a frozen live-calibration plan, resumably and under $5."""
 
@@ -2466,6 +2532,12 @@ def run_live_judge_calibration(
     maximum_spend = _money(raw["maximum_spend_usd"], "maximum_spend_usd")
     if maximum_spend <= 0 or maximum_spend > MAXIMUM_LIVE_CALIBRATION_SPEND_USD:
         raise LiveJudgeError("live calibration maximum_spend_usd must be in (0, 5]")
+    if (
+        isinstance(max_concurrency, bool)
+        or not isinstance(max_concurrency, int)
+        or not 1 <= max_concurrency <= 8
+    ):
+        raise LiveJudgeError("live calibration max_concurrency must be from 1 through 8")
     absolute_bundles = raw["absolute_bundles"]
     pairwise_relationships = raw["pairwise_relationships"]
     assert isinstance(absolute_bundles, list) and isinstance(pairwise_relationships, list)
@@ -2537,28 +2609,49 @@ def run_live_judge_calibration(
     )
     cache = _CalibrationJudgeCache(cache_dir)
     judge = TruthEditingLiveJudge(transport=journal.transport(transport), cache=cache)
-    completed: list[str] = []
-    failed: list[str] = []
-    receipt_hashes: list[str] = []
-    failure_hashes: list[str] = []
-    correction_lineage_hashes: list[str] = []
-    for bundle_id, bundle in parsed_bundles:
+    def run_bundle(
+        item: tuple[str, Mapping[str, Any]],
+    ) -> tuple[str, bool, tuple[str, ...], tuple[str, ...], tuple[str, ...]]:
+        bundle_id, bundle = item
         outcome = _run_with_response_retries(journal, lambda: judge.judge_calibration_bundle(bundle))
         if isinstance(outcome, OperationalJudgeFailure):
-            failed.append(bundle_id)
-            failure_hashes.append(_persisted_calibration_failure_hash(cache, outcome))
-        else:
-            completed.append(bundle_id)
-            receipt_hashes.append(_persisted_receipt_hash(cache, outcome.cache_receipt))
-            lineage_hash = _persisted_correction_lineage_hash(cache, outcome.cache_receipt)
-            if lineage_hash is not None:
-                correction_lineage_hashes.append(lineage_hash)
-    for (
-        relationship_id, candidate_a, candidate_b, group, presentations,
-        comparison_kind,
-    ) in parsed_pairs:
+            return (
+                bundle_id,
+                False,
+                (),
+                (_persisted_calibration_failure_hash(cache, outcome),),
+                (),
+            )
+        lineage_hash = _persisted_correction_lineage_hash(cache, outcome.cache_receipt)
+        return (
+            bundle_id,
+            True,
+            (_persisted_receipt_hash(cache, outcome.cache_receipt),),
+            (),
+            () if lineage_hash is None else (lineage_hash,),
+        )
+
+    def run_pair(
+        item: tuple[
+            str,
+            Mapping[str, Any],
+            Mapping[str, Any],
+            str,
+            tuple[str, ...],
+            str | None,
+        ],
+    ) -> tuple[str, bool, tuple[str, ...], tuple[str, ...], tuple[str, ...]]:
+        (
+            relationship_id,
+            candidate_a,
+            candidate_b,
+            group,
+            presentations,
+            comparison_kind,
+        ) = item
         pair_receipts: list[str] = []
         pair_failures: list[str] = []
+        pair_lineages: list[str] = []
         for presentation in presentations:
             outcome = _run_with_response_retries(
                 journal,
@@ -2576,10 +2669,34 @@ def run_live_judge_calibration(
                 pair_receipts.append(_persisted_receipt_hash(cache, receipt))
                 lineage_hash = _persisted_correction_lineage_hash(cache, receipt)
                 if lineage_hash is not None:
-                    correction_lineage_hashes.append(lineage_hash)
-        (failed if pair_failures else completed).append(relationship_id)
-        receipt_hashes.extend(pair_receipts)
-        failure_hashes.extend(pair_failures)
+                    pair_lineages.append(lineage_hash)
+        return (
+            relationship_id,
+            not pair_failures,
+            tuple(pair_receipts),
+            tuple(pair_failures),
+            tuple(pair_lineages),
+        )
+
+    absolute_results = _bounded_parallel_map(
+        run_bundle, parsed_bundles, max_workers=max_concurrency
+    )
+    pair_results = _bounded_parallel_map(
+        run_pair, parsed_pairs, max_workers=max_concurrency
+    )
+    completed: list[str] = []
+    failed: list[str] = []
+    receipt_hashes: list[str] = []
+    failure_hashes: list[str] = []
+    correction_lineage_hashes: list[str] = []
+    for operation_id, succeeded, receipts, failures, lineages in (
+        *absolute_results,
+        *pair_results,
+    ):
+        (completed if succeeded else failed).append(operation_id)
+        receipt_hashes.extend(receipts)
+        failure_hashes.extend(failures)
+        correction_lineage_hashes.extend(lineages)
     return _calibration_report(
         raw, status="complete_with_failures" if failed else "complete", planned_calls=planned_calls,
         completed_operations=tuple(completed), failed_operations=tuple(failed),
@@ -2588,6 +2705,45 @@ def run_live_judge_calibration(
         actual_paid_calls=journal.completed_call_count(),
         maximum_spend=maximum_spend, actual_spend=journal.actual_spend(),
     )
+
+
+def _bounded_parallel_map(
+    operation: Callable[[Any], Any],
+    items: Sequence[Any],
+    *,
+    max_workers: int,
+) -> tuple[Any, ...]:
+    """Map deterministically without admitting work beyond the live window."""
+
+    results: list[Any | None] = [None] * len(items)
+    next_index = 0
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        pending: dict[Future[Any], int] = {}
+        while next_index < min(max_workers, len(items)):
+            pending[executor.submit(operation, items[next_index])] = next_index
+            next_index += 1
+        while pending:
+            done, _ = wait(pending, return_when=FIRST_COMPLETED)
+            completed_batch = sorted(
+                ((pending.pop(future), future) for future in done),
+                key=lambda item: item[0],
+            )
+            for index, future in completed_batch:
+                try:
+                    results[index] = future.result()
+                except BaseException:
+                    for admitted in pending:
+                        admitted.cancel()
+                    raise
+            # Only admit replacements after the complete ready batch has been
+            # resolved, so set iteration order cannot race a known fatal result.
+            for _index, _future in completed_batch:
+                if next_index < len(items):
+                    pending[executor.submit(operation, items[next_index])] = next_index
+                    next_index += 1
+    if any(item is None for item in results):  # pragma: no cover - internal invariant
+        raise LiveJudgeError("bounded calibration execution left an operation unreported")
+    return tuple(results)
 
 
 def _reraise_runner_boundary(error: OperationalJudgeFailure) -> NoReturn:
@@ -2608,10 +2764,9 @@ def _run_with_response_retries(
             return operation()
         except OperationalJudgeFailure as error:
             cause = error.__cause__
-            if isinstance(cause, LiveJudgeError) and (
-                "spend ceiling" in str(cause)
-                or "duplicate paid call" in str(cause)
-            ):
+            if isinstance(cause, AmbiguousPaidAttempt):
+                return error
+            if isinstance(cause, LiveJudgeError) and "spend ceiling" in str(cause):
                 raise cause
             if isinstance(cause, LiveJudgeError) and "retry limit" in str(cause):
                 return error
@@ -2879,7 +3034,7 @@ def _contract_hash(unsigned: Mapping[str, Any]) -> str:
 
 
 def _code_sha256() -> str:
-    return hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
+    return _LOADED_ADAPTER_CODE_SHA256
 
 
 def accepted_live_judge_adapter_code_sha256s() -> frozenset[str]:
@@ -3176,6 +3331,8 @@ def _classify_operational_error(
         return "timeout", "deadline_exceeded", True, error.__class__.__name__
     if isinstance(error, OSError):
         return "transport_error", "network_error", True, error.__class__.__name__
+    if isinstance(error, AmbiguousPaidAttempt):
+        return "transport_error", "connection_error", False, error.__class__.__name__
     class_name = error.__class__.__name__
     if class_name == "OpenRouterAPIError":
         return "provider_error", "provider_error", bool(getattr(error, "retryable", False)), class_name
@@ -3194,6 +3351,7 @@ __all__ = [
     "JudgeCache",
     "JudgeTransport",
     "COMPATIBLE_LIVE_CALIBRATION_PLAN_FORMATS",
+    "AmbiguousPaidAttempt",
     "LiveJudgeError",
     "LIVE_CALIBRATION_PLAN_FORMAT",
     "LIVE_CALIBRATION_REPORT_FORMAT",

@@ -296,6 +296,38 @@ def test_worker_loads_once_batches_inference_restores_and_persists(tmp_path: Pat
         assert not any("vocab" in name for name in archive.files)
 
 
+def test_nonproduction_runtime_records_explicit_backend_identity(tmp_path: Path) -> None:
+    model = FakeQwen()
+    processor = FakeProcessor()
+    runtime = TrialRuntime(
+        verified_model_sha256=MODEL_SHA,
+        verified_snapshot_manifest_sha256=MANIFEST_SHA,
+        output_dir=tmp_path,
+        preservation_collector=FakePreservationCollector(),
+        bundle_loader=lambda _config: _bundle(model, processor),
+        enforce_production_identity=False,
+        runtime_dtype_name="torch.bfloat16",
+        runtime_device_map="mps:0",
+        runtime_attention_implementation="eager",
+    )
+    result = runtime.evaluate(_batch())
+    assert result.runtime_identity["device_map"] == "mps:0"
+    assert result.runtime_identity["attention_implementation"] == "eager"
+
+
+def test_production_runtime_rejects_backend_identity_override(tmp_path: Path) -> None:
+    with pytest.raises(
+        QwenTrialRuntimeError, match="production runtime identity cannot be overridden"
+    ):
+        TrialRuntime(
+            verified_model_sha256=MODEL_SHA,
+            verified_snapshot_manifest_sha256=MANIFEST_SHA,
+            output_dir=tmp_path,
+            preservation_collector=FakePreservationCollector(),
+            runtime_device_map="mps:0",
+        )
+
+
 def test_inference_failure_restores_weights_and_poisons_worker(tmp_path: Path) -> None:
     model = FakeQwen()
     model.fail_generation = True

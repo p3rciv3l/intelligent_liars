@@ -187,6 +187,15 @@ def topk_preservation_kl_loss(
     temperature: float = 1.0,
 ) -> torch.Tensor:
     """Forward KL over retained tokens plus an aggregate omitted-token bucket."""
+    # Apple MPS has no float64 kernels, while this frozen KL computation uses
+    # float64 accumulation to keep tiny preservation deltas stable. Copy the
+    # already-produced logits and compressed targets to CPU on that explicitly
+    # non-production backend; CUDA and CPU production behavior is unchanged.
+    if student_logits.device.type == "mps":
+        student_logits = student_logits.cpu()
+        base_indices = base_indices.cpu()
+        base_probabilities = base_probabilities.cpu()
+        attention_mask = attention_mask.cpu()
     if temperature <= 0:
         raise ValueError("KL temperature must be positive")
     if base_probabilities.shape[:-1] != base_indices.shape[:-1]:

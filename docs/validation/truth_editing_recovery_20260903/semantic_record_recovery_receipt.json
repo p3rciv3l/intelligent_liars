@@ -1,0 +1,32 @@
+{
+  "boundary_count": 1,
+  "content_sha256": "608087dd0a013acb8417a48755f6a0e01aa9f1a6cdce814d92e38e9cb8a916dc",
+  "duplicate_judge_invocation_record_ids": [],
+  "event_sequence_sha256": "4a3c9769be62fe76b0126b486fa72e4d0f6b53c7a991567e96c5f8fac5e83ed4",
+  "forced_signal": "SIGKILL",
+  "format": "truth_editing_live_semantic_record_recovery_receipt_v1",
+  "kill_before_record_id": "direct-2",
+  "post_restart_judge_invocation_record_ids": [
+    "direct-2"
+  ],
+  "pre_kill_completed_record_ids": [
+    "direct-1"
+  ],
+  "provider_request_identities": [
+    {
+      "cache_key_sha256": "258cd904aaf6ab35b3f4c9e90befbf3b14217ff9e46c7d2d0d99dd6628a56885",
+      "price_usd": "0.0006014",
+      "receipt_sha256": "17239822bb899e88f938fb15e8a63829cbf1c0be03c13213aba75d42377d5791"
+    },
+    {
+      "cache_key_sha256": "df95f6171a31464f40efe93002189690bd1f6eebb17ebb2b88b583ece1a03628",
+      "price_usd": "0.000370885",
+      "receipt_sha256": "836bfaadd4612cc3810b3488b699138c5cf67916d4d8cbdf9a4057e2e546a86f"
+    }
+  ],
+  "semantic_completion_file_sha256s": [
+    "8d8dbbd9b18de2adfafb9b2f10c330c0a12003f7b1d083fe42a607a74e09ba01",
+    "3831bb96de3209af1a22fd613cdff2179f77ab679baa607eb80f0a59293008c6"
+  ],
+  "terminal_assessment_status": "feasible"
+}

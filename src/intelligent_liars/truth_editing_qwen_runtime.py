@@ -405,6 +405,9 @@ class TrialRuntime:
         enforce_production_identity: bool = True,
         inference_microbatch_size: int = 4,
         bundle_verifier: BundleVerifier | None = None,
+        runtime_dtype_name: str = QWEN_DTYPE_NAME,
+        runtime_device_map: str = QWEN_DEVICE_MAP,
+        runtime_attention_implementation: str = QWEN_ATTENTION_IMPLEMENTATION,
     ) -> None:
         self._verified_model_sha256 = _verified_sha256(
             verified_model_sha256, "verified_model_sha256"
@@ -420,6 +423,29 @@ class TrialRuntime:
         self._input_builder = input_builder or _build_inputs
         self._clock = clock
         self._enforce_production_identity = enforce_production_identity
+        runtime_fields = {
+            "runtime_dtype_name": runtime_dtype_name,
+            "runtime_device_map": runtime_device_map,
+            "runtime_attention_implementation": runtime_attention_implementation,
+        }
+        if any(
+            not isinstance(value, str) or not value.strip() or value != value.strip()
+            for value in runtime_fields.values()
+        ):
+            raise QwenTrialRuntimeError(
+                "runtime identity overrides must be nonempty trimmed strings"
+            )
+        if enforce_production_identity and runtime_fields != {
+            "runtime_dtype_name": QWEN_DTYPE_NAME,
+            "runtime_device_map": QWEN_DEVICE_MAP,
+            "runtime_attention_implementation": QWEN_ATTENTION_IMPLEMENTATION,
+        }:
+            raise QwenTrialRuntimeError(
+                "production runtime identity cannot be overridden"
+            )
+        self._runtime_dtype_name = runtime_dtype_name
+        self._runtime_device_map = runtime_device_map
+        self._runtime_attention_implementation = runtime_attention_implementation
         if (
             isinstance(inference_microbatch_size, bool)
             or not isinstance(inference_microbatch_size, int)
@@ -447,9 +473,9 @@ class TrialRuntime:
             "revision": DEFAULT_MODEL_REVISION,
             "model_sha256": self._verified_model_sha256,
             "snapshot_manifest_sha256": self._verified_snapshot_manifest_sha256,
-            "dtype": QWEN_DTYPE_NAME,
-            "device_map": QWEN_DEVICE_MAP,
-            "attention_implementation": QWEN_ATTENTION_IMPLEMENTATION,
+            "dtype": self._runtime_dtype_name,
+            "device_map": self._runtime_device_map,
+            "attention_implementation": self._runtime_attention_implementation,
             "local_files_only": True,
             "use_cache": True,
             "routine_activation_hooks": False,
@@ -886,9 +912,9 @@ class TrialRuntime:
                 "revision": DEFAULT_MODEL_REVISION,
                 "model_sha256": self._verified_model_sha256,
                 "snapshot_manifest_sha256": self._verified_snapshot_manifest_sha256,
-                "dtype": QWEN_DTYPE_NAME,
-                "device_map": QWEN_DEVICE_MAP,
-                "attention_implementation": QWEN_ATTENTION_IMPLEMENTATION,
+                "dtype": self._runtime_dtype_name,
+                "device_map": self._runtime_device_map,
+                "attention_implementation": self._runtime_attention_implementation,
                 "local_files_only": True,
                 "use_cache": True,
                 "routine_activation_hooks": False,

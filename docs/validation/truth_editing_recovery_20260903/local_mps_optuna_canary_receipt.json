@@ -1,0 +1,47 @@
+{
+  "all_trials_terminally_accounted": true,
+  "canary_judge_actual_spend_usd": 0.00312508,
+  "canary_judge_completed_calls": 19,
+  "content_sha256": "4aa52ba5d8a7589232c8e241d7455285b84d968699bfa69f411858f2977f1afd",
+  "format": "truth_editing_local_mps_optuna_canary_receipt_v1",
+  "full_measured_preservation_source_trial_count": 4,
+  "large_run_scientific_equivalence": false,
+  "model_sha256": "bbca6a8b09a56f0c538887b82b9594b0c0945c5fbcde54f39eda153a9f64eda8",
+  "ordinary_continuation_trial_count": 3,
+  "preparation_file_sha256": "205e10a011e4df124471129f9b15324afec6e16396d9f01e4779f8e3ba9a155a",
+  "rescore_generation_file_sha256": "14f74603c9f27a4bb6060868803fe48502396e8cba9c3ddd343e5744d0137ab7",
+  "rescore_generation_sha256": "a66880206c6ef0fdddde0b4c020ec0511fd293276e8791379e11acf76c0d1365",
+  "rescore_request_count": 1,
+  "runtime_attention_implementation": "eager",
+  "runtime_device": "mps",
+  "runtime_dtype": "torch.bfloat16",
+  "runtime_scope": "nonproduction_apple_mps_eager_portability_only",
+  "snapshot_manifest_sha256": "6ec207494fed0658ebaf31f1083f77110caae45f8c2392354e767ef54c78dd07",
+  "source_checkpoint_file_sha256": "0ee73dad5c296578112ac4ef1cdb03c721037527942b9a3f4a3632bc211c1d1d",
+  "source_completed_trials": 4,
+  "source_history_preserved": true,
+  "source_journal_file_sha256": "b2efc1bfde22afa52d10a736bb6ce791b23051fa8f066aa70cf3ffa4094636ce",
+  "source_optuna_log_file_sha256": "b66871bbb661457ea1a30d95d50fc37f67d4a4d0847edb407dfe6f8be5011405",
+  "source_outcomes": {
+    "operational_failure": 1,
+    "scientifically_infeasible": 3
+  },
+  "source_report_file_sha256": "a381aeace54dacce1a286efcab4078bd95710913a4fd1748511eb62641c31038",
+  "source_stop_boundaries": [
+    2,
+    4
+  ],
+  "synthetic_preservation_appended_trial_count": 4,
+  "target_completed_trials": 8,
+  "target_journal_file_sha256": "5113796037ecc3913b20433363b266355960921f8923011a9470f2cb15748cc5",
+  "target_optuna_log_file_sha256": "7f2ad74c9995301fa95de7595006504f60628ba9d21f6253510f5a21acda68b0",
+  "target_outcomes": {
+    "operational_failure": 1,
+    "scientifically_infeasible": 7
+  },
+  "target_report_file_sha256": "6473a20c81ff3e0dd6607dae12c2f98efe62a378b7d8e4169cd5092fbb9a6406",
+  "target_stop_boundaries": [
+    6,
+    8
+  ]
+}

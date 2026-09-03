@@ -4,6 +4,8 @@ import hashlib
 import json
 import subprocess
 import sys
+import threading
+import time
 from pathlib import Path
 
 import pytest
@@ -99,6 +101,55 @@ def _response() -> dict[str, object]:
     }
 
 
+class _ConcurrentResponseTransport:
+    def __init__(self) -> None:
+        self.requests: list[dict[str, object]] = []
+        self.active = 0
+        self.maximum_active = 0
+        self.lock = threading.Lock()
+
+    def complete(self, request: dict[str, object]) -> dict[str, object]:
+        with self.lock:
+            self.requests.append(request)
+            self.active += 1
+            self.maximum_active = max(self.maximum_active, self.active)
+        try:
+            time.sleep(0.02)
+            messages = request["messages"]
+            assert isinstance(messages, list)
+            prompt = json.loads(messages[1]["content"])
+            rows = prompt["bundle"]["responses"]
+            semantic = json.loads(str(_response()["content"]))
+            semantic["responses"] = [
+                {
+                    **semantic["responses"][0],
+                    "response_id": row["response_id"],
+                }
+                for row in rows
+            ]
+            return {**_response(), "content": json.dumps(semantic)}
+        finally:
+            with self.lock:
+                self.active -= 1
+
+
+def _multi_bundle_plan(count: int) -> dict[str, object]:
+    plan = _plan()
+    template = plan["absolute_bundles"][0]
+    bundles = []
+    for index in range(count):
+        bundle = json.loads(json.dumps(template))
+        bundle["bundle_id"] = f"absolute-{index}"
+        bundle["responses"][0]["response_id"] = f"record-{index}"
+        bundle["bundle_sha256"] = _hash(
+            {key: value for key, value in bundle.items() if key != "bundle_sha256"}
+        )
+        bundles.append(bundle)
+    unsigned = {key: value for key, value in plan.items() if key != "content_sha256"}
+    unsigned["absolute_bundles"] = bundles
+    return {**unsigned, "content_sha256": _hash(unsigned)}
+
+
 def test_dry_run_validates_and_makes_no_transport_call(tmp_path: Path) -> None:
     transport = StoredJudgeTransport([])
     report = run_live_judge_calibration(
@@ -128,6 +179,162 @@ def test_execution_is_resumable_without_duplicate_paid_call(tmp_path: Path) -> N
     assert second_transport.requests == []
     assert first == second
     assert parse_live_judge_calibration_report(first) == first
+
+
+def test_concurrent_execution_is_bounded_deterministic_and_resumable(
+    tmp_path: Path,
+) -> None:
+    plan = _multi_bundle_plan(8)
+    first_transport = _ConcurrentResponseTransport()
+    first = run_live_judge_calibration(
+        plan,
+        cache_dir=tmp_path / "cache",
+        attempt_dir=tmp_path / "attempts",
+        transport=first_transport,
+        max_concurrency=4,
+    )
+    assert first["status"] == "complete"
+    assert first["completed_operation_ids"] == [
+        f"absolute-{index}" for index in range(8)
+    ]
+    assert first["actual_paid_calls"] == 8
+    assert 2 <= first_transport.maximum_active <= 4
+
+    resumed_transport = _ConcurrentResponseTransport()
+    resumed = run_live_judge_calibration(
+        plan,
+        cache_dir=tmp_path / "cache",
+        attempt_dir=tmp_path / "attempts",
+        transport=resumed_transport,
+        max_concurrency=4,
+    )
+    assert resumed == first
+    assert resumed_transport.requests == []
+
+
+def test_concurrent_duplicate_request_identity_is_single_flight(tmp_path: Path) -> None:
+    plan = _plan()
+    first = json.loads(json.dumps(plan["absolute_bundles"][0]))
+    second = json.loads(json.dumps(first))
+    second["bundle_id"] = "absolute-2"
+    second["bundle_sha256"] = _hash(
+        {key: value for key, value in second.items() if key != "bundle_sha256"}
+    )
+    unsigned = {key: value for key, value in plan.items() if key != "content_sha256"}
+    unsigned["absolute_bundles"] = [first, second]
+    duplicate_plan = {**unsigned, "content_sha256": _hash(unsigned)}
+    transport = _ConcurrentResponseTransport()
+
+    report = run_live_judge_calibration(
+        duplicate_plan,
+        cache_dir=tmp_path / "cache",
+        attempt_dir=tmp_path / "attempts",
+        transport=transport,
+        max_concurrency=2,
+    )
+
+    assert report["completed_operation_ids"] == ["absolute-1", "absolute-2"]
+    assert report["actual_paid_calls"] == 1
+    assert len(transport.requests) == 1
+
+
+def test_concurrent_duplicate_transport_failure_is_single_flight_and_replay_stable(
+    tmp_path: Path,
+) -> None:
+    plan = _plan()
+    first = json.loads(json.dumps(plan["absolute_bundles"][0]))
+    second = json.loads(json.dumps(first))
+    second["bundle_id"] = "absolute-2"
+    second["bundle_sha256"] = _hash(
+        {key: value for key, value in second.items() if key != "bundle_sha256"}
+    )
+    unsigned = {key: value for key, value in plan.items() if key != "content_sha256"}
+    unsigned["absolute_bundles"] = [first, second]
+    duplicate_plan = {**unsigned, "content_sha256": _hash(unsigned)}
+
+    class TimeoutTransport:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def complete(self, request):
+            del request
+            self.calls += 1
+            time.sleep(0.02)
+            raise TimeoutError("ambiguous delivery")
+
+    first_transport = TimeoutTransport()
+    first_report = run_live_judge_calibration(
+        duplicate_plan,
+        cache_dir=tmp_path / "cache",
+        attempt_dir=tmp_path / "attempts",
+        transport=first_transport,
+        max_concurrency=2,
+    )
+    replay_transport = TimeoutTransport()
+    replay_report = run_live_judge_calibration(
+        duplicate_plan,
+        cache_dir=tmp_path / "cache",
+        attempt_dir=tmp_path / "attempts",
+        transport=replay_transport,
+        max_concurrency=2,
+    )
+
+    assert first_transport.calls == 1
+    assert replay_transport.calls == 0
+    assert first_report == replay_report
+    assert len(set(first_report["judge_failure_receipt_sha256s"])) == 1
+
+
+def test_restart_quarantines_crash_pending_request_and_runs_only_missing_operations(
+    tmp_path: Path,
+) -> None:
+    plan = _multi_bundle_plan(3)
+    cache_dir = tmp_path / "cache"
+    attempt_dir = tmp_path / "attempts"
+
+    class CrashAfterReservationTransport:
+        def complete(self, request):
+            del request
+            raise KeyboardInterrupt
+
+    with pytest.raises(KeyboardInterrupt):
+        run_live_judge_calibration(
+            plan,
+            cache_dir=cache_dir,
+            attempt_dir=attempt_dir,
+            transport=CrashAfterReservationTransport(),
+            max_concurrency=1,
+        )
+
+    pending = list(attempt_dir.glob("*/*/pending.json"))
+    assert len(pending) == 1
+    assert not list(attempt_dir.glob("*/*/completed.json"))
+
+    resumed_transport = _ConcurrentResponseTransport()
+    report = run_live_judge_calibration(
+        plan,
+        cache_dir=cache_dir,
+        attempt_dir=attempt_dir,
+        transport=resumed_transport,
+        max_concurrency=3,
+    )
+
+    assert report["status"] == "complete_with_failures"
+    assert report["failed_operation_ids"] == ["absolute-0"]
+    assert report["completed_operation_ids"] == ["absolute-1", "absolute-2"]
+    assert report["actual_paid_calls"] == 2
+    assert len(resumed_transport.requests) == 2
+
+    replay_transport = _ConcurrentResponseTransport()
+    replay = run_live_judge_calibration(
+        plan,
+        cache_dir=cache_dir,
+        attempt_dir=attempt_dir,
+        transport=replay_transport,
+        max_concurrency=3,
+    )
+    assert replay == report
+    assert replay_transport.requests == []
 
 
 def test_budget_guard_blocks_before_transport(tmp_path: Path) -> None:

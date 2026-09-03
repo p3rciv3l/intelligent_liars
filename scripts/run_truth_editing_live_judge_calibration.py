@@ -26,6 +26,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--cache-dir", type=Path, required=True)
     parser.add_argument("--attempt-dir", type=Path, required=True)
     parser.add_argument("--output", type=Path)
+    parser.add_argument(
+        "--max-concurrency",
+        type=int,
+        default=1,
+        help="bounded concurrent judge operations (1-8; default: 1)",
+    )
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument(
         "--execute-live", action="store_true",
@@ -62,6 +68,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         attempt_dir=args.attempt_dir,
         transport=transport,
         dry_run=dry_run,
+        max_concurrency=args.max_concurrency,
     )
     rendered = json.dumps(
         report, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False
