@@ -113,6 +113,15 @@ Purpose: prevent repeated operational mistakes. Read this file before every paid
 - Preserved artifacts: final run receipt (`ff4cbe10…639d4`), phase receipt (`26af501…2846`), journal (`d1b025d…02449`), capacity snapshot (`8a0c3a…6a98d0`), judge cache/ledger, checkpoint, and the stopped output tree/off-host copies.
 - No-data-loss status: no committed trial record, judge cache entry, journal event, checkpoint, or receipt was dropped; the stop is an incomplete run, not a data-loss event.
 
+### OpenRouter judge recovery verification — 2026-09-03
+
+- Recovery target: preserve the original 224-trial history (189 operational failures, 35 scientifically infeasible trials, and zero successful scored trials) while making semantic work durable per record and retrying only unresolved records through a new lineage.
+- Root cause addressed: ambiguous billing is now exact-request state rather than a fleet-wide circuit; terminal failure of the one-correction procedure takes precedence over its crash-resume checkpoint; successful sibling records survive restart; reasoning/tool output is never promoted into semantic answer content; operational judge failures remain unscored and outside Optuna learning. The immutable rescore generation is selectable by hash from production config, forwarded through monitoring, and included in the off-host source/artifact closure.
+- Offline verification: the consolidated recovery, production, monitoring, controller, packaging, and immutable-rescore matrix passed `382` tests with zero failures; targeted Ruff checks passed. A tracked-files-only repository suite passed `1,938` tests after the same fixes; ordinary discovery over the dirty checkout still cannot collect because unrelated untracked Step-5 work references six absent intervention modules and an undeclared `cryptography` dependency. Targeted mypy also reaches existing repository-wide typing debt (`65` errors across imported modules), so neither dirty-checkout result is claimed as a clean repository-wide gate.
+- Live verification: one frozen-route absolute operation plus both order presentations of one native pairwise comparison completed as strict schema-valid results on `z-ai/glm-5.3-flash` through `z-ai/fp8`, with no fallback and no correction retry. Three provider calls cost `$0.00049676` total under an in-process `$0.02` hard ceiling; exact repeats made zero provider calls and returned cache hits.
+- Limitation: the synthetic pairwise probe was order-sensitive and therefore surfaced `disagreement`. This is an explicit ranking-safe outcome, not silently accepted preference evidence; it does not invalidate the production absolute record-scoring path or establish behavioral/scientific success.
+- Privacy and cleanup: no raw prompt or response was written to the repository or a durable live-test cache, no GPU instance was created, and no cloud resource other than the three bounded OpenRouter calls was mutated.
+
 ## Spend ledger
 
 ### Local command-shape failures

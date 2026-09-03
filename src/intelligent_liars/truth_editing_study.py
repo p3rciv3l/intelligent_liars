@@ -2038,15 +2038,21 @@ class StudyReport:
     def successful_trials(self) -> int: return sum(t.result.outcome_kind == "successful" for t in self.trials)
     @property
     def unresolved_operational_failures(self) -> int:
-        resolved_proposals: set[str] = set()
+        resolved_requests: set[str] = set()
         unresolved = 0
         for trial in reversed(self.trials):
-            proposal_sha256 = _sha(trial.proposal.to_dict())
+            request_sha256 = _sha(
+                {
+                    "proposal": trial.proposal.to_dict(),
+                    "tier_name": trial.tier_name,
+                    "evaluation_record_ids": list(trial.evaluation_record_ids),
+                }
+            )
             if trial.result.outcome_kind == "operational_failure":
-                if proposal_sha256 not in resolved_proposals:
+                if request_sha256 not in resolved_requests:
                     unresolved += 1
             else:
-                resolved_proposals.add(proposal_sha256)
+                resolved_requests.add(request_sha256)
         return unresolved
     @property
     def selection_ready(self) -> bool:

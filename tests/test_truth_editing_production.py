@@ -29,6 +29,7 @@ from intelligent_liars.truth_editing_production import (
     RuntimeResultEvidenceBuilder,
     StoredMockTrialRuntime,
     V2GroupedTrialBatchBuilder,
+    configured_search_driver,
     compose_production_run,
 )
 from intelligent_liars.truth_editing_directions import DirectionBank
@@ -310,7 +311,7 @@ def test_batch_identity_mismatch_is_an_operational_failure() -> None:
     assert "does not bind" in (result.detail or "")
 
 
-def test_paid_judge_failure_opens_circuit_instead_of_becoming_trial_result() -> None:
+def test_operational_judge_failure_becomes_unscored_trial_result() -> None:
     class PaidJudgeFailed(_RecipeEvaluator):
         def evaluate(self, execution: Any, outputs: Any, *, tier: str) -> TrialAssessment:
             failure = OperationalJudgeFailure.__new__(OperationalJudgeFailure)
@@ -326,13 +327,15 @@ def test_paid_judge_failure_opens_circuit_instead_of_becoming_trial_result() -> 
         evidence_builder=_EvidenceBuilder(),
     )
 
-    with pytest.raises(ProductionCompositionError, match="paid semantic judge failed closed"):
-        evaluator.evaluate(
-            _proposal(),
-            trial_id="trial-0000",
-            record_ids=("r1",),
-            objective_names=OBJECTIVES,
-        )
+    result = evaluator.evaluate(
+        _proposal(),
+        trial_id="trial-0000",
+        record_ids=("r1",),
+        objective_names=OBJECTIVES,
+    )
+    assert result.outcome_kind == "operational_failure"
+    assert result.metrics == {}
+    assert "OperationalJudgeFailure" in (result.detail or "")
 
 
 def test_production_batch_reuses_one_runtime_in_order() -> None:
@@ -978,12 +981,20 @@ def test_production_config_is_direct_strict_and_resolves_all_checked_in_adapters
         preservation_runtime_packet_root="preservation-runtime",
         preservation_threshold_calibration="preservation-thresholds/calibration.json",
         preservation_threshold_calibration_sha256="c" * 64,
+        rescore_generation="recovery/rescore-generation-v1.json",
+        rescore_generation_sha256="d" * 64,
+        rescore_mode="repair_then_continue",
     )
     path = tmp_path / "production.json"
     path.write_text(json.dumps(payload))
     config = ProductionRunConfig.open(path)
     assert config.study_config == tmp_path / "study.json"
     assert config.search_driver == "optuna"
+    assert config.rescore_generation == (
+        tmp_path / "recovery" / "rescore-generation-v1.json"
+    )
+    assert config.rescore_generation_sha256 == "d" * 64
+    assert config.rescore_mode == "repair_then_continue"
     assert config.judge_budget_ledger_dir == tmp_path / "judge-budget-ledger"
     assert config.judge_budget is not None
     assert str(config.judge_budget.maximum_judge_spend_usd) == "5"
@@ -1003,6 +1014,89 @@ def test_production_config_is_direct_strict_and_resolves_all_checked_in_adapters
     payload["surprise"] = True
     path.write_text(json.dumps(payload))
     with pytest.raises(ProductionCompositionError, match="fields or format"):
+        ProductionRunConfig.open(path)
+
+
+def test_configured_search_driver_strict_opens_bound_rescore_generation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from intelligent_liars import truth_editing_rescore
+
+    generation = object()
+    calls: list[tuple[Path, str]] = []
+
+    def load(path: Path, *, expected_generation_sha256: str) -> object:
+        calls.append((path, expected_generation_sha256))
+        return generation
+
+    class Driver:
+        def __init__(
+            self,
+            *,
+            seed: int,
+            generation: object,
+            continue_optimization_after_replay: bool,
+        ) -> None:
+            self.seed = seed
+            self.generation = generation
+            self.continue_optimization_after_replay = (
+                continue_optimization_after_replay
+            )
+
+    monkeypatch.setattr(truth_editing_rescore, "load_rescore_generation_v1", load)
+    monkeypatch.setattr(truth_editing_rescore, "RescoreOptunaSearchDriver", Driver)
+    config = SimpleNamespace(
+        search_driver="optuna",
+        rescore_generation=tmp_path / "rescore.json",
+        rescore_generation_sha256="a" * 64,
+        rescore_mode="repair_then_continue",
+    )
+
+    driver = configured_search_driver(
+        config, SimpleNamespace(sampler_seed=73)  # type: ignore[arg-type]
+    )
+
+    assert calls == [(tmp_path / "rescore.json", "a" * 64)]
+    assert driver.seed == 73  # type: ignore[attr-defined]
+    assert driver.generation is generation  # type: ignore[attr-defined]
+    assert driver.continue_optimization_after_replay is True  # type: ignore[attr-defined]
+
+
+@pytest.mark.parametrize(
+    "overrides, message",
+    [
+        ({"rescore_generation": "recovery/rescore.json"}, "fields or format"),
+        ({"rescore_generation_sha256": "a" * 64}, "fields or format"),
+        (
+            {
+                "search_driver": "offline",
+                "rescore_generation": "recovery/rescore.json",
+                "rescore_generation_sha256": "a" * 64,
+                "rescore_mode": "repair_then_continue",
+            },
+            "requires the optuna",
+        ),
+    ],
+)
+def test_production_config_rejects_unbound_rescore_selection(
+    tmp_path: Path, overrides: dict[str, object], message: str
+) -> None:
+    from test_truth_editing_preservation_materialization import _write_source
+    from intelligent_liars.truth_editing_preservation_materialization import (
+        materialize_preservation_runtime_packet,
+    )
+
+    materialize_preservation_runtime_packet(
+        _write_source(tmp_path / "source"), tmp_path / "preservation-runtime"
+    )
+    payload = _production_config_payload(
+        preservation_runtime_packet_root="preservation-runtime",
+        **overrides,
+    )
+    path = tmp_path / "production.json"
+    path.write_text(json.dumps(payload))
+
+    with pytest.raises(ProductionCompositionError, match=message):
         ProductionRunConfig.open(path)
 
 

@@ -1,0 +1,22 @@
+{
+  "format": "truth_editing_historical_failure_topology_v1",
+  "sanitization": {
+    "contains_historical_prompts": false,
+    "contains_historical_responses": false,
+    "contains_credentials": false,
+    "contains_remote_paths": false
+  },
+  "sibling_loss": {
+    "semantic_record_count": 3,
+    "successful_records_before_failure": 1,
+    "failure_position": 2,
+    "failure_class": "ProductionJudgeBudgetCircuitOpen",
+    "required_behavior": "retain_completed_sibling_receipt"
+  },
+  "circuit_cascade": {
+    "ambiguous_request_count": 1,
+    "queued_distinct_request_count": 1,
+    "failure_class": "ProductionJudgeBudgetCircuitOpen",
+    "required_behavior": "block_exact_ambiguous_identity_but_continue_distinct_request"
+  }
+}

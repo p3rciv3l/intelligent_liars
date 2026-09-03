@@ -1510,6 +1510,43 @@ class MonitoredSearchDriver:
 
         self._driver.complete_history_replay()
 
+    def validate_rescore_identity(
+        self,
+        *,
+        study_identity_sha256: str,
+        identity_inputs: Mapping[str, Any],
+    ) -> None:
+        validate = getattr(self._driver, "validate_rescore_identity", None)
+        if validate is not None:
+            validate(
+                study_identity_sha256=study_identity_sha256,
+                identity_inputs=identity_inputs,
+            )
+
+    def initial_journal_batches(
+        self,
+        *,
+        study_identity_sha256: str,
+        identity_inputs: Mapping[str, Any],
+    ) -> tuple[Mapping[str, Any], ...]:
+        seed = getattr(self._driver, "initial_journal_batches", None)
+        if seed is None:
+            return ()
+        return tuple(
+            seed(
+                study_identity_sha256=study_identity_sha256,
+                identity_inputs=identity_inputs,
+            )
+        )
+
+    def evaluation_request_override(
+        self, *, ordinal: int, proposal: Any
+    ) -> Any | None:
+        override = getattr(self._driver, "evaluation_request_override", None)
+        if override is None:
+            return None
+        return override(ordinal=ordinal, proposal=proposal)
+
 
 class CoordinatorTelemetryPump:
     """Poll coordinator-owned GPU telemetry without blocking optimization."""

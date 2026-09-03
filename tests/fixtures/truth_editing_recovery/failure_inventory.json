@@ -1,0 +1,54 @@
+{
+  "format": "truth_editing_historical_failure_inventory_v1",
+  "sanitization": {
+    "contains_historical_prompts": false,
+    "contains_historical_responses": false,
+    "contains_credentials": false,
+    "contains_remote_paths": false,
+    "derivation": "structural_counts_and_exception_classes_only"
+  },
+  "cache_inventory": {
+    "successful_entries": 965,
+    "failure_receipts": 124,
+    "terminal_failure_aliases": 3
+  },
+  "failure_classes": [
+    {
+      "code": "schema_validation_error",
+      "operational_status": "schema_error",
+      "count": 60,
+      "exception_classes": {
+        "JudgeContractError": 36,
+        "LiveJudgeError": 24
+      },
+      "has_provider_response": true
+    },
+    {
+      "code": "empty_response",
+      "operational_status": "invalid_json",
+      "count": 6,
+      "exception_classes": {
+        "EmptyResponse": 6
+      },
+      "has_provider_response": true
+    },
+    {
+      "code": "json_decode_error",
+      "operational_status": "invalid_json",
+      "count": 4,
+      "exception_classes": {
+        "JSONDecodeError": 4
+      },
+      "has_provider_response": true
+    },
+    {
+      "code": "connection_error",
+      "operational_status": "transport_error",
+      "count": 54,
+      "exception_classes": {
+        "ProductionJudgeBudgetCircuitOpen": 54
+      },
+      "has_provider_response": false
+    }
+  ]
+}

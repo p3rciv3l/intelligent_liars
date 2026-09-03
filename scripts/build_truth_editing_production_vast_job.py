@@ -156,6 +156,7 @@ PRODUCTION_SOURCE_CLOSURE = (
     "src/intelligent_liars/truth_editing_dataset_v2.py",
     "src/intelligent_liars/truth_editing_directions.py",
     "src/intelligent_liars/truth_editing_evaluator.py",
+    "src/intelligent_liars/truth_editing_record_completion.py",
     "src/intelligent_liars/truth_editing_failure_policy.py",
     "src/intelligent_liars/truth_editing_final_checkpoint_publication.py",
     "src/intelligent_liars/truth_editing_finalist_checkpoint.py",
@@ -178,6 +179,7 @@ PRODUCTION_SOURCE_CLOSURE = (
     "src/intelligent_liars/truth_editing_qwen_qualification.py",
     "src/intelligent_liars/truth_editing_qwen_runtime.py",
     "src/intelligent_liars/truth_editing_refusal_directions.py",
+    "src/intelligent_liars/truth_editing_rescore.py",
     "src/intelligent_liars/truth_editing_scenario_view.py",
     "src/intelligent_liars/truth_editing_structured_qualification.py",
     "src/intelligent_liars/truth_editing_structured_semantic.py",
@@ -494,6 +496,17 @@ def collect_production_bundle_paths(
         selected.update(
             _regular_files(
                 _resolve_portable(base, production[field], field, repo=repo)
+            )
+        )
+    if "rescore_generation" in production:
+        selected.update(
+            _regular_files(
+                _resolve_portable(
+                    base,
+                    production["rescore_generation"],
+                    "rescore_generation",
+                    repo=repo,
+                )
             )
         )
     for field in _PRODUCTION_DIRECTORY_FIELDS:

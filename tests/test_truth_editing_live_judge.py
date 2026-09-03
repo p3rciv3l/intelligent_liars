@@ -33,12 +33,14 @@ from intelligent_liars.truth_editing_live_judge import (
     PAIRWISE_SEMANTIC_SCHEMA_SHA256,
     StoredJudgeTransport,
     TruthEditingLiveJudge,
+    accepted_live_judge_adapter_code_sha256s,
     judge_timeout_seconds_for_bundle_size,
 )
 from intelligent_liars.truth_editing_production_judge_budget import (
     ProductionJudgeBudget,
     ProductionJudgeBudgetConfig,
     ProductionJudgeBudgetCircuitOpen,
+    ProductionJudgeRequestAmbiguous,
 )
 
 
@@ -466,6 +468,59 @@ def test_absolute_invalid_json_gets_one_json_only_correction() -> None:
     assert correction["operation"] == "json_syntax_correction_v1"
     assert correction["previous_invalid_output"] == fenced["content"]
     assert transport.requests[1]["plugins"] == [{"id": "response-healing"}]
+
+
+@pytest.mark.parametrize(
+    ("healed_content", "expected_status"),
+    [
+        ("{\"responses\": [", "invalid_json"),
+        (
+            {
+                **_absolute_response(),
+                "responses": [
+                    {
+                        key: value
+                        for key, value in _absolute_response()["responses"][0].items()
+                        if key != "brief_evidence"
+                    }
+                ],
+            },
+            "schema_error",
+        ),
+    ],
+)
+def test_malformed_or_semantically_incomplete_healed_json_fails_closed(
+    tmp_path: Path,
+    healed_content: str | dict[str, object],
+    expected_status: str,
+) -> None:
+    initial = _transport_response(_absolute_response())
+    initial["content"] = "not-json"
+    healed = _transport_response(_absolute_response())
+    healed["content"] = (
+        healed_content
+        if isinstance(healed_content, str)
+        else json.dumps(healed_content, sort_keys=True)
+    )
+    cache = FileJudgeCache(tmp_path / "judge-cache")
+    transport = StoredJudgeTransport([initial, healed])
+
+    with pytest.raises(OperationalJudgeFailure) as captured:
+        TruthEditingLiveJudge(transport=transport, cache=cache).judge(_record())
+
+    receipt = captured.value.receipt
+    assert receipt.operational_status == expected_status
+    assert receipt.operational_failure is not None
+    assert receipt.operational_failure.retryable is False
+    assert receipt.parsed_result_sha256 is None
+    assert len(transport.requests) == 2
+    assert list(cache.path.glob("*.json")) == []
+    assert len(list((cache.path / "terminal-failures").glob("*.json"))) == 1
+
+    valid = StoredJudgeTransport([_transport_response(_absolute_response())])
+    with pytest.raises(OperationalJudgeFailure):
+        TruthEditingLiveJudge(transport=valid, cache=cache).judge(_record())
+    assert valid.requests == []
 
 
 
@@ -1002,6 +1057,23 @@ def test_checked_in_live_config_matches_frozen_offline_contract() -> None:
     }
 
 
+def test_accepted_adapter_codes_include_current_and_actual_compatible_predecessors() -> None:
+    accepted = accepted_live_judge_adapter_code_sha256s()
+    current = hashlib.sha256(
+        Path(live_judge_module.__file__).read_bytes()
+    ).hexdigest()
+
+    assert isinstance(accepted, frozenset)
+    assert current in accepted
+    assert {
+        # Hardened one-correction adapter and both timeout-identity successors.
+        "b113069ce3d28417b437419e55ff2a94eed8d100acc623a8bb39cbe6949a3c41",
+        "829bdab9c846d48b358b4eb8ec29f0543514e3b95465b9e49b4a3f530cf54673",
+        "4e3b19382e0ba3c803253f39da7bd79d38417dee6c42fb2cf784af2d3c31e6d4",
+        "0a5ecef95c14fb4864033a4e4e89ff5a9f45c378711e31509a5d7631ddaf51d4",
+    } <= accepted
+
+
 def test_judge_timeout_scales_with_bundle_size_but_preserves_small_frozen_requests() -> None:
     assert judge_timeout_seconds_for_bundle_size(1) == 120.0
     assert judge_timeout_seconds_for_bundle_size(32) == 156.0
@@ -1171,7 +1243,10 @@ def test_openrouter_transport_binds_every_frozen_parameter_before_generate(monke
             return {
                 "model": "z-ai/glm-5.3-flash",
                 "provider": "Z.AI",
-                "choices": [{"message": {"content": json.dumps(_absolute_response())}}],
+                "choices": [{
+                    "finish_reason": "stop",
+                    "message": {"content": json.dumps(_absolute_response())},
+                }],
                 "usage": {
                     "prompt_tokens": 100,
                     "completion_tokens": 20,
@@ -1241,6 +1316,121 @@ def test_openrouter_transport_preserves_known_cost_payload_without_text(monkeypa
     assert response["provider_route"] == "z-ai/fp8"
 
 
+@pytest.mark.parametrize(
+    "noncontent_message",
+    [
+        {
+            "content": None,
+            "reasoning": json.dumps(_absolute_response()),
+        },
+        {
+            "content": None,
+            "tool_calls": [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "return_json",
+                        "arguments": json.dumps(_absolute_response()),
+                    },
+                }
+            ],
+        },
+        {
+            "role": "tool",
+            "content": json.dumps(_absolute_response()),
+        },
+        {
+            "role": "user",
+            "content": json.dumps(_absolute_response()),
+        },
+    ],
+)
+def test_openrouter_transport_never_promotes_reasoning_or_tools_to_judge_content(
+    monkeypatch: pytest.MonkeyPatch,
+    noncontent_message: dict[str, object],
+) -> None:
+    payload = {
+        "model": "z-ai/glm-5.3-flash",
+        "provider": "Z.AI",
+        "choices": [{"message": noncontent_message}],
+        "usage": {
+            "prompt_tokens": 100,
+            "completion_tokens": 20,
+            "total_tokens": 120,
+            "cost": 0.0000125,
+        },
+    }
+
+    class Client:
+        def __init__(self, **kwargs):
+            self.model = kwargs["model"]
+            self.provider_config = kwargs["provider"]
+
+        def generate(self, messages):
+            del messages
+            return payload
+
+    monkeypatch.setattr(
+        "intelligent_liars.clients.openrouter_client.OpenRouterClient", Client
+    )
+    stored = StoredJudgeTransport([_transport_response(_absolute_response())])
+    TruthEditingLiveJudge(transport=stored).judge(_record())
+
+    response = OpenRouterJudgeTransport(api_key="test-placeholder").complete(
+        stored.requests[0]
+    )
+
+    assert response["content"] == ""
+    assert response["raw_payload"] == payload
+
+
+@pytest.mark.parametrize(
+    "finish_reason", [None, "length", "tool_calls", "content_filter"]
+)
+def test_openrouter_transport_rejects_nonterminal_answer_content(
+    monkeypatch: pytest.MonkeyPatch,
+    finish_reason: str | None,
+) -> None:
+    payload = {
+        "model": "z-ai/glm-5.3-flash",
+        "provider": "Z.AI",
+        "choices": [
+            {
+                "finish_reason": finish_reason,
+                "message": {"content": json.dumps(_absolute_response())},
+            }
+        ],
+        "usage": {
+            "prompt_tokens": 100,
+            "completion_tokens": 20,
+            "total_tokens": 120,
+            "cost": 0.0000125,
+        },
+    }
+
+    class Client:
+        def __init__(self, **kwargs):
+            self.model = kwargs["model"]
+            self.provider_config = kwargs["provider"]
+
+        def generate(self, messages):
+            del messages
+            return payload
+
+    monkeypatch.setattr(
+        "intelligent_liars.clients.openrouter_client.OpenRouterClient", Client
+    )
+    stored = StoredJudgeTransport([_transport_response(_absolute_response())])
+    TruthEditingLiveJudge(transport=stored).judge(_record())
+
+    response = OpenRouterJudgeTransport(api_key="test-placeholder").complete(
+        stored.requests[0]
+    )
+
+    assert response["content"] == ""
+    assert response["raw_payload"] == payload
+
+
 def test_paid_empty_openrouter_response_becomes_known_cost_invalid_json(monkeypatch) -> None:
     payload = {
         "model": "z-ai/glm-5.3-flash",
@@ -1275,6 +1465,7 @@ def test_paid_empty_openrouter_response_becomes_known_cost_invalid_json(monkeypa
         ).judge(_record())
 
     receipt = captured.value.receipt
+    assert not isinstance(captured.value, PaidJudgeCircuitOpen)
     assert receipt.operational_status == "invalid_json"
     assert receipt.operational_failure is not None
     assert receipt.operational_failure.code == "empty_response"
@@ -1359,10 +1550,11 @@ def test_pretransport_budget_circuit_does_not_poison_semantic_cache(
 
     cache = FileJudgeCache(tmp_path / "judge-cache")
     blocked = BlockedBeforeTransport()
-    with pytest.raises(OperationalJudgeFailure) as captured:
+    with pytest.raises(ProductionJudgeBudgetCircuitOpen) as captured:
         TruthEditingLiveJudge(transport=blocked, cache=cache).judge(_record())
 
     receipt = captured.value.receipt
+    assert isinstance(captured.value, PaidJudgeCircuitOpen)
     assert blocked.calls == 1
     assert receipt.operational_failure is not None
     assert receipt.operational_failure.message == (
@@ -1378,6 +1570,41 @@ def test_pretransport_budget_circuit_does_not_poison_semantic_cache(
     assert len(valid.requests) == 1
 
 
+def test_correction_circuit_restart_resumes_only_the_correction_request(
+    tmp_path: Path,
+) -> None:
+    invalid = _absolute_response()
+    invalid["unexpected"] = True
+
+    class InitialThenCorrectionCircuit:
+        def __init__(self) -> None:
+            self.requests: list[dict[str, object]] = []
+
+        def complete(self, request):
+            self.requests.append(copy.deepcopy(dict(request)))
+            if len(self.requests) == 1:
+                return _transport_response(invalid)
+            raise ProductionJudgeBudgetCircuitOpen("ambiguous correction request")
+
+    cache = FileJudgeCache(tmp_path / "judge-cache")
+    interrupted = InitialThenCorrectionCircuit()
+    with pytest.raises(ProductionJudgeBudgetCircuitOpen):
+        TruthEditingLiveJudge(transport=interrupted, cache=cache).judge(_record())
+
+    assert len(interrupted.requests) == 2
+    procedure_key = next((cache.path / "pending-corrections").glob("*.json")).stem
+    assert cache.pending_correction(procedure_key) is not None
+    assert cache.terminal_failure(procedure_key) is None
+
+    resumed = StoredJudgeTransport([_transport_response(_absolute_response())])
+    evidence = TruthEditingLiveJudge(transport=resumed, cache=cache).judge(_record())
+
+    assert evidence.result.operational_status == "succeeded"
+    assert len(resumed.requests) == 1
+    resumed_prompt = json.loads(resumed.requests[0]["messages"][1]["content"])
+    assert resumed_prompt["operation"] == "semantic_schema_correction_v1"
+
+
 def test_legacy_budget_circuit_terminal_alias_is_ignored_but_preserved(
     tmp_path: Path,
 ) -> None:
@@ -1389,7 +1616,7 @@ def test_legacy_budget_circuit_terminal_alias_is_ignored_but_preserved(
             )
 
     cache = FileJudgeCache(tmp_path / "judge-cache")
-    with pytest.raises(OperationalJudgeFailure) as captured:
+    with pytest.raises(ProductionJudgeBudgetCircuitOpen) as captured:
         TruthEditingLiveJudge(transport=BlockedBeforeTransport(), cache=cache).judge(
             _record()
         )
@@ -1412,7 +1639,7 @@ def test_legacy_budget_circuit_terminal_alias_is_ignored_but_preserved(
     assert alias.read_bytes() == original
 
 
-def test_direct_response_less_timeout_remains_terminal_in_semantic_cache(
+def test_direct_response_less_timeout_does_not_become_terminal_semantic_alias(
     tmp_path: Path,
 ) -> None:
     class TimeoutTransport:
@@ -1426,16 +1653,17 @@ def test_direct_response_less_timeout_remains_terminal_in_semantic_cache(
             _record()
         )
     key = first.value.receipt.cache_key_sha256
-    assert cache.terminal_failure(key) == first.value.receipt
+    assert cache.failure_receipts(key) == (first.value.receipt,)
+    assert cache.terminal_failure(key) is None
+    assert list((cache.path / "terminal-failures").glob("*.json")) == []
 
     valid = StoredJudgeTransport([_transport_response(_absolute_response())])
-    with pytest.raises(OperationalJudgeFailure) as repeated:
-        TruthEditingLiveJudge(transport=valid, cache=cache).judge(_record())
-    assert repeated.value.receipt == first.value.receipt
-    assert valid.requests == []
+    evidence = TruthEditingLiveJudge(transport=valid, cache=cache).judge(_record())
+    assert evidence.result.operational_status == "succeeded"
+    assert len(valid.requests) == 1
 
 
-def test_prior_adapter_schema_terminal_is_reprocessed_but_preserved(
+def test_prior_compatible_adapter_schema_terminal_replays_without_rebilling(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     invalid = _absolute_response()
@@ -1459,15 +1687,16 @@ def test_prior_adapter_schema_terminal_is_reprocessed_but_preserved(
     )
 
     valid = StoredJudgeTransport([_transport_response(_absolute_response())])
-    evidence = TruthEditingLiveJudge(transport=valid, cache=cache).judge(_record())
+    with pytest.raises(OperationalJudgeFailure) as replayed:
+        TruthEditingLiveJudge(transport=valid, cache=cache).judge(_record())
 
-    assert evidence.result.operational_status == "succeeded"
-    assert len(valid.requests) == 1
+    assert replayed.value.receipt == receipt
+    assert valid.requests == []
     assert alias.read_bytes() == original_alias
     assert receipt in cache.failure_receipts(receipt.cache_key_sha256)
 
 
-def test_prior_adapter_empty_correction_terminal_is_reprocessed(
+def test_prior_compatible_adapter_empty_correction_terminal_replays_without_rebilling(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     invalid = _absolute_response()
@@ -1491,11 +1720,37 @@ def test_prior_adapter_empty_correction_terminal_is_reprocessed(
     )
 
     valid = StoredJudgeTransport([_transport_response(_absolute_response())])
-    evidence = TruthEditingLiveJudge(transport=valid, cache=cache).judge(_record())
+    with pytest.raises(OperationalJudgeFailure) as replayed:
+        TruthEditingLiveJudge(transport=valid, cache=cache).judge(_record())
 
-    assert evidence.result.operational_status == "succeeded"
-    assert len(valid.requests) == 1
+    assert replayed.value.receipt == receipt
+    assert valid.requests == []
     assert receipt in cache.failure_receipts(receipt.cache_key_sha256)
+
+
+def test_terminal_alias_rejects_cross_wired_correction_request_hash(
+    tmp_path: Path,
+) -> None:
+    invalid = _absolute_response()
+    invalid["unexpected"] = True
+    cache = FileJudgeCache(tmp_path / "judge-cache")
+    with pytest.raises(OperationalJudgeFailure):
+        TruthEditingLiveJudge(
+            transport=StoredJudgeTransport(
+                [_transport_response(invalid), _transport_response(invalid)]
+            ),
+            cache=cache,
+        ).judge(_record())
+
+    pending_path = next((cache.path / "pending-corrections").glob("*.json"))
+    pending = json.loads(pending_path.read_text())
+    pending["correction_request_sha256"] = "f" * 64
+    unsigned = {key: value for key, value in pending.items() if key != "content_sha256"}
+    pending["content_sha256"] = _sha_json(unsigned)
+    pending_path.write_text(json.dumps(pending))
+
+    with pytest.raises(LiveJudgeError, match="correction identity differs"):
+        cache.terminal_failure(pending_path.stem)
 
 
 def test_budget_ledger_remains_authoritative_for_exact_ambiguous_request(
@@ -1523,10 +1778,12 @@ def test_budget_ledger_remains_authoritative_for_exact_ambiguous_request(
     budget = ProductionJudgeBudget(tmp_path / "judge-budget", config=config)
     cache = FileJudgeCache(tmp_path / "judge-cache")
     failed_transport = ResponseLessFailure()
-    with pytest.raises(OperationalJudgeFailure):
+    with pytest.raises(OperationalJudgeFailure) as first:
         TruthEditingLiveJudge(
             transport=budget.transport(failed_transport), cache=cache
         ).judge(_record())
+    assert not isinstance(first.value, PaidJudgeCircuitOpen)
+    assert isinstance(first.value.__cause__, ProductionJudgeRequestAmbiguous)
     assert failed_transport.calls == 1
 
     budget.acknowledge_ambiguous_transport_circuit()
@@ -1537,7 +1794,8 @@ def test_budget_ledger_remains_authoritative_for_exact_ambiguous_request(
         TruthEditingLiveJudge(
             transport=budget.transport(exact_retry), cache=cache
         ).judge(_record())
-    assert isinstance(repeated.value.__cause__, ProductionJudgeBudgetCircuitOpen)
+    assert not isinstance(repeated.value, PaidJudgeCircuitOpen)
+    assert repeated.value.receipt.operational_failure is not None
     assert exact_retry.requests == []
 
 
@@ -1577,12 +1835,16 @@ def test_duplicate_failure_event_is_atomic_first_writer_wins(tmp_path: Path) -> 
     invalid = _transport_response(_absolute_response())
     invalid["content"] = "not-json"
     cache = FileJudgeCache(tmp_path / "judge-cache")
-    receipts = []
-    for _ in range(2):
-        with pytest.raises(OperationalJudgeFailure) as captured:
-            TruthEditingLiveJudge(
-                transport=StoredJudgeTransport([invalid]), cache=cache, clock=fixed
-            ).judge(_record())
-        receipts.append(captured.value.receipt)
-    assert receipts[0].content_sha256 == receipts[1].content_sha256
-    assert cache.failure_receipts(receipts[0].cache_key_sha256) == (receipts[0],)
+    with pytest.raises(OperationalJudgeFailure) as captured:
+        TruthEditingLiveJudge(
+            transport=StoredJudgeTransport([invalid]), cache=cache, clock=fixed
+        ).judge(_record())
+    receipt = captured.value.receipt
+
+    # Duplicate the exact immutable event, including attempt role and receipt
+    # identity. Separate initial/correction failures are different events and
+    # must not be collapsed merely because their response bodies match.
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        tuple(pool.map(cache.record_failure, (receipt, receipt)))
+
+    assert cache.failure_receipts(receipt.cache_key_sha256) == (receipt,)

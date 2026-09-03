@@ -568,6 +568,11 @@ def test_materializer_copies_only_resume_state_and_rejects_symlinks(
 ) -> None:
     source = tmp_path / "source"
     _snapshot(source, 8)
+    completion = (
+        source
+        / "judge-cache/semantic-record-completions/scopes/scope-1/record-1.json"
+    )
+    _json(completion, {"format": "terminal-semantic-record-fixture-v1"})
     assembled = materialize_offhost_snapshot(
         tmp_path / "assembled",
         binding=_binding(8),
@@ -578,6 +583,16 @@ def test_materializer_copies_only_resume_state_and_rejects_symlinks(
         judge_budget_ledger_dir=source / "judge-budget-ledger",
     )
     assert (assembled / "fleet-receipts/trial-0007.json").is_file()
+    assert (
+        assembled
+        / "judge-cache/semantic-record-completions/scopes/scope-1/record-1.json"
+    ).is_file()
+    hydrated = tmp_path / "hydrated"
+    hydrate_offhost_snapshot(assembled, hydrated, binding=_binding(8))
+    assert (
+        hydrated
+        / "providers/judge-cache/semantic-record-completions/scopes/scope-1/record-1.json"
+    ).is_file()
     assert not (assembled / "unrelated").exists()
 
     bad = tmp_path / "bad"
@@ -601,11 +616,16 @@ def test_partial_materializer_ignores_runtime_transient_staging_directories(
 ) -> None:
     host = tmp_path / "host"
     events = _pending_runtime(host, (0,))
+    completion = (
+        host
+        / "judge-cache/semantic-record-completions/scopes/scope-1/record-1.json"
+    )
+    _json(completion, {"format": "terminal-semantic-record-fixture-v1"})
     transient = host / "runtime/.batch.staging-314-123"
     transient.mkdir()
     (transient / "incomplete.bin").write_bytes(b"not durable")
 
-    snapshot, _binding_value = materialize_offhost_partial_snapshot(
+    snapshot, binding_value = materialize_offhost_partial_snapshot(
         tmp_path / "partial-snapshot",
         committed_binding=_binding(0),
         durable_event=events[0],
@@ -617,6 +637,16 @@ def test_partial_materializer_ignores_runtime_transient_staging_directories(
     )
 
     assert not (snapshot / "runtime" / transient.name).exists()
+    assert (
+        snapshot
+        / "judge-cache/semantic-record-completions/scopes/scope-1/record-1.json"
+    ).is_file()
+    restored = tmp_path / "restored-partial"
+    hydrate_offhost_partial_snapshot(snapshot, restored, binding=binding_value)
+    assert (
+        restored
+        / "providers/judge-cache/semantic-record-completions/scopes/scope-1/record-1.json"
+    ).is_file()
 
 
 def test_clean_host_hydration_atomically_reconstructs_canonical_runtime_layout(

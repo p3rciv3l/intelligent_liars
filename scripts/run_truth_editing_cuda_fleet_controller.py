@@ -46,6 +46,7 @@ from intelligent_liars.truth_editing_production import (  # noqa: E402
     ImmutableStudyArtifactAdapter,
     ProductionRunConfig,
     ProductionTruthEditingRun,
+    configured_search_driver,
     open_finalist_export_inputs,
     open_production_run,
 )
@@ -96,7 +97,6 @@ from intelligent_liars.truth_editing_offhost_checkpoint import (  # noqa: E402
 )
 from intelligent_liars.truth_editing_study import (  # noqa: E402
     CompletedBatchCommit,
-    OptunaSearchDriver,
     PreparedStudyContext,
     TruthEditingStudy,
     TruthEditingStudyConfig,
@@ -345,7 +345,7 @@ def planned_fleet_study_identity_sha256(
     )
     identity_run = ProductionTruthEditingRun(
         study=TruthEditingStudy(study_config, bank.manifest),
-        driver=OptunaSearchDriver(seed=study_config.sampler_seed),
+        driver=configured_search_driver(production, study_config),
         evaluator=identity_evaluator,
         artifacts=ImmutableStudyArtifactAdapter(production.artifact_dir),
         journal_path=production.journal_path,
@@ -1546,7 +1546,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     gpu_projected_usd = float(fleet.maximum_infrastructure_spend_usd)
     driver = MonitoredSearchDriver(
-        OptunaSearchDriver(seed=study_config.sampler_seed), monitor
+        configured_search_driver(production, study_config), monitor
     )
     run = ProductionTruthEditingRun(
         study=TruthEditingStudy(study_config, bank.manifest),
@@ -1712,10 +1712,11 @@ def main(argv: list[str] | None = None) -> int:
         latest_coverage = context.coverage_summary
         if context.study_identity_sha256 != run.planned_study_identity_sha256:
             raise ValueError("prepared study identity differs from planned study")
-        # Completed batches are replayed through after_complete_batch below,
-        # which first commits their signed rolling observation. Only the empty
-        # study needs a pre-dispatch authorization barrier here.
-        if context.completed_trials != 0:
+        # Existing checkpoints are replayed through after_complete_batch below.
+        # A fresh rescore lineage instead seeds immutable source batches and
+        # must establish its first target-lineage authorization at that exact
+        # capacity-bound boundary before dispatch.
+        if context.completed_trials != 0 and scheduler.has_checkpoint:
             return
         admitted = durable_batch_admission.admit_batch(
             completed_trials=context.completed_trials,
@@ -1735,7 +1736,7 @@ def main(argv: list[str] | None = None) -> int:
             monitor.record_adaptive_progress(
                 _adaptive_progress(
                     checkpoint=checkpoint,
-                    completed_trials=0,
+                    completed_trials=context.completed_trials,
                     coverage=context.coverage_summary,
                     capacity_receipt=rolling_capacity.current_receipt(),
                     policy=capacity_policy,
@@ -1744,7 +1745,7 @@ def main(argv: list[str] | None = None) -> int:
             )
         publish_boundary(
             study_identity_sha256=context.study_identity_sha256,
-            completed_trials=0,
+            completed_trials=context.completed_trials,
             staging_identity_sha256=context.context_sha256,
         )
 

@@ -67,6 +67,7 @@ from .truth_editing_study import (
     SearchProposal,
     StudyReport,
     TruthEditingStudy,
+    TruthEditingStudyConfig,
 )
 from .truth_editing_batch_execution import BatchEvaluationRequest
 from .models import ModelLoadConfig
@@ -1964,6 +1965,9 @@ class ProductionRunConfig:
     model_cache_dir: Path
     snapshot_manifest_path: Path
     search_driver: str
+    rescore_generation: Path | None
+    rescore_generation_sha256: str | None
+    rescore_mode: str | None
     verified_model_sha256: str
     verified_snapshot_manifest_sha256: str
     max_new_tokens: int
@@ -1993,7 +1997,7 @@ class ProductionRunConfig:
             "preservation_threshold_calibration",
             "preservation_threshold_calibration_sha256",
         }
-        accepted_fields = {
+        base_accepted_fields = {
             frozenset(new_fields),
             frozenset(legacy_fields),
             frozenset(new_fields | calibration_fields),
@@ -2010,6 +2014,14 @@ class ProductionRunConfig:
                 | calibration_fields
                 | {"judge_budget_ledger_dir", "judge_budget"}
             ),
+        }
+        rescore_fields = {
+            "rescore_generation",
+            "rescore_generation_sha256",
+            "rescore_mode",
+        }
+        accepted_fields = base_accepted_fields | {
+            frozenset(fields | rescore_fields) for fields in base_accepted_fields
         }
         if (
             frozenset(raw) not in accepted_fields
@@ -2041,6 +2053,27 @@ class ProductionRunConfig:
         search_driver = str(raw["search_driver"])
         if search_driver not in {"offline", "optuna"}:
             raise ProductionCompositionError("search_driver must be offline or optuna")
+        if "rescore_generation" in raw and search_driver != "optuna":
+            raise ProductionCompositionError(
+                "rescore_generation requires the optuna search driver"
+            )
+        rescore_mode = None
+        if "rescore_mode" in raw:
+            rescore_mode = str(raw["rescore_mode"])
+            if rescore_mode != "repair_then_continue":
+                raise ProductionCompositionError(
+                    "rescore_mode must be repair_then_continue"
+                )
+        rescore_generation_sha: str | None = None
+        if "rescore_generation_sha256" in raw:
+            rescore_generation_sha = str(raw["rescore_generation_sha256"])
+            if len(rescore_generation_sha) != 64 or any(
+                character not in "0123456789abcdef"
+                for character in rescore_generation_sha
+            ):
+                raise ProductionCompositionError(
+                    "rescore_generation_sha256 must be lowercase SHA-256"
+                )
         model_sha = str(raw["verified_model_sha256"])
         if len(model_sha) != 64 or any(character not in "0123456789abcdef" for character in model_sha):
             raise ProductionCompositionError("verified_model_sha256 must be lowercase SHA-256")
@@ -2119,6 +2152,11 @@ class ProductionRunConfig:
         calibration_path = (
             resolve(raw["preservation_threshold_calibration"])
             if "preservation_threshold_calibration" in raw
+            else None
+        )
+        rescore_generation_path = (
+            resolve(raw["rescore_generation"])
+            if "rescore_generation" in raw
             else None
         )
         judge_budget = None
@@ -2212,11 +2250,53 @@ class ProductionRunConfig:
             model_cache_dir=resolved_paths["model_cache_dir"],
             snapshot_manifest_path=resolved_paths["snapshot_manifest_path"],
             search_driver=search_driver,
+            rescore_generation=rescore_generation_path,
+            rescore_generation_sha256=rescore_generation_sha,
+            rescore_mode=rescore_mode,
             verified_model_sha256=model_sha,
             verified_snapshot_manifest_sha256=snapshot_sha,
             max_new_tokens=max_new_tokens,
             minimum_target_mean_log_probability=float(threshold),
         )
+
+
+def configured_search_driver(
+    config: ProductionRunConfig,
+    study_config: TruthEditingStudyConfig,
+) -> SearchDriver:
+    """Build the identity-bound production driver selected by frozen config."""
+
+    from .truth_editing_study import (
+        OfflineDeterministicSearchDriver,
+        OptunaSearchDriver,
+    )
+
+    if config.rescore_generation is not None:
+        from .truth_editing_rescore import (
+            RescoreOptunaSearchDriver,
+            load_rescore_generation_v1,
+        )
+
+        if config.rescore_generation_sha256 is None:
+            raise ProductionCompositionError(
+                "rescore generation identity is required"
+            )
+        generation = load_rescore_generation_v1(
+            config.rescore_generation,
+            expected_generation_sha256=config.rescore_generation_sha256,
+        )
+        return RescoreOptunaSearchDriver(
+            seed=study_config.sampler_seed,
+            generation=generation,
+            continue_optimization_after_replay=(
+                config.rescore_mode == "repair_then_continue"
+            ),
+        )
+    if config.rescore_generation_sha256 is not None:
+        raise ProductionCompositionError("rescore generation path is required")
+    if config.search_driver == "optuna":
+        return OptunaSearchDriver(seed=study_config.sampler_seed)
+    return OfflineDeterministicSearchDriver(seed=study_config.sampler_seed)
 
 
 def open_production_run(config_path: Path | str) -> ProductionTruthEditingRun:
@@ -2236,13 +2316,11 @@ def open_production_run(config_path: Path | str) -> ProductionTruthEditingRun:
         FileJudgeCache,
         OpenRouterJudgeTransport,
         TruthEditingLiveJudge,
+        accepted_live_judge_adapter_code_sha256s,
     )
+    from .truth_editing_record_completion import FileSemanticRecordCompletionStore
     from .truth_editing_production_judge_budget import ProductionJudgeBudget
-    from .truth_editing_study import (
-        OfflineDeterministicSearchDriver,
-        OptunaSearchDriver,
-        load_truth_editing_study_config,
-    )
+    from .truth_editing_study import load_truth_editing_study_config
 
     config = ProductionRunConfig.open(config_path)
     if config.judge_budget is None or config.judge_budget_ledger_dir is None:
@@ -2431,11 +2509,7 @@ def open_production_run(config_path: Path | str) -> ProductionTruthEditingRun:
             expected_snapshot_manifest_sha256=config.verified_snapshot_manifest_sha256,
         ),
     )
-    driver: SearchDriver
-    if config.search_driver == "optuna":
-        driver = OptunaSearchDriver(seed=study_config.sampler_seed)
-    else:
-        driver = OfflineDeterministicSearchDriver(seed=study_config.sampler_seed)
+    driver = configured_search_driver(config, study_config)
     judge_budget = ProductionJudgeBudget(
         config.judge_budget_ledger_dir, config=config.judge_budget
     )
@@ -2448,6 +2522,12 @@ def open_production_run(config_path: Path | str) -> ProductionTruthEditingRun:
         evaluator_config,
         live_judge,
         preservation_adapter,
+        record_completion_store=FileSemanticRecordCompletionStore(
+            config.judge_cache_dir / "semantic-record-completions",
+            accepted_judge_adapter_code_sha256s=(
+                accepted_live_judge_adapter_code_sha256s()
+            ),
+        ),
     )
     return compose_production_run(
         study=TruthEditingStudy(study_config, bank.manifest),

@@ -1040,6 +1040,50 @@ def test_monitoring_wrapper_forwards_read_only_persistent_study_name_after_prepa
         wrapper.persistent_study_name = "replacement"  # type: ignore[misc]
 
 
+def test_monitoring_wrapper_forwards_rescore_protocol_hooks(tmp_path: Path) -> None:
+    calls: list[tuple[str, object]] = []
+
+    class Driver:
+        identity = {"adapter": "rescore-v1"}
+
+        def validate_rescore_identity(self, **kwargs):
+            calls.append(("validate", kwargs))
+
+        def initial_journal_batches(self, **kwargs):
+            calls.append(("history", kwargs))
+            return ({"ordinal": 0, "trials": []},)
+
+        def evaluation_request_override(self, **kwargs):
+            calls.append(("override", kwargs))
+            return "frozen-request"
+
+    monitor = CoordinatorMonitor(
+        run_id="run-rescore-hooks",
+        project="intelligent-liars",
+        entity=None,
+        run_name="rescore-hooks-test",
+        receipt_path=tmp_path / "monitoring.jsonl",
+        total_trials=8,
+        batch_size=8,
+        wandb_module=_FakeWandb(_FakeRun()),
+        monotonic=lambda: 10.0,
+    )
+    wrapper = MonitoredSearchDriver(Driver(), monitor)
+    identity_inputs = {"config_sha256": "a" * 64}
+
+    wrapper.validate_rescore_identity(
+        study_identity_sha256="b" * 64, identity_inputs=identity_inputs
+    )
+    batches = wrapper.initial_journal_batches(
+        study_identity_sha256="b" * 64, identity_inputs=identity_inputs
+    )
+    override = wrapper.evaluation_request_override(ordinal=224, proposal="proposal")
+
+    assert batches == ({"ordinal": 0, "trials": []},)
+    assert override == "frozen-request"
+    assert [name for name, _payload in calls] == ["validate", "history", "override"]
+
+
 def test_plain_terminal_heartbeat() -> None:
     assert monitoring_heartbeat(
         completed_trials=48,

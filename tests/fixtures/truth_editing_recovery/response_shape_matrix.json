@@ -1,0 +1,78 @@
+{
+  "format": "truth_editing_historical_response_shape_matrix_v1",
+  "sanitization": {
+    "contains_historical_prompts": false,
+    "contains_historical_responses": false,
+    "contains_credentials": false,
+    "contains_remote_paths": false,
+    "payloads_are_synthesized_by_tests": true
+  },
+  "content_cases": [
+    {
+      "case_id": "valid_json_object",
+      "shape": "json_object_text",
+      "expected_outcome": "succeeded"
+    },
+    {
+      "case_id": "empty_response",
+      "shape": "empty_text",
+      "expected_outcome": "failure",
+      "failure_code": "empty_response"
+    },
+    {
+      "case_id": "truncated_json",
+      "shape": "unterminated_json_object_text",
+      "expected_outcome": "failure",
+      "failure_code": "json_decode_error"
+    },
+    {
+      "case_id": "fenced_json",
+      "shape": "markdown_fenced_json_text",
+      "expected_outcome": "failure",
+      "failure_code": "json_decode_error"
+    },
+    {
+      "case_id": "tool_like_json",
+      "shape": "tool_invocation_object_text",
+      "expected_outcome": "failure",
+      "failure_code": "schema_validation_error"
+    },
+    {
+      "case_id": "schema_invalid_json",
+      "shape": "judge_result_missing_required_field",
+      "expected_outcome": "failure",
+      "failure_code": "schema_validation_error"
+    },
+    {
+      "case_id": "judge_contract_error",
+      "shape": "cross_field_invariant_violation",
+      "expected_outcome": "failure",
+      "failure_code": "schema_validation_error",
+      "exception_class": "JudgeContractError"
+    }
+  ],
+  "provider_cases": [
+    {
+      "case_id": "provider_string_content",
+      "message_shape": "content_string",
+      "expected_outcome": "succeeded"
+    },
+    {
+      "case_id": "provider_block_content",
+      "message_shape": "content_text_block_array",
+      "expected_outcome": "succeeded"
+    },
+    {
+      "case_id": "provider_reasoning_fallback",
+      "message_shape": "reasoning_string_without_content",
+      "expected_outcome": "failure",
+      "failure_code": "empty_response"
+    },
+    {
+      "case_id": "provider_tool_call_only",
+      "message_shape": "tool_calls_without_text",
+      "expected_outcome": "failure",
+      "failure_code": "empty_response"
+    }
+  ]
+}

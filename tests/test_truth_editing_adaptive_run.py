@@ -128,6 +128,56 @@ def test_fresh_scheduler_deadlines_include_pre_controller_host_setup_time(
     )
 
 
+def test_fresh_scheduler_can_start_from_capacity_bound_seeded_history(
+    tmp_path: Path,
+) -> None:
+    initial = _receipt()
+    unsigned = {
+        "format": "truth_editing_capacity_batch_observation_v2",
+        "observation_id": "batch-0008-seeded-history",
+        "observed_at": "2026-08-28T12:00:00Z",
+        "timed_canary_receipt_sha256": initial["timed_canary_receipt_sha256"],
+        "completed_through_trial": 8,
+        "batch_size": 8,
+        "generated_tokens_per_trial_upper_bound": 120,
+        "generation_seconds_per_trial_upper_bound": 40.0,
+        "trial_wall_seconds_upper_bound": 90.0,
+        "judge_elapsed_seconds_per_trial_upper_bound": 45.0,
+        "judge_cost_usd_per_trial_upper_bound": "0.0002",
+        "judge_ledger_before_receipt_sha256": "c" * 64,
+        "judge_ledger_after_receipt_sha256": "c" * 64,
+        "judge_calls": 0,
+        "judge_failures": 0,
+        "judge_elapsed_seconds_total": 0.0,
+        "judge_cost_usd_total": "0",
+        "spend": {
+            "actual_total_usd": "1.1",
+            "actual_infrastructure_usd": "1",
+            "actual_evaluation_usd": "0.1",
+            "pending_infrastructure_usd": "0",
+            "pending_evaluation_usd": "0",
+        },
+    }
+    observation = {**unsigned, "self_sha256": canonical_sha256(unsigned)}
+    seeded = reforecast_capacity_receipt(
+        policy=_policy(),
+        previous_receipt=initial,
+        batch_observation=observation,
+        planned_at=NOW,
+    )
+    scheduler = _scheduler(tmp_path, receipt=seeded, rolling_receipt=[seeded])
+
+    assert not scheduler.has_checkpoint
+    assert scheduler.admit_batch(
+        completed_trials=8, batch_size=8, coverage_complete=False
+    )
+    checkpoint = json.loads(
+        (tmp_path / "adaptive-run-checkpoint.json").read_text()
+    )
+    assert checkpoint["completed_trials"] == 8
+    assert checkpoint["authorized_through_trial"] == 16
+
+
 def _commit_with_observation(
     scheduler: AdaptiveBatchScheduler,
     rolling: list[dict],
@@ -767,7 +817,7 @@ def test_fresh_scheduler_rejects_uncheckpointed_history_and_non_eight_batch(
     tmp_path: Path,
 ) -> None:
     scheduler = _scheduler(tmp_path)
-    with pytest.raises(AdaptiveRunError, match="zero completed"):
+    with pytest.raises(AdaptiveRunError, match="capacity boundary"):
         scheduler.admit_batch(
             completed_trials=200, batch_size=8, coverage_complete=True
         )

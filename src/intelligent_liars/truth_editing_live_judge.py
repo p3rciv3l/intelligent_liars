@@ -93,6 +93,12 @@ def _bundle_size_from_prompt(prompt: Mapping[str, Any]) -> int:
         return 2
     return 1
 _COMPATIBLE_ADAPTER_CODE_SHA256S = {
+    # Recovery build immediately before finite rescore/controller integration.
+    # The frozen request and semantic normalization contracts are unchanged.
+    "879edde1e35a2aaac9d62ac43a44ca1116e182e2e49e9eb845692e41c23f070b",
+    # Recovery build used to initialize pre-delivery completion stores. The
+    # later edits affect terminal replay and controller composition only.
+    "0bb41abd8ea8de327a71b0b35f34ad353e525ac742edbe8cf201fa94c2d4d838",
     # Production adapter immediately before bundle-size timeout identity was
     # introduced. One-row requests retain the frozen 120-second timeout, and
     # the result schemas/semantic normalization are unchanged, so these
@@ -158,6 +164,20 @@ _COMPATIBLE_ADAPTER_CODE_SHA256S = {
     # successful and genuinely terminal receipts remain compatible; retryable
     # invalid-JSON receipts were never success-cache entries.
     "4a2e3289f3203dcd6556a105a8c1d8562cc8c8eca897ed5c7baa3ba10ee6e313",
+    # Hardened one-correction adapter actually deployed before the bundle-size
+    # timeout became request-specific. Cache keys already bind the exact
+    # request parameters, so only byte-identical request identities can reuse it.
+    "b113069ce3d28417b437419e55ff2a94eed8d100acc623a8bb39cbe6949a3c41",
+    # Same parser and healing contract after bundle-size-aware timeouts landed.
+    "829bdab9c846d48b358b4eb8ec29f0543514e3b95465b9e49b4a3f530cf54673",
+    # Immediate production predecessor after removing the universal timeout cap.
+    "4e3b19382e0ba3c803253f39da7bd79d38417dee6c42fb2cf784af2d3c31e6d4",
+    # Same frozen request, parser, normalization, and compatible-predecessor
+    # contract immediately before transport failures stopped entering the
+    # semantic terminal-alias namespace. Existing response-owned cache
+    # receipts remain valid; transport replay safety belongs to the paid
+    # budget ledger rather than the semantic judge cache.
+    "0a5ecef95c14fb4864033a4e4e89ff5a9f45c378711e31509a5d7631ddaf51d4",
 }
 
 
@@ -165,7 +185,7 @@ class LiveJudgeError(RuntimeError):
     """A frozen judge request, transport response, or semantic result is invalid."""
 
 
-class OperationalJudgeFailure(LiveJudgeError, PaidJudgeCircuitOpen):
+class OperationalJudgeFailure(LiveJudgeError):
     """Fail-closed judge operation carrying its already-persisted receipt."""
 
     def __init__(self, receipt: JudgeCacheReceipt) -> None:
@@ -574,6 +594,58 @@ class StoredJudgeTransport:
         return self._responses.pop(0)
 
 
+def _extract_frozen_openrouter_judge_content(payload: Mapping[str, Any]) -> str:
+    """Extract only assistant answer content from the chat-completions shape.
+
+    OpenRouter keeps reasoning and tool calls beside ``message.content``. The
+    frozen judge excludes returned reasoning and has no tool loop, so neither
+    field may be promoted into semantic JSON when content is absent. Text block
+    variants are handled explicitly for provider-normalized compatibility.
+    """
+
+    choices = payload.get("choices")
+    if not isinstance(choices, list) or not choices:
+        raise RuntimeError("OpenRouter response is missing choices")
+    choice = choices[0]
+    finish_reason = choice.get("finish_reason") if isinstance(choice, Mapping) else None
+    if finish_reason != "stop":
+        raise RuntimeError("OpenRouter response did not finish with answer content")
+    message = choice.get("message") if isinstance(choice, Mapping) else None
+    if not isinstance(message, Mapping):
+        raise RuntimeError("OpenRouter response is missing an assistant message")
+    if message.get("role") not in {None, "assistant"}:
+        raise RuntimeError("OpenRouter response message is not from the assistant")
+    content = message.get("content")
+    if isinstance(content, str) and content:
+        return content
+
+    def text_block(value: Any) -> str | None:
+        if not isinstance(value, Mapping):
+            return None
+        block_type = value.get("type")
+        text = value.get("text")
+        if block_type not in {None, "text", "output_text"} or not isinstance(text, str):
+            return None
+        return text
+
+    if isinstance(content, Mapping):
+        block = text_block(content)
+        if block:
+            return block
+    if isinstance(content, list):
+        parts: list[str] = []
+        for item in content:
+            if isinstance(item, str):
+                parts.append(item)
+            else:
+                block = text_block(item)
+                if block is not None:
+                    parts.append(block)
+        if parts and any(parts):
+            return "".join(parts)
+    raise RuntimeError("OpenRouter response did not contain assistant answer content")
+
+
 class OpenRouterJudgeTransport:
     """Production transport using the repository's existing OpenRouter client."""
 
@@ -587,7 +659,6 @@ class OpenRouterJudgeTransport:
         # Import lazily: constructing the adapter must neither resolve credentials
         # nor establish a network session.
         from intelligent_liars.clients.openrouter_client import OpenRouterClient
-        from intelligent_liars.judge_client import _extract_openrouter_text
 
         client = OpenRouterClient(
             model=str(request["model"]),
@@ -611,7 +682,7 @@ class OpenRouterJudgeTransport:
         if price is None:
             price = payload.get("cost")
         try:
-            content = _extract_openrouter_text(payload)
+            content = _extract_frozen_openrouter_judge_content(payload)
         except RuntimeError:
             # The provider returned a billable response, so preserve it across
             # the paid boundary. Strict local parsing owns the retryable empty-
@@ -647,6 +718,12 @@ class JudgeCache(Protocol):
 
     def record_failure(self, receipt: JudgeCacheReceipt) -> None: ...
 
+    def pending_correction(self, key: str) -> Mapping[str, Any] | None: ...
+
+    def record_pending_correction(
+        self, key: str, state: Mapping[str, Any]
+    ) -> Mapping[str, Any]: ...
+
     def terminal_failure(self, key: str) -> JudgeCacheReceipt | None: ...
 
     def record_terminal_failure(
@@ -671,24 +748,70 @@ def _is_derivative_budget_circuit_failure(receipt: JudgeCacheReceipt) -> bool:
     )
 
 
-def _is_terminal_superseded_by_current_adapter(
-    receipt: JudgeCacheReceipt,
-) -> bool:
-    failure = receipt.operational_failure
-    return bool(
-        receipt.code_sha256 != _code_sha256()
-        and failure is not None
-        and (
-            (
-                receipt.operational_status == "schema_error"
-                and failure.code == "schema_validation_error"
-            )
-            or (
-                receipt.operational_status == "invalid_json"
-                and failure.code == "empty_response"
-            )
-        )
+def _is_nonsemantic_transport_failure(receipt: JudgeCacheReceipt) -> bool:
+    """Return whether no provider-owned semantic response reached the adapter.
+
+    Failure receipts remain durable forensic evidence, but transport, timeout,
+    provider-call, and upstream-circuit state cannot prove that the semantic
+    request itself has a permanent negative outcome. Exact ambiguous-billing
+    replay remains the production budget ledger's responsibility.
+    """
+
+    return (
+        receipt.raw_response_sha256 is None
+        or receipt.operational_status in {"timeout", "transport_error"}
+        or _is_derivative_budget_circuit_failure(receipt)
     )
+
+
+def _parse_pending_correction_state(
+    value: Mapping[str, Any], *, expected_key: str
+) -> dict[str, Any]:
+    fields = {
+        "format", "procedure_cache_key_sha256", "attempt_role", "judge_kind",
+        "initial_request_sha256", "correction_cache_key_sha256",
+        "correction_request_sha256", "initial_response", "content_sha256",
+    }
+    if not isinstance(value, Mapping) or set(value) != fields:
+        raise LiveJudgeError("judge pending correction has an incompatible schema")
+    unsigned = {name: item for name, item in value.items() if name != "content_sha256"}
+    if (
+        value["format"] != "truth_editing_live_judge_pending_correction_v1"
+        or value["procedure_cache_key_sha256"] != expected_key
+        or value["attempt_role"] != "initial_response_requires_correction"
+        or value["judge_kind"] not in {"absolute", "pairwise"}
+        or value["content_sha256"] != _sha(unsigned)
+        or not isinstance(value["initial_response"], Mapping)
+    ):
+        raise LiveJudgeError("judge pending correction identity differs")
+    for name in (
+        "procedure_cache_key_sha256", "initial_request_sha256",
+        "correction_cache_key_sha256", "correction_request_sha256",
+    ):
+        _lower_sha(value[name], f"pending correction {name}")
+    _canonical_json(value["initial_response"])
+    return copy.deepcopy(dict(value))
+
+
+def _validate_terminal_alias_binding(
+    key: str,
+    receipt: JudgeCacheReceipt,
+    pending_correction: Mapping[str, Any] | None,
+) -> None:
+    """Require direct aliases or an exact correction-attempt relationship."""
+
+    if receipt.cache_key_sha256 == key:
+        return
+    if pending_correction is None:
+        raise LiveJudgeError("cross-key terminal failure lacks correction lineage")
+    state = _parse_pending_correction_state(pending_correction, expected_key=key)
+    if (
+        state["attempt_role"] != "initial_response_requires_correction"
+        or state["judge_kind"] != receipt.judge_kind
+        or state["correction_cache_key_sha256"] != receipt.cache_key_sha256
+        or state["correction_request_sha256"] != receipt.raw_request_sha256
+    ):
+        raise LiveJudgeError("cross-key terminal failure correction identity differs")
 
 
 class MemoryJudgeCache:
@@ -698,6 +821,7 @@ class MemoryJudgeCache:
         self._items: MutableMapping[str, _CachedJudgment] = {}
         self._failures: list[JudgeCacheReceipt] = []
         self._terminal_failures: MutableMapping[str, JudgeCacheReceipt] = {}
+        self._pending_corrections: MutableMapping[str, Mapping[str, Any]] = {}
 
     def get(self, key: str) -> _CachedJudgment | None:
         return self._items.get(key)
@@ -717,17 +841,28 @@ class MemoryJudgeCache:
             if key is None or receipt.cache_key_sha256 == key
         )
 
+    def pending_correction(self, key: str) -> Mapping[str, Any] | None:
+        state = self._pending_corrections.get(key)
+        return None if state is None else copy.deepcopy(dict(state))
+
+    def record_pending_correction(
+        self, key: str, state: Mapping[str, Any]
+    ) -> Mapping[str, Any]:
+        parsed = _parse_pending_correction_state(state, expected_key=key)
+        committed = self._pending_corrections.setdefault(key, parsed)
+        return copy.deepcopy(dict(committed))
+
     def terminal_failure(self, key: str) -> JudgeCacheReceipt | None:
-        receipt = self._terminal_failures.get(key) or _infer_terminal_failure(
-            self.failure_receipts(key)
+        explicit = self._terminal_failures.get(key)
+        receipt = explicit or (
+            None
+            if self.pending_correction(key) is not None
+            else _infer_terminal_failure(self.failure_receipts(key))
         )
         return (
             None
             if receipt is not None
-            and (
-                _is_derivative_budget_circuit_failure(receipt)
-                or _is_terminal_superseded_by_current_adapter(receipt)
-            )
+            and _is_nonsemantic_transport_failure(receipt)
             else receipt
         )
 
@@ -738,10 +873,11 @@ class MemoryJudgeCache:
         parsed = parse_judge_cache_receipt(receipt.to_payload(), result=None)
         if parsed.operational_status == "succeeded":
             raise LiveJudgeError("terminal failure cannot contain a successful receipt")
-        if _is_derivative_budget_circuit_failure(parsed):
+        if _is_nonsemantic_transport_failure(parsed):
             return parsed
+        _validate_terminal_alias_binding(key, parsed, self.pending_correction(key))
         prior = self._terminal_failures.get(key)
-        if prior is None or _is_terminal_superseded_by_current_adapter(prior):
+        if prior is None:
             self._terminal_failures[key] = parsed
         return self._terminal_failures[key]
 
@@ -793,7 +929,7 @@ class FileJudgeCache:
             raise LiveJudgeError(f"judge cache entry {key} failed contract parsing: {error}") from error
         if receipt.cache_key_sha256 != key:
             raise LiveJudgeError(f"judge cache entry {key} receipt identity differs")
-        if receipt.code_sha256 not in {_code_sha256(), *_COMPATIBLE_ADAPTER_CODE_SHA256S}:
+        if receipt.code_sha256 not in accepted_live_judge_adapter_code_sha256s():
             raise LiveJudgeError(f"judge cache entry {key} was produced by different adapter code")
         lineage = payload.get("correction_lineage")
         if version == "truth_editing_live_judge_cache_entry_v2":
@@ -870,8 +1006,36 @@ class FileJudgeCache:
                 raise LiveJudgeError(f"judge failure event {path.name} is invalid: {error}") from error
             if receipt.cache_key_sha256 != key or path.stem != receipt.content_sha256:
                 raise LiveJudgeError(f"judge failure event {path.name} identity differs")
+            if receipt.code_sha256 not in accepted_live_judge_adapter_code_sha256s():
+                raise LiveJudgeError(
+                    f"judge failure event {path.name} was produced by different adapter code"
+                )
             receipts.append(receipt)
         return tuple(receipts)
+
+    def pending_correction(self, key: str) -> Mapping[str, Any] | None:
+        target = self._pending_correction_target(key)
+        if not target.exists():
+            return None
+        try:
+            payload = json.loads(target.read_text())
+        except (OSError, json.JSONDecodeError) as error:
+            raise LiveJudgeError(f"judge pending correction {key} is unreadable") from error
+        return _parse_pending_correction_state(payload, expected_key=key)
+
+    def record_pending_correction(
+        self, key: str, state: Mapping[str, Any]
+    ) -> Mapping[str, Any]:
+        parsed = _parse_pending_correction_state(state, expected_key=key)
+        target = self._pending_correction_target(key)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        _fsync_directory(self.path)
+        _fsync_directory(target.parent)
+        self._atomic_first_write(target, _canonical_json(parsed) + "\n")
+        committed = self.pending_correction(key)
+        if committed is None:  # pragma: no cover - filesystem invariant
+            raise LiveJudgeError(f"judge pending correction {key} was not committed")
+        return committed
 
     def terminal_failure(self, key: str) -> JudgeCacheReceipt | None:
         target = self._terminal_target(key)
@@ -880,13 +1044,10 @@ class FileJudgeCache:
             # terminal alias existed. A success entry is checked first by the
             # caller, so a corrected response still wins over its initial
             # schema-failure receipt.
+            if self.pending_correction(key) is not None:
+                return None
             inferred = _infer_terminal_failure(self.failure_receipts(key))
-            return (
-                None
-                if inferred is not None
-                and _is_terminal_superseded_by_current_adapter(inferred)
-                else inferred
-            )
+            return inferred
         try:
             payload = json.loads(target.read_text())
         except (OSError, json.JSONDecodeError) as error:
@@ -911,14 +1072,14 @@ class FileJudgeCache:
             ) from error
         if receipt.operational_status == "succeeded":
             raise LiveJudgeError("judge terminal failure contains a successful receipt")
-        if receipt.code_sha256 not in {_code_sha256(), *_COMPATIBLE_ADAPTER_CODE_SHA256S}:
+        _validate_terminal_alias_binding(key, receipt, self.pending_correction(key))
+        if receipt.code_sha256 not in accepted_live_judge_adapter_code_sha256s():
             raise LiveJudgeError(
                 f"judge terminal failure {key} was produced by different adapter code"
             )
         return (
             None
-            if _is_derivative_budget_circuit_failure(receipt)
-            or _is_terminal_superseded_by_current_adapter(receipt)
+            if _is_nonsemantic_transport_failure(receipt)
             else receipt
         )
 
@@ -928,8 +1089,9 @@ class FileJudgeCache:
         parsed = parse_judge_cache_receipt(receipt.to_payload(), result=None)
         if parsed.operational_status == "succeeded":
             raise LiveJudgeError("terminal failure cannot contain a successful receipt")
-        if _is_derivative_budget_circuit_failure(parsed):
+        if _is_nonsemantic_transport_failure(parsed):
             return parsed
+        _validate_terminal_alias_binding(key, parsed, self.pending_correction(key))
         target = self._terminal_target(key)
         target.parent.mkdir(parents=True, exist_ok=True)
         _fsync_directory(self.path)
@@ -942,10 +1104,7 @@ class FileJudgeCache:
         rendered = _canonical_json(
             {**unsigned, "content_sha256": _sha(unsigned)}
         ) + "\n"
-        if target.exists() and self.terminal_failure(key) is None:
-            self._atomic_replace_write(target, rendered)
-        else:
-            self._atomic_first_write(target, rendered)
+        self._atomic_first_write(target, rendered)
         committed = self.terminal_failure(key)
         if committed is None:  # pragma: no cover - filesystem invariant
             raise LiveJudgeError(f"judge terminal failure {key} was not committed")
@@ -972,20 +1131,6 @@ class FileJudgeCache:
         finally:
             temporary.unlink(missing_ok=True)
 
-    @staticmethod
-    def _atomic_replace_write(target: Path, rendered: str) -> None:
-        temporary = target.parent / f".{target.name}.{os.getpid()}.{time.time_ns()}.tmp"
-        descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-        try:
-            with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
-                handle.write(rendered)
-                handle.flush()
-                os.fsync(handle.fileno())
-            os.replace(temporary, target)
-            _fsync_directory(target.parent)
-        finally:
-            temporary.unlink(missing_ok=True)
-
     def _target(self, key: str) -> Path:
         if len(key) != 64 or any(character not in "0123456789abcdef" for character in key):
             raise LiveJudgeError("judge cache key must be a lowercase SHA-256")
@@ -994,22 +1139,25 @@ class FileJudgeCache:
     def _terminal_target(self, key: str) -> Path:
         return self.path / "terminal-failures" / self._target(key).name
 
+    def _pending_correction_target(self, key: str) -> Path:
+        return self.path / "pending-corrections" / self._target(key).name
+
 
 def _infer_terminal_failure(
     receipts: Sequence[JudgeCacheReceipt],
 ) -> JudgeCacheReceipt | None:
     """Recognize paid failures that old cache writers could not alias.
 
-    A response-less transport failure has ambiguous billing and is terminal on
-    its first occurrence. A non-retryable semantic/provider failure is also
-    terminal. Three paid malformed-response receipts exhaust the runner's
-    frozen retry allowance. The latest immutable receipt is returned verbatim.
+    Only response-owned failures can establish a terminal semantic outcome.
+    Transport, timeout, provider-call, and circuit failures remain durable
+    forensic receipts but never enter the semantic terminal-alias namespace.
+    A non-retryable response-owned semantic failure is terminal. Three paid
+    malformed-response receipts exhaust the runner's frozen retry allowance.
+    The latest immutable receipt is returned verbatim.
     """
 
     terminal_candidates = tuple(
-        receipt
-        for receipt in receipts
-        if not _is_derivative_budget_circuit_failure(receipt)
+        receipt for receipt in receipts if not _is_nonsemantic_transport_failure(receipt)
     )
     if not terminal_candidates:
         return None
@@ -1017,7 +1165,7 @@ def _infer_terminal_failure(
         failure = receipt.operational_failure
         if failure is None:
             raise LiveJudgeError("failure cache contains a successful receipt")
-        if receipt.raw_response_sha256 is None or not failure.retryable:
+        if not failure.retryable:
             return receipt
     if len(terminal_candidates) >= 3:
         return terminal_candidates[-1]
@@ -1308,17 +1456,31 @@ class TruthEditingLiveJudge:
             if not isinstance(cached.result, AbsoluteJudgeResult):
                 raise LiveJudgeError("cache kind differs from requested absolute judgment")
             return cached.result, self._hit_receipt(cached.receipt, cached.result)
-        self._raise_cached_terminal_failure(cache_key)
         started = time.monotonic()
-        try:
-            response = self._transport.complete(request)
-        except Exception as error:
-            self._raise_operational_failure(
-                kind="absolute", identities=identities,
-                response_sha256s=response_sha256s, error=error,
-                response=None, elapsed_ms=(time.monotonic() - started) * 1000.0,
-                terminal_cache_key=cache_key,
-            )
+        # A terminal result for the complete one-correction procedure wins over
+        # its retained pending-correction checkpoint.  The checkpoint is kept
+        # for crash recovery and lineage validation, but must not authorize a
+        # third paid attempt after the correction itself failed terminally.
+        self._raise_cached_terminal_failure(cache_key)
+        pending = self._cache.pending_correction(cache_key)
+        if pending is not None:
+            state = _parse_pending_correction_state(pending, expected_key=cache_key)
+            if (
+                state["judge_kind"] != "absolute"
+                or state["initial_request_sha256"] != identities["raw_request_sha256"]
+            ):
+                raise LiveJudgeError("pending absolute correction identity differs")
+            response = copy.deepcopy(dict(state["initial_response"]))
+        else:
+            try:
+                response = self._transport.complete(request)
+            except Exception as error:
+                self._raise_operational_failure(
+                    kind="absolute", identities=identities,
+                    response_sha256s=response_sha256s, error=error,
+                    response=None, elapsed_ms=(time.monotonic() - started) * 1000.0,
+                    terminal_cache_key=cache_key,
+                )
         try:
             semantic: Mapping[str, Any] | None = self._strict_response(response)
         except Exception as error:
@@ -1446,17 +1608,29 @@ class TruthEditingLiveJudge:
                 candidate_b_sha256=candidate_b_sha256,
             )
             return rebound, self._hit_receipt(cached.receipt, rebound)
-        self._raise_cached_terminal_failure(cache_key)
         started = time.monotonic()
-        try:
-            response = self._transport.complete(request)
-        except Exception as error:
-            self._raise_operational_failure(
-                kind="pairwise", identities=identities,
-                response_sha256s=response_sha256s, error=error,
-                response=None, elapsed_ms=(time.monotonic() - started) * 1000.0,
-                terminal_cache_key=cache_key,
-            )
+        # See the absolute path above: terminal procedure state takes
+        # precedence over a crash-resume checkpoint for its first response.
+        self._raise_cached_terminal_failure(cache_key)
+        pending = self._cache.pending_correction(cache_key)
+        if pending is not None:
+            state = _parse_pending_correction_state(pending, expected_key=cache_key)
+            if (
+                state["judge_kind"] != "pairwise"
+                or state["initial_request_sha256"] != identities["raw_request_sha256"]
+            ):
+                raise LiveJudgeError("pending pairwise correction identity differs")
+            response = copy.deepcopy(dict(state["initial_response"]))
+        else:
+            try:
+                response = self._transport.complete(request)
+            except Exception as error:
+                self._raise_operational_failure(
+                    kind="pairwise", identities=identities,
+                    response_sha256s=response_sha256s, error=error,
+                    response=None, elapsed_ms=(time.monotonic() - started) * 1000.0,
+                    terminal_cache_key=cache_key,
+                )
         try:
             semantic: Mapping[str, Any] | None = self._strict_response(response)
         except Exception as error:
@@ -1625,6 +1799,36 @@ class TruthEditingLiveJudge:
             schema_name=f"truth_editing_{kind}_semantic_correction_v1",
             response_format_type="json_object",
             bundle_size=bundle_size,
+        )
+        pending_unsigned = {
+            "format": "truth_editing_live_judge_pending_correction_v1",
+            "procedure_cache_key_sha256": identities["cache_key_sha256"],
+            "attempt_role": "initial_response_requires_correction",
+            "judge_kind": kind,
+            "initial_request_sha256": identities["raw_request_sha256"],
+            "correction_cache_key_sha256": correction_identities["cache_key_sha256"],
+            "correction_request_sha256": correction_identities["raw_request_sha256"],
+            "initial_response": copy.deepcopy(dict(response)),
+        }
+        pending_state = self._cache.record_pending_correction(
+            identities["cache_key_sha256"],
+            {**pending_unsigned, "content_sha256": _sha(pending_unsigned)},
+        )
+        parsed_pending = _parse_pending_correction_state(
+            pending_state, expected_key=identities["cache_key_sha256"]
+        )
+        if (
+            parsed_pending["correction_cache_key_sha256"]
+            != correction_identities["cache_key_sha256"]
+            or parsed_pending["correction_request_sha256"]
+            != correction_identities["raw_request_sha256"]
+        ):
+            raise LiveJudgeError("pending correction request identity differs")
+        # Pre-alias cache generations recorded the correction failure only
+        # under its own exact request key. Replay that terminal evidence before
+        # the retained procedure checkpoint can authorize another paid call.
+        self._raise_cached_terminal_failure(
+            correction_identities["cache_key_sha256"]
         )
         correction_started = time.monotonic()
         try:
@@ -1875,9 +2079,13 @@ class TruthEditingLiveJudge:
             response=response,
             elapsed_ms=elapsed_ms,
         )
-        if terminal_cache_key is not None and not isinstance(
-            error, PaidJudgeCircuitOpen
-        ):
+        if isinstance(error, PaidJudgeCircuitOpen):
+            # Preserve the concrete shared-circuit marker for the fleet while
+            # still attaching and durably recording this request-local receipt.
+            # Ordinary semantic/response failures must never impersonate it.
+            error.receipt = failure.receipt  # type: ignore[attr-defined]
+            raise error
+        if terminal_cache_key is not None:
             committed = self._cache.record_terminal_failure(
                 terminal_cache_key, failure.receipt
             )
@@ -2228,6 +2436,22 @@ class _CalibrationAttemptJournal:
         return True
 
 
+class _CalibrationJudgeCache(FileJudgeCache):
+    """Block exact ambiguous calibration replays without semantic aliasing."""
+
+    def terminal_failure(self, key: str) -> JudgeCacheReceipt | None:
+        semantic = super().terminal_failure(key)
+        if semantic is not None:
+            return semantic
+        receipts = self.failure_receipts(key)
+        if not receipts:
+            return None
+        latest = receipts[-1]
+        if latest.operational_status in {"timeout", "transport_error"}:
+            return latest
+        return None
+
+
 def run_live_judge_calibration(
     plan: Mapping[str, Any] | str | Path,
     *,
@@ -2311,7 +2535,7 @@ def run_live_judge_calibration(
     journal = _CalibrationAttemptJournal(
         Path(attempt_dir), plan_sha256=str(raw["content_sha256"]), maximum_spend=maximum_spend
     )
-    cache = FileJudgeCache(cache_dir)
+    cache = _CalibrationJudgeCache(cache_dir)
     judge = TruthEditingLiveJudge(transport=journal.transport(transport), cache=cache)
     completed: list[str] = []
     failed: list[str] = []
@@ -2658,6 +2882,12 @@ def _code_sha256() -> str:
     return hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
 
 
+def accepted_live_judge_adapter_code_sha256s() -> frozenset[str]:
+    """Return exact adapter source identities safe for durable cache replay."""
+
+    return frozenset({_code_sha256(), *_COMPATIBLE_ADAPTER_CODE_SHA256S})
+
+
 def _attempt_count(response: Any) -> int:
     value = response.get("attempts", 1) if isinstance(response, Mapping) else 1
     return value if isinstance(value, int) and not isinstance(value, bool) and value >= 1 else 1
@@ -2975,6 +3205,7 @@ __all__ = [
     "PairwiseJudgeEvidence",
     "StoredJudgeTransport",
     "TruthEditingLiveJudge",
+    "accepted_live_judge_adapter_code_sha256s",
     "run_live_judge_calibration",
     "parse_live_judge_calibration_report",
 ]

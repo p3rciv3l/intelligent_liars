@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import shutil
 import tarfile
 from pathlib import Path
 from types import SimpleNamespace
@@ -9,8 +10,16 @@ from types import SimpleNamespace
 import pytest
 
 from intelligent_liars.truth_editing_live_judge import FROZEN_JUDGE_CONFIG_SHA256
+from intelligent_liars import truth_editing_record_completion as record_completion
 from intelligent_liars.truth_editing_vast_fleet import FleetConfig
-from intelligent_liars.truth_editing_production import open_production_run
+from intelligent_liars.truth_editing_production import (
+    ProductionRunConfig,
+    configured_search_driver,
+    open_production_run,
+)
+from intelligent_liars.truth_editing_rescore import materialize_rescore_generation_v1
+from intelligent_liars.truth_editing_study import load_truth_editing_study_config
+from intelligent_liars.truth_editing_wandb_monitoring import MonitoredSearchDriver
 from intelligent_liars.truth_editing_vast_production import (
     ProductionVastConfig,
     build_production_bundle,
@@ -351,7 +360,21 @@ def test_bundle_collection_fails_closed_on_broken_structured_view_provenance(
 
 def test_canonical_bundle_opens_all_production_inputs_after_clean_extraction(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    completion_roots: list[Path] = []
+    store_type = record_completion.FileSemanticRecordCompletionStore
+
+    class TrackingCompletionStore(store_type):
+        def __init__(self, root: Path | str, **kwargs: object) -> None:
+            completion_roots.append(Path(root))
+            super().__init__(root, **kwargs)
+
+    monkeypatch.setattr(
+        record_completion,
+        "FileSemanticRecordCompletionStore",
+        TrackingCompletionStore,
+    )
     repo = SCRIPT.parents[1]
     raw = MODULE.build_timed_canary_job(
         repo,
@@ -391,8 +414,13 @@ def test_canonical_bundle_opens_all_production_inputs_after_clean_extraction(
     with tarfile.open(archive, mode="r:gz") as bundle:
         bundle.extractall(extracted, filter="data")
     assert all((extracted / path).is_file() for path in required_source_files)
-    run = open_production_run(extracted / CANONICAL_PRODUCTION_CONFIG)
+    production_path = extracted / CANONICAL_PRODUCTION_CONFIG
+    run = open_production_run(production_path)
     assert run.planned_study_identity_sha256
+    assert completion_roots == [
+        ProductionRunConfig.open(production_path).judge_cache_dir
+        / "semantic-record-completions"
+    ]
 
 
 def test_builder_fails_closed_if_phase_boundaries_or_portable_v3_paths_change(
@@ -815,6 +843,8 @@ def test_production_bundle_uses_only_truth_editing_source_closure() -> None:
         "src/intelligent_liars/truth_editing_production.py",
         "src/intelligent_liars/truth_editing_qwen_runtime.py",
         "src/intelligent_liars/truth_editing_live_judge.py",
+        "src/intelligent_liars/truth_editing_record_completion.py",
+        "src/intelligent_liars/truth_editing_rescore.py",
         "src/intelligent_liars/tinylora_pilot.py",
         "src/intelligent_liars/clients/openrouter_client.py",
     }.issubset(source_paths)
@@ -825,6 +855,130 @@ def test_production_bundle_uses_only_truth_editing_source_closure() -> None:
     assert "src/intelligent_liars/tinylora_step5.py" not in source_paths
     assert "src/intelligent_liars/tinylora_corpus.py" not in source_paths
     assert "src/intelligent_liars/cli.py" not in source_paths
+
+
+def test_record_completion_is_in_static_production_source_closure() -> None:
+    assert (
+        "src/intelligent_liars/truth_editing_record_completion.py"
+        in MODULE.PRODUCTION_SOURCE_CLOSURE
+    )
+
+
+def test_rescore_driver_is_in_static_production_source_closure() -> None:
+    assert (
+        "src/intelligent_liars/truth_editing_rescore.py"
+        in MODULE.PRODUCTION_SOURCE_CLOSURE
+    )
+
+
+def test_production_bundle_includes_configured_rescore_generation(tmp_path: Path) -> None:
+    from test_truth_editing_preservation_materialization import _write_source
+    from test_truth_editing_production import _production_config_payload
+    from test_truth_editing_rescore import (
+        JUDGE_CONFIG_SHA256,
+        RUBRIC_SHA256,
+        _source_artifacts,
+    )
+    from intelligent_liars.truth_editing_preservation_materialization import (
+        materialize_preservation_runtime_packet,
+    )
+
+    repo = _repo(tmp_path)
+    production_path = repo / PRODUCTION_CONFIG
+    source = tmp_path / "source"
+    source.mkdir()
+    report, report_path, journal_path, checkpoint_path = _source_artifacts(
+        source, optuna=True
+    )
+    shutil.copy2(source / "study.json", repo / "configs/rescore-study.json")
+    generation = repo / "configs/recovery/rescore-generation-v1.json"
+    generation.parent.mkdir(parents=True)
+    materialized = materialize_rescore_generation_v1(
+        source_report_path=report_path,
+        source_journal_path=journal_path,
+        source_checkpoint_path=checkpoint_path,
+        output_path=generation,
+        expected_source_study_identity_sha256=report.study_identity_sha256,
+        expected_judge_config_sha256=JUDGE_CONFIG_SHA256,
+        expected_rubric_sha256=RUBRIC_SHA256,
+        expected_completed_trials=6,
+    )
+    materialize_preservation_runtime_packet(
+        _write_source(tmp_path / "preservation-source"),
+        repo / "artifacts/truth-editing/recovery-preservation-runtime",
+    )
+    production = _production_config_payload(
+        study_config="rescore-study.json",
+        dataset_root="../datasets/truth_editing/v2",
+        scenario_view=(
+            "../datasets/truth_editing/views/"
+            "v2_optimization_validation_qualified_v1"
+        ),
+        structured_semantic_view=(
+            "../datasets/truth_editing/views/structured_semantic_qualified_v1"
+        ),
+        structured_semantic_source_root=(
+            "../corpora/tinylora_deception_action_v1/step5_v1"
+        ),
+        structured_base_known_qualification=(
+            "../artifacts/truth-editing/structured-base-known"
+        ),
+        direction_manifest="truth_editing_direction_bank_qualified_v1.json",
+        direction_root="..",
+        refusal_direction_config="truth_editing_refusal_directions_v1.json",
+        refusal_prompt_manifest="truth_editing_refusal_prompt_manifest_v1.json",
+        refusal_direction_bank=(
+            "../artifacts/truth-editing/refusal-directions/direction_bank.json"
+        ),
+        refusal_artifact_root="../artifacts/truth-editing/refusal-directions",
+        evaluator_config="truth_editing_evaluator_v3.json",
+        base_known_qualification=(
+            "../artifacts/truth-editing/base-known"
+        ),
+        preservation_runtime_packet_root=(
+            "../artifacts/truth-editing/recovery-preservation-runtime"
+        ),
+        preservation_threshold_calibration=(
+            "../artifacts/truth-editing/preservation-thresholds/calibration.json"
+        ),
+        preservation_threshold_calibration_sha256="c" * 64,
+        model_cache_dir="../model-cache/huggingface",
+        snapshot_manifest_path="../model-cache/snapshot-manifest.json",
+        rescore_generation="recovery/rescore-generation-v1.json",
+        rescore_generation_sha256=materialized.generation_sha256,
+        rescore_mode="repair_then_continue",
+        verified_model_sha256=MODULE.DEFAULT_MODEL_CONTENT_SHA256,
+        verified_snapshot_manifest_sha256=(
+            MODULE.DEFAULT_SNAPSHOT_MANIFEST_SHA256
+        ),
+    )
+    production_path.write_text(json.dumps(production))
+
+    paths = MODULE.collect_production_bundle_paths(
+        repo,
+        production_config=PRODUCTION_CONFIG,
+    )
+
+    assert "configs/recovery/rescore-generation-v1.json" in paths
+    extracted = tmp_path / "extracted"
+    for relative in paths:
+        target = extracted / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(repo / relative, target)
+    extracted_config = ProductionRunConfig.open(extracted / PRODUCTION_CONFIG)
+    driver = configured_search_driver(
+        extracted_config,
+        load_truth_editing_study_config(extracted_config.study_config),
+    )
+    monitored = MonitoredSearchDriver(driver, SimpleNamespace())
+
+    assert monitored.identity["generation_sha256"] == materialized.generation_sha256
+    assert len(
+        monitored.initial_journal_batches(
+            study_identity_sha256="f" * 64,
+            identity_inputs={},
+        )
+    ) == 3
 
 
 def test_production_source_closure_fails_closed_when_required_file_is_missing(

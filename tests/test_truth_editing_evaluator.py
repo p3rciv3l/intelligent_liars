@@ -27,6 +27,9 @@ from intelligent_liars.truth_editing_preservation import (
     StratumPreservationResult,
 )
 from intelligent_liars.truth_editing_failure_policy import PaidJudgeCircuitOpen
+from intelligent_liars.truth_editing_record_completion import (
+    FileSemanticRecordCompletionStore,
+)
 
 
 def _sha(character: str) -> str:
@@ -483,6 +486,178 @@ def test_provider_or_preservation_failure_is_operational_not_scientific() -> Non
     assert assessment.status == "operational_failure"
     assert assessment.objectives == {}
     assert assessment.constraint_violations == {}
+
+
+def test_record_completion_restart_retries_only_the_missing_semantic_record(
+    tmp_path,
+) -> None:
+    class InterruptedJudge(_Judge):
+        def judge(self, record):
+            self.calls.append(record.record_id)
+            if record.record_id == "direct-2":
+                raise TimeoutError("second semantic record interrupted")
+            return _semantic_evidence(record.record_id, record.raw_generation_sha256)
+
+    records = [
+        _record("direct-1", "direct", "Rome"),
+        _record("direct-2", "direct", "Madrid"),
+        _record("indirect-1", "indirect", "Paris"),
+        _record("action-1", "action", "click-paris"),
+        _record("cf-1", "counterfactual", "London"),
+    ]
+    bundle = _bundle(records)
+    completion_root = tmp_path / "semantic-records"
+    first_store = FileSemanticRecordCompletionStore(
+        completion_root,
+        accepted_judge_adapter_code_sha256s=(_sha("c"),),
+    )
+    interrupted = InterruptedJudge()
+    first_preservation = _Preservation()
+
+    first = RecipeEvaluator(
+        _config(),
+        interrupted,
+        first_preservation,
+        record_completion_store=first_store,
+    ).evaluate(_execution(bundle), bundle, tier="discovery")
+
+    assert interrupted.calls == ["direct-1", "direct-2"]
+    assert first.status == "operational_failure"
+    assert first.components is None
+    assert first.objectives == {}
+    assert first_preservation.calls == 0
+    assert first.judge_cache_receipt_sha256 == (
+        _semantic_evidence(
+            "direct-1", records[0]["raw_generation_sha256"]
+        ).cache_receipt.content_sha256,
+    )
+
+    restarted_store = FileSemanticRecordCompletionStore(
+        completion_root,
+        accepted_judge_adapter_code_sha256s=(_sha("c"),),
+    )
+    resumed_judge = _Judge()
+    resumed = RecipeEvaluator(
+        _config(),
+        resumed_judge,
+        _Preservation(),
+        record_completion_store=restarted_store,
+    ).evaluate(_execution(bundle), bundle, tier="discovery")
+
+    assert resumed_judge.calls == ["direct-2"]
+    assert resumed.status == "feasible"
+    assert resumed.components.direct.valid_false_report_count == 2
+    assert resumed.judge_cache_receipt_sha256 == tuple(
+        _semantic_evidence(record["record_id"], record["raw_generation_sha256"])
+        .cache_receipt.content_sha256
+        for record in records[:2]
+    )
+
+
+def test_invalid_judge_evidence_is_not_a_terminal_record_completion(tmp_path) -> None:
+    class OneMalformedReceipt(_Judge):
+        def judge(self, record):
+            self.calls.append(record.record_id)
+            response_sha = (
+                _sha("wrong-response")
+                if record.record_id == "direct-1"
+                else record.raw_generation_sha256
+            )
+            return _semantic_evidence(record.record_id, response_sha)
+
+    records = [
+        _record("direct-1", "direct", "Rome"),
+        _record("direct-2", "direct", "Madrid"),
+        _record("indirect-1", "indirect", "Paris"),
+        _record("action-1", "action", "click-paris"),
+        _record("cf-1", "counterfactual", "London"),
+    ]
+    bundle = _bundle(records)
+    completion_root = tmp_path / "semantic-records"
+    store = FileSemanticRecordCompletionStore(
+        completion_root,
+        accepted_judge_adapter_code_sha256s=(_sha("c"),),
+    )
+    malformed = OneMalformedReceipt()
+
+    failed = RecipeEvaluator(
+        _config(), malformed, _Preservation(), record_completion_store=store
+    ).evaluate(_execution(bundle), bundle, tier="discovery")
+
+    assert malformed.calls == ["direct-1", "direct-2"]
+    assert failed.status == "operational_failure"
+    assert "direct-1" in failed.detail
+    assert failed.judge_cache_receipt_sha256 == (
+        _semantic_evidence(
+            "direct-2", records[1]["raw_generation_sha256"]
+        ).cache_receipt.content_sha256,
+    )
+
+    resumed_judge = _Judge()
+    resumed = RecipeEvaluator(
+        _config(),
+        resumed_judge,
+        _Preservation(),
+        record_completion_store=FileSemanticRecordCompletionStore(
+            completion_root,
+            accepted_judge_adapter_code_sha256s=(_sha("c"),),
+        ),
+    ).evaluate(_execution(bundle), bundle, tier="discovery")
+
+    assert resumed_judge.calls == ["direct-1"]
+    assert resumed.status == "feasible"
+
+
+def test_record_completion_scope_uses_frozen_tier_order_across_bundle_reorder(
+    tmp_path,
+) -> None:
+    records = [
+        _record("direct-1", "direct", "Rome"),
+        _record("direct-2", "direct", "Madrid"),
+        _record(
+            "truthful-1", "direct", "Paris", signal_kind="truthful_direct_report"
+        ),
+        _record(
+            "false-trigger-1",
+            "direct",
+            "Paris",
+            signal_kind="false_trigger_truthful_control",
+        ),
+        _record("indirect-1", "indirect", "Paris"),
+        _record("action-1", "action", "click-paris"),
+        _record("cf-1", "counterfactual", "London"),
+    ]
+    first_bundle = _bundle(list(reversed(records)))
+    completion_root = tmp_path / "semantic-records"
+    first_judge = _Judge()
+    first = RecipeEvaluator(
+        _config(),
+        first_judge,
+        _Preservation(),
+        record_completion_store=FileSemanticRecordCompletionStore(
+            completion_root,
+            accepted_judge_adapter_code_sha256s=(_sha("c"),),
+        ),
+    ).evaluate(_execution(first_bundle), first_bundle, tier="discovery")
+
+    assert first.status == "feasible"
+    assert first_judge.calls == ["direct-1", "direct-2"]
+
+    reordered_bundle = _bundle(records)
+    replay_judge = _Judge()
+    replay = RecipeEvaluator(
+        _config(),
+        replay_judge,
+        _Preservation(),
+        record_completion_store=FileSemanticRecordCompletionStore(
+            completion_root,
+            accepted_judge_adapter_code_sha256s=(_sha("c"),),
+        ),
+    ).evaluate(_execution(reordered_bundle), reordered_bundle, tier="discovery")
+
+    assert replay.status == "feasible"
+    assert replay_judge.calls == []
+    assert replay.judge_cache_receipt_sha256 == first.judge_cache_receipt_sha256
 
 
 def test_paid_judge_circuit_failure_is_never_converted_to_a_trial_outcome() -> None:

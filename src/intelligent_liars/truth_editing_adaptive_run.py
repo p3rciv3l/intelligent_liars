@@ -126,6 +126,10 @@ class AdaptiveBatchScheduler:
     """One fail-closed admission interface for rolling production search."""
 
     @property
+    def has_checkpoint(self) -> bool:
+        return self._checkpoint is not None
+
+    @property
     def search_deadline(self) -> datetime:
         """Absolute search cutoff from the durable checkpoint."""
 
@@ -501,8 +505,13 @@ class AdaptiveBatchScheduler:
             )
         )
         if self._checkpoint is None:
-            if completed_trials != 0:
-                raise AdaptiveRunError("fresh adaptive checkpoint requires zero completed trials")
+            if (
+                current_capacity_receipt.get("completed_through_trial")
+                != completed_trials
+            ):
+                raise AdaptiveRunError(
+                    "fresh adaptive checkpoint differs from the capacity boundary"
+                )
             budget = self.capacity_receipt["budget"]
             try:
                 baseline = SpendSnapshot.from_mapping({
@@ -520,7 +529,7 @@ class AdaptiveBatchScheduler:
                 raise AdaptiveRunError(
                     "initial_started_at cannot be after current time"
                 )
-            authorized = 0
+            authorized = completed_trials
             accounted_infrastructure = spend.reserved_infrastructure_usd
             accounted_evaluation = spend.reserved_evaluation_usd
         else:

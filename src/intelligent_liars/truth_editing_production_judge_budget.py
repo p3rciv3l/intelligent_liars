@@ -13,6 +13,7 @@ import hashlib
 import json
 import math
 import os
+import stat
 import threading
 import time
 from collections.abc import Mapping
@@ -30,6 +31,18 @@ CONFIG_FORMAT = "truth_editing_production_judge_budget_config_v1"
 MANIFEST_FORMAT = "truth_editing_production_judge_budget_manifest_v1"
 EVENT_FORMAT = "truth_editing_production_judge_budget_event_v1"
 RECEIPT_FORMAT = "truth_editing_production_judge_budget_receipt_v1"
+AMBIGUITY_RESOLUTION_FORMAT = (
+    "truth_editing_production_judge_budget_ambiguity_resolution_v1"
+)
+BILLING_RESOLUTION_EVIDENCE_FORMAT = (
+    "truth_editing_production_judge_billing_resolution_evidence_v1"
+)
+TRUSTED_OPENROUTER_LOOKUP_VERIFIER_SHA256 = hashlib.sha256(
+    b"intelligent-liars/openrouter-generation-lookup-verifier/v1"
+).hexdigest()
+TRUSTED_PRE_SEND_VERIFIER_SHA256 = hashlib.sha256(
+    b"intelligent-liars/pre-send-transport-verifier/v1"
+).hexdigest()
 MAXIMUM_ALL_IN_SPEND_USD = Decimal("50")
 MINIMUM_CALL_RESERVATION_USD = Decimal("0.025")
 DEFAULT_MAX_CONCURRENCY = 4
@@ -38,6 +51,7 @@ _INPUT_USD_PER_TOKEN = Decimal("0.000000075")
 _OUTPUT_USD_PER_TOKEN = Decimal("0.00000025")
 _THREAD_LOCKS: dict[str, threading.RLock] = {}
 _THREAD_TRANSPORT_SEMAPHORES: dict[str, threading.BoundedSemaphore] = {}
+_THREAD_REQUEST_LOCKS: dict[str, threading.RLock] = {}
 _THREAD_LOCKS_GUARD = threading.Lock()
 _SECRET_FIELD_NAMES = frozenset(
     {"api_key", "authorization", "openrouter_api_key", "x-api-key", "cookie", "set-cookie"}
@@ -60,6 +74,10 @@ class ProductionJudgeBudgetError(RuntimeError):
 
 class ProductionJudgeBudgetCircuitOpen(ProductionJudgeBudgetError, PaidJudgeCircuitOpen):
     """No new paid judge request may cross the transport seam."""
+
+
+class ProductionJudgeRequestAmbiguous(ProductionJudgeBudgetError):
+    """One exact paid request is blocked pending billing reconciliation."""
 
 
 class JudgeTransport(Protocol):
@@ -117,6 +135,104 @@ def _money_text(value: Decimal) -> str:
     if "." in rendered:
         rendered = rendered.rstrip("0").rstrip(".")
     return rendered or "0"
+
+
+@dataclass(frozen=True)
+class BillingResolutionEvidence:
+    resolution_kind: str
+    canonical_request_sha256: str
+    evidence_source: str
+    verifier_identity_sha256: str
+    verifier_receipt_sha256: str
+    provider_request_id: str | None
+    response_sha256: str | None
+    content_sha256: str
+
+    @classmethod
+    def from_mapping(cls, value: Mapping[str, Any]) -> "BillingResolutionEvidence":
+        expected = {
+            "format",
+            "resolution_kind",
+            "canonical_request_sha256",
+            "evidence_source",
+            "verifier_identity_sha256",
+            "verifier_receipt_sha256",
+            "provider_request_id",
+            "response_sha256",
+            "content_sha256",
+        }
+        if not isinstance(value, Mapping) or set(value) != expected:
+            raise ProductionJudgeBudgetError(
+                "billing resolution evidence fields differ"
+            )
+        raw = dict(value)
+        unsigned = dict(raw)
+        claimed = unsigned.pop("content_sha256")
+        if (
+            raw["format"] != BILLING_RESOLUTION_EVIDENCE_FORMAT
+            or claimed != _sha(unsigned)
+            or not _is_sha256(raw["canonical_request_sha256"])
+            or not _is_sha256(raw["verifier_receipt_sha256"])
+        ):
+            raise ProductionJudgeBudgetError(
+                "billing resolution evidence identity differs"
+            )
+        kind = raw["resolution_kind"]
+        source = raw["evidence_source"]
+        verifier = raw["verifier_identity_sha256"]
+        provider_request_id = raw["provider_request_id"]
+        response_sha = raw["response_sha256"]
+        if kind == "recovered_response":
+            if (
+                source != "openrouter_generation_lookup"
+                or verifier != TRUSTED_OPENROUTER_LOOKUP_VERIFIER_SHA256
+                or not isinstance(provider_request_id, str)
+                or not 1 <= len(provider_request_id) <= 128
+                or any(character.isspace() for character in provider_request_id)
+                or not _is_sha256(response_sha)
+            ):
+                raise ProductionJudgeBudgetError(
+                    "recovered billing evidence is not trusted"
+                )
+        elif kind == "definitely_unbilled":
+            if (
+                source != "pre_send_transport_verifier"
+                or verifier != TRUSTED_PRE_SEND_VERIFIER_SHA256
+                or provider_request_id is not None
+                or response_sha is not None
+            ):
+                raise ProductionJudgeBudgetError(
+                    "unbilled resolution evidence is not trusted"
+                )
+        else:
+            raise ProductionJudgeBudgetError(
+                "billing resolution evidence kind differs"
+            )
+        return cls(
+            resolution_kind=str(kind),
+            canonical_request_sha256=str(raw["canonical_request_sha256"]),
+            evidence_source=str(source),
+            verifier_identity_sha256=str(verifier),
+            verifier_receipt_sha256=str(raw["verifier_receipt_sha256"]),
+            provider_request_id=(
+                None if provider_request_id is None else str(provider_request_id)
+            ),
+            response_sha256=None if response_sha is None else str(response_sha),
+            content_sha256=str(claimed),
+        )
+
+    def to_mapping(self) -> dict[str, Any]:
+        return {
+            "format": BILLING_RESOLUTION_EVIDENCE_FORMAT,
+            "resolution_kind": self.resolution_kind,
+            "canonical_request_sha256": self.canonical_request_sha256,
+            "evidence_source": self.evidence_source,
+            "verifier_identity_sha256": self.verifier_identity_sha256,
+            "verifier_receipt_sha256": self.verifier_receipt_sha256,
+            "provider_request_id": self.provider_request_id,
+            "response_sha256": self.response_sha256,
+            "content_sha256": self.content_sha256,
+        }
 
 
 @dataclass(frozen=True)
@@ -214,6 +330,15 @@ class ProductionJudgeBudget:
                 "judge transport slot directory must be a real directory"
             )
         self._transport_slots_dir.mkdir(exist_ok=True)
+        self._request_locks_dir = self.path / ".request-locks"
+        if self._request_locks_dir.exists() and (
+            self._request_locks_dir.is_symlink()
+            or not self._request_locks_dir.is_dir()
+        ):
+            raise ProductionJudgeBudgetError(
+                "judge request lock directory must be a real directory"
+            )
+        self._request_locks_dir.mkdir(exist_ok=True)
         # There are always eight physical slots so separately started workers
         # can share the same bounded semaphore.  Each worker acquires only the
         # configured prefix, making the default four slots conservative while
@@ -240,40 +365,45 @@ class ProductionJudgeBudget:
                 # by reservation/reconciliation without deadlocking this call.
                 # Waiting workers enter only after the prior call commits, then
                 # re-check replay/circuit state before touching the provider.
-                with ledger._transport_slot():
-                    request_copy = copy.deepcopy(dict(request))
-                    canonical_request_sha = _sha(request_copy)
-                    request_sha, replay = ledger._reserve_or_replay(
-                        canonical_request_sha, request_copy
-                    )
-                    if replay is not None:
-                        return replay
-                    try:
-                        response = downstream.complete(request_copy)
-                    except Exception as error:
-                        ledger._record_ambiguous(request_sha, error)
-                        raise ProductionJudgeBudgetCircuitOpen(
-                            "production judge transport outcome is ambiguous; circuit is open"
-                        ) from error
-                    try:
-                        return ledger._reconcile(request_sha, response)
-                    except ProductionJudgeBudgetCircuitOpen:
-                        raise
-                    except Exception as error:
-                        ledger._record_ambiguous(request_sha, error)
-                        raise ProductionJudgeBudgetCircuitOpen(
-                            "production judge response cost is ambiguous; circuit is open"
-                        ) from error
+                request_copy = copy.deepcopy(dict(request))
+                canonical_request_sha = _sha(request_copy)
+                # Serialize only identical wire identities. Followers wait for
+                # the leader's durable outcome, then replay it without consuming
+                # another provider call or surfacing an in-flight failure.
+                with ledger._request_lock(canonical_request_sha):
+                    with ledger._transport_slot():
+                        request_sha, replay = ledger._reserve_or_replay(
+                            canonical_request_sha, request_copy
+                        )
+                        if replay is not None:
+                            return replay
+                        try:
+                            response = downstream.complete(request_copy)
+                        except Exception as error:
+                            ledger._record_ambiguous(request_sha, error)
+                            raise ProductionJudgeRequestAmbiguous(
+                                "production judge transport outcome is ambiguous; exact request is blocked"
+                            ) from error
+                        try:
+                            return ledger._reconcile(request_sha, response)
+                        except ProductionJudgeBudgetCircuitOpen:
+                            raise
+                        except Exception as error:
+                            ledger._record_ambiguous(request_sha, error)
+                            raise ProductionJudgeRequestAmbiguous(
+                                "production judge response cost is ambiguous; exact request is blocked"
+                            ) from error
 
         return BudgetedTransport()
 
     def recover_orphaned_reservations(self) -> tuple[dict[str, Any], ...]:
-        """Fully account crashed calls and make their exact requests retryable.
+        """Classify crash-left reservations as paid-outcome ambiguities.
 
         The transport lock proves that no paid call is still active when a
         reservation is classified as orphaned.  Recovery is append-only: the
-        original reservation remains charged at its full authorization, and a
-        content-bound event points canonical replay to a fresh attempt identity.
+        original reservation remains charged at its full authorization.  This
+        method does not authorize another paid attempt; the separate explicit
+        reconciliation seam does that at most once for a canonical request.
         """
 
         recovered: list[dict[str, Any]] = []
@@ -290,16 +420,18 @@ class ProductionJudgeBudget:
                     call_dir / "completed.json",
                     call_dir / "ambiguous.json",
                     call_dir / "overrun.json",
+                    # Preserve compatibility with ledgers written before
+                    # recovery supersessions became an explicit second step.
+                    call_dir / "orphan-recovery.json",
                 )
                 if any(path.exists() for path in terminal_paths):
-                    continue
-                existing_recovery = self._read_optional_event(
-                    call_dir / "orphan-recovery.json", "orphan_recovery"
-                )
-                if existing_recovery is not None:
-                    self._validated_orphan_recovery(
-                        call_dir, reservation, existing_recovery
+                    legacy_recovery = self._read_optional_event(
+                        call_dir / "orphan-recovery.json", "orphan_recovery"
                     )
+                    if legacy_recovery is not None:
+                        self._validated_orphan_recovery(
+                            call_dir, reservation, legacy_recovery
+                        )
                     continue
                 request_sha = call_dir.name
                 canonical_sha = str(
@@ -315,21 +447,28 @@ class ProductionJudgeBudget:
                     raise ProductionJudgeBudgetError(
                         "judge budget retry identity differs"
                     )
-                retry_number = attempt_number + 1
-                retry_sha = _retry_request_sha(canonical_sha, retry_number)
                 unsigned = self._event(
-                    "orphan_recovery",
+                    "ambiguous",
                     request_sha,
+                    authorized_usd=_money_text(
+                        self.config.per_call_reservation_usd
+                    ),
+                    error_class="WorkerCrash",
+                    transport_failure={
+                        "error_class": "WorkerCrash",
+                        "status_code": None,
+                        "error_type": None,
+                        "provider": None,
+                        "retryable": True,
+                    },
+                    ambiguity_origin="orphaned_reservation",
                     canonical_request_sha256=canonical_sha,
                     attempt_number=attempt_number,
-                    retry_attempt_number=retry_number,
-                    retry_request_sha256=retry_sha,
                     reservation_event_sha256=str(reservation["content_sha256"]),
-                    reason="orphaned_reservation_fully_accounted",
                 )
-                path = call_dir / "orphan-recovery.json"
+                path = call_dir / "ambiguous.json"
                 self._write_once(path, unsigned)
-                recovered.append(self._read_event(path, "orphan_recovery"))
+                recovered.append(self._read_event(path, "ambiguous"))
         return tuple(copy.deepcopy(recovered))
 
     def receipt(self) -> dict[str, Any]:
@@ -391,51 +530,185 @@ class ProductionJudgeBudget:
             }
 
     def acknowledge_ambiguous_transport_circuit(self) -> dict[str, Any] | None:
-        """Retire only a fully-accounted transient transport circuit.
+        """Backward-compatible single-event wrapper around reconciliation."""
 
-        The exact request remains durably ambiguous and can never cross the
-        transport seam again. Its full reservation remains charged against the
-        judge budget. Retiring the global marker lets distinct requests proceed;
-        cap exhaustion and price-overrun circuits are never eligible.
-        """
-
-        with self._locked():
-            circuit_path = self.path / "circuit.json"
-            circuit = self._read_optional_event(circuit_path, "circuit")
-            if circuit is None:
-                return None
-            if circuit.get("reason") != "ambiguous_transport":
+        try:
+            reconciled = self.reconcile_ambiguous_requests()
+        except ProductionJudgeBudgetError as error:
+            if "cannot be reconciled" in str(error):
                 raise ProductionJudgeBudgetError(
                     "non-ambiguous production judge circuit cannot be acknowledged"
-                )
-            request_sha = str(circuit["request_sha256"])
-            ambiguous = self._read_event(
-                self.path / "calls" / request_sha / "ambiguous.json", "ambiguous"
-            )
-            if ambiguous.get("authorized_usd") != _money_text(
-                self.config.per_call_reservation_usd
-            ):
+                ) from error
+            raise
+        return reconciled[0] if reconciled else None
+
+    def reconcile_ambiguous_requests(self) -> tuple[dict[str, Any], ...]:
+        """Retire transient global isolation after ambiguity is durable.
+
+        This never changes the exact request's ambiguous/full-reserved outcome
+        and never authorizes a new paid call.  A caller with independent billing
+        evidence must use one of the exact-request resolution methods below.
+        """
+
+        with self._transport_slots(), self._locked():
+            circuit_path = self.path / "circuit.json"
+            circuit = self._read_optional_event(circuit_path, "circuit")
+            if circuit is not None and circuit.get("reason") != "ambiguous_transport":
                 raise ProductionJudgeBudgetError(
-                    "ambiguous production judge reservation differs"
+                    "non-ambiguous production judge circuit cannot be reconciled"
                 )
-            circuit_sha = str(circuit["content_sha256"])
-            resolution_path = self.path / "circuit-resolutions" / f"{circuit_sha}.json"
-            resolution = self._event(
-                "circuit_resolution",
-                request_sha,
-                circuit_event_sha256=circuit_sha,
-                ambiguous_event_sha256=str(ambiguous["content_sha256"]),
-                reason="ambiguous_transport_accounted_at_reservation",
+            # A hard price outcome can race with the first ambiguous marker.
+            # First-circuit-wins must never let transient reconciliation erase
+            # that later terminal evidence.
+            for call_dir in sorted((self.path / "calls").iterdir()):
+                if (call_dir / "overrun.json").exists():
+                    self._read_event(call_dir / "overrun.json", "overrun")
+                    raise ProductionJudgeBudgetError(
+                        "price-overrun production judge circuit cannot be reconciled"
+                    )
+                ambiguous = self._read_optional_event(
+                    call_dir / "ambiguous.json", "ambiguous"
+                )
+                if ambiguous is None:
+                    continue
+                reservation = self._read_event(
+                    call_dir / "reservation.json", "reservation"
+                )
+                if ambiguous.get("authorized_usd") != reservation.get(
+                    "authorized_usd"
+                ):
+                    raise ProductionJudgeBudgetError(
+                        "ambiguous production judge reservation differs"
+                    )
+            if circuit is not None:
+                request_sha = str(circuit["request_sha256"])
+                ambiguous = self._read_event(
+                    self.path / "calls" / request_sha / "ambiguous.json",
+                    "ambiguous",
+                )
+                circuit_sha = str(circuit["content_sha256"])
+                resolution_path = (
+                    self.path / "circuit-resolutions" / f"{circuit_sha}.json"
+                )
+                resolution = self._event(
+                    "circuit_resolution",
+                    request_sha,
+                    circuit_event_sha256=circuit_sha,
+                    ambiguous_event_sha256=str(ambiguous["content_sha256"]),
+                    reason="ambiguous_transport_accounted_at_reservation",
+                )
+                self._write_once(resolution_path, resolution)
+                committed = self._read_event(
+                    resolution_path, "circuit_resolution"
+                )
+                circuit_path.unlink()
+                directory = os.open(self.path, os.O_RDONLY)
+                try:
+                    os.fsync(directory)
+                finally:
+                    os.close(directory)
+                return (copy.deepcopy(committed),)
+        return ()
+
+    def record_recovered_ambiguous_response(
+        self,
+        request: Mapping[str, Any],
+        response: Mapping[str, Any],
+        *,
+        evidence: BillingResolutionEvidence | Mapping[str, Any],
+    ) -> dict[str, Any]:
+        """Resolve one exact ambiguity from an independently recovered result."""
+
+        return self._resolve_ambiguous_request(
+            request,
+            resolution_kind="recovered_response",
+            evidence=evidence,
+            response=response,
+        )
+
+    def authorize_definitely_unbilled_retry(
+        self,
+        request: Mapping[str, Any],
+        *,
+        evidence: BillingResolutionEvidence | Mapping[str, Any],
+    ) -> dict[str, Any]:
+        """Authorize the sole recovery attempt after proof no charge occurred."""
+
+        return self._resolve_ambiguous_request(
+            request,
+            resolution_kind="definitely_unbilled",
+            evidence=evidence,
+            response=None,
+        )
+
+    def _resolve_ambiguous_request(
+        self,
+        request: Mapping[str, Any],
+        *,
+        resolution_kind: str,
+        evidence: BillingResolutionEvidence | Mapping[str, Any],
+        response: Mapping[str, Any] | None,
+    ) -> dict[str, Any]:
+        parsed_evidence = (
+            evidence
+            if isinstance(evidence, BillingResolutionEvidence)
+            else BillingResolutionEvidence.from_mapping(evidence)
+        )
+        request_copy = copy.deepcopy(dict(request))
+        _maximum_request_cost(request_copy)
+        canonical_sha = _sha(request_copy)
+        if (
+            parsed_evidence.resolution_kind != resolution_kind
+            or parsed_evidence.canonical_request_sha256 != canonical_sha
+        ):
+            raise ProductionJudgeBudgetError(
+                "billing resolution evidence is cross-wired"
             )
-            self._write_once(resolution_path, resolution)
-            committed = self._read_event(resolution_path, "circuit_resolution")
-            circuit_path.unlink()
-            directory = os.open(self.path, os.O_RDONLY)
-            try:
-                os.fsync(directory)
-            finally:
-                os.close(directory)
-            return committed
+        with self._transport_slots(), self._locked():
+            call_dir = self.path / "calls" / canonical_sha
+            reservation = self._read_event(
+                call_dir / "reservation.json", "reservation"
+            )
+            ambiguous = self._read_event(
+                call_dir / "ambiguous.json", "ambiguous"
+            )
+            fields: dict[str, Any] = {
+                "record_format": AMBIGUITY_RESOLUTION_FORMAT,
+                "canonical_request_sha256": canonical_sha,
+                "resolution_kind": resolution_kind,
+                "billing_resolution_evidence": parsed_evidence.to_mapping(),
+                "reservation_event_sha256": str(reservation["content_sha256"]),
+                "ambiguous_event_sha256": str(ambiguous["content_sha256"]),
+            }
+            if resolution_kind == "recovered_response":
+                response_copy, price = self._validated_paid_response(response)
+                if parsed_evidence.response_sha256 != _sha(response_copy):
+                    raise ProductionJudgeBudgetError(
+                        "recovered response differs from billing evidence"
+                    )
+                fields.update(
+                    actual_usd=_money_text(price),
+                    response=response_copy,
+                )
+            elif resolution_kind == "definitely_unbilled":
+                fields.update(
+                    retry_attempt_number=1,
+                    retry_request_sha256=_retry_request_sha(canonical_sha, 1),
+                )
+            else:  # pragma: no cover - private callers freeze the two modes
+                raise ProductionJudgeBudgetError(
+                    "ambiguous resolution kind differs"
+                )
+            path = call_dir / "ambiguity-resolution.json"
+            unsigned = self._event(
+                "ambiguity_resolution", canonical_sha, **fields
+            )
+            self._write_once(path, unsigned)
+            committed = self._read_event(path, "ambiguity_resolution")
+            self._validated_ambiguity_resolution(
+                call_dir, reservation, ambiguous, committed
+            )
+            return copy.deepcopy(committed)
 
     def _reserve_or_replay(
         self, request_sha: str, request: Mapping[str, Any]
@@ -444,9 +717,17 @@ class ProductionJudgeBudget:
         if estimate > self.config.per_call_reservation_usd:
             raise ProductionJudgeBudgetError(
                 "request exceeds the configured per-call reservation"
-            )
+        )
         with self._locked():
             canonical_request_sha = request_sha
+            resolution = self._read_ambiguity_resolution(canonical_request_sha)
+            if resolution is not None and resolution["resolution_kind"] == "recovered_response":
+                response = resolution.get("response")
+                if not isinstance(response, Mapping):
+                    raise ProductionJudgeBudgetError(
+                        "recovered judge budget response differs"
+                    )
+                return canonical_request_sha, copy.deepcopy(dict(response))
             request_sha = self._current_attempt_sha(canonical_request_sha)
             call_dir = self.path / "calls" / request_sha
             completed = (
@@ -467,10 +748,16 @@ class ProductionJudgeBudget:
                 else None
             )
             if ambiguous is not None:
-                raise ProductionJudgeBudgetCircuitOpen(
-                    "production judge request has an ambiguous prior outcome; circuit is open"
+                raise ProductionJudgeRequestAmbiguous(
+                    "production judge request has an ambiguous prior outcome; exact request is blocked"
                 )
-            if self._read_optional_event(self.path / "circuit.json", "circuit") is not None:
+            circuit = self._read_optional_event(self.path / "circuit.json", "circuit")
+            # Older ledgers wrote a global marker for an exact-request billing
+            # ambiguity.  The reservation already conservatively accounts for
+            # that call, so the marker is not a fleet-wide safety condition.
+            # Keep exact-request blocking above, while allowing unrelated work
+            # to proceed. Hard cap and price-overrun markers remain global.
+            if circuit is not None and circuit.get("reason") != "ambiguous_transport":
                 raise ProductionJudgeBudgetCircuitOpen(
                     "production judge budget circuit is open"
                 )
@@ -508,6 +795,11 @@ class ProductionJudgeBudget:
             return request_sha, None
 
     def _current_attempt_sha(self, canonical_request_sha: str) -> str:
+        resolution = self._read_ambiguity_resolution(canonical_request_sha)
+        if resolution is not None:
+            if resolution["resolution_kind"] == "definitely_unbilled":
+                return str(resolution["retry_request_sha256"])
+            return canonical_request_sha
         request_sha = canonical_request_sha
         seen: set[str] = set()
         while True:
@@ -526,6 +818,76 @@ class ProductionJudgeBudget:
             if recovery["canonical_request_sha256"] != canonical_request_sha:
                 raise ProductionJudgeBudgetError("judge budget retry identity differs")
             request_sha = str(retry_sha)
+
+    def _read_ambiguity_resolution(
+        self, canonical_request_sha: str
+    ) -> dict[str, Any] | None:
+        call_dir = self.path / "calls" / canonical_request_sha
+        path = call_dir / "ambiguity-resolution.json"
+        if not path.exists():
+            return None
+        reservation = self._read_event(
+            call_dir / "reservation.json", "reservation"
+        )
+        ambiguous = self._read_event(call_dir / "ambiguous.json", "ambiguous")
+        resolution = self._read_event(path, "ambiguity_resolution")
+        self._validated_ambiguity_resolution(
+            call_dir, reservation, ambiguous, resolution
+        )
+        return resolution
+
+    def _validated_ambiguity_resolution(
+        self,
+        call_dir: Path,
+        reservation: Mapping[str, Any],
+        ambiguous: Mapping[str, Any],
+        resolution: Mapping[str, Any],
+    ) -> None:
+        canonical_sha = reservation.get("canonical_request_sha256", call_dir.name)
+        raw_evidence = resolution.get("billing_resolution_evidence")
+        if not isinstance(raw_evidence, Mapping):
+            raise ProductionJudgeBudgetError(
+                "billing resolution evidence fields differ"
+            )
+        evidence = BillingResolutionEvidence.from_mapping(raw_evidence)
+        if (
+            call_dir.name != canonical_sha
+            or resolution.get("record_format") != AMBIGUITY_RESOLUTION_FORMAT
+            or resolution.get("request_sha256") != call_dir.name
+            or resolution.get("canonical_request_sha256") != canonical_sha
+            or evidence.canonical_request_sha256 != canonical_sha
+            or evidence.resolution_kind != resolution.get("resolution_kind")
+            or resolution.get("reservation_event_sha256")
+            != reservation.get("content_sha256")
+            or resolution.get("ambiguous_event_sha256")
+            != ambiguous.get("content_sha256")
+        ):
+            raise ProductionJudgeBudgetError("judge budget retry identity differs")
+        kind = resolution.get("resolution_kind")
+        if kind == "definitely_unbilled":
+            if (
+                resolution.get("retry_attempt_number") != 1
+                or resolution.get("retry_request_sha256")
+                != _retry_request_sha(str(canonical_sha), 1)
+                or "response" in resolution
+                or "actual_usd" in resolution
+            ):
+                raise ProductionJudgeBudgetError(
+                    "judge budget retry identity differs"
+                )
+            return
+        if kind == "recovered_response":
+            response = resolution.get("response")
+            response_copy, price = self._validated_paid_response(response)
+            if (
+                evidence.response_sha256 != _sha(response_copy)
+                or resolution.get("actual_usd") != _money_text(price)
+            ):
+                raise ProductionJudgeBudgetError(
+                    "recovered judge budget response differs"
+                )
+            return
+        raise ProductionJudgeBudgetError("ambiguous resolution kind differs")
 
     def _validated_orphan_recovery(
         self,
@@ -580,7 +942,27 @@ class ProductionJudgeBudget:
                     transport_failure=failure,
                 ),
             )
-            self._open_circuit("ambiguous_transport", request_sha)
+            # Ambiguous provider outcome is exact-request state.  The full
+            # reservation remains charged and the same wire request is blocked
+            # above until externally reconciled; unrelated requests must not be
+            # poisoned by a global circuit marker.
+
+    def _validated_paid_response(
+        self, response: Mapping[str, Any] | None
+    ) -> tuple[dict[str, Any], Decimal]:
+        if not isinstance(response, Mapping):
+            raise ProductionJudgeBudgetError("paid judge response must be an object")
+        response_copy = copy.deepcopy(dict(response))
+        if _contains_secret_field(response_copy):
+            raise ProductionJudgeBudgetError(
+                "paid judge response contains a secret field"
+            )
+        price = _money(response_copy.get("price_usd"), "paid judge actual price")
+        if price > self.config.per_call_reservation_usd:
+            raise ProductionJudgeBudgetError(
+                "recovered judge response price exceeded its reservation"
+            )
+        return response_copy, price
 
     def _reconcile(
         self, request_sha: str, response: Mapping[str, Any]
@@ -635,6 +1017,17 @@ class ProductionJudgeBudget:
             completed = self._read_optional_event(call_dir / "completed.json", "completed")
             ambiguous = self._read_optional_event(call_dir / "ambiguous.json", "ambiguous")
             overrun = self._read_optional_event(call_dir / "overrun.json", "overrun")
+            ambiguity_resolution = self._read_optional_event(
+                call_dir / "ambiguity-resolution.json", "ambiguity_resolution"
+            )
+            if ambiguity_resolution is not None:
+                if ambiguous is None:
+                    raise ProductionJudgeBudgetError(
+                        "ambiguity resolution has no ambiguous outcome"
+                    )
+                self._validated_ambiguity_resolution(
+                    call_dir, reservation, ambiguous, ambiguity_resolution
+                )
             orphan_recovery = self._read_optional_event(
                 call_dir / "orphan-recovery.json", "orphan_recovery"
             )
@@ -658,6 +1051,18 @@ class ProductionJudgeBudget:
                 actual += amount
                 reserved += amount
                 ambiguous_count += 1
+            elif ambiguity_resolution is not None:
+                if ambiguity_resolution["resolution_kind"] == "recovered_response":
+                    amount = _money(
+                        ambiguity_resolution.get("actual_usd"),
+                        "recovered actual price",
+                    )
+                    actual += amount
+                    reserved += amount
+                    completed_count += 1
+                # A definitely-unbilled outcome releases its original
+                # authorization. Any recovery attempt is accounted by its own
+                # append-only reservation directory.
             else:
                 amount = _money(reservation.get("authorized_usd"), "authorized price")
                 reserved += amount
@@ -786,6 +1191,33 @@ class ProductionJudgeBudget:
 
         with self._transport_slots():
             yield
+
+    @contextmanager
+    def _request_lock(self, canonical_request_sha: str) -> Iterator[None]:
+        """Serialize one exact paid wire identity across threads/processes."""
+
+        if not _is_sha256(canonical_request_sha):
+            raise ProductionJudgeBudgetError("judge request lock identity differs")
+        path = self._request_locks_dir / f"{canonical_request_sha}.lock"
+        key = str(path.resolve())
+        with _THREAD_LOCKS_GUARD:
+            thread_lock = _THREAD_REQUEST_LOCKS.setdefault(key, threading.RLock())
+        with thread_lock:
+            descriptor = os.open(
+                path,
+                os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0),
+                0o600,
+            )
+            try:
+                if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+                    raise ProductionJudgeBudgetError(
+                        "judge request lock must be a regular file"
+                    )
+                fcntl.flock(descriptor, fcntl.LOCK_EX)
+                yield
+            finally:
+                fcntl.flock(descriptor, fcntl.LOCK_UN)
+                os.close(descriptor)
 
     @contextmanager
     def _transport_slot(self) -> Iterator[None]:

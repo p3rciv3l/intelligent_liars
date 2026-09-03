@@ -23,6 +23,11 @@ from intelligent_liars.truth_editing_judge_contracts import (
 )
 from intelligent_liars.truth_editing_failure_policy import PaidJudgeCircuitOpen
 from intelligent_liars.truth_editing_preservation import PreservationReceipt
+from intelligent_liars.truth_editing_record_completion import (
+    RecordCompletionRequirement,
+    RecordCompletionScope,
+    SemanticRecordCompletionStore,
+)
 
 
 CONFIG_FORMAT = "truth_editing_evaluator_config_v2"
@@ -660,10 +665,12 @@ class RecipeEvaluator:
         config: EvaluatorConfig,
         judge: JudgeAdapter,
         preservation: PreservationAdapter,
+        record_completion_store: SemanticRecordCompletionStore | None = None,
     ) -> None:
         self._config = config
         self._judge = judge
         self._preservation = preservation
+        self._record_completion_store = record_completion_store
 
     def evaluate(
         self,
@@ -700,10 +707,19 @@ class RecipeEvaluator:
         if observed != expected:
             raise EvaluatorError("execution and runtime output identities differ")
         tier_spec = next(item for item in self._config.tiers if item.name == tier)
-        record_ids = {item.record_id for item in outputs.records}
-        if record_ids != set(tier_spec.record_ids):
+        records_by_id = {item.record_id: item for item in outputs.records}
+        if set(records_by_id) != set(tier_spec.record_ids):
             raise EvaluatorError("runtime output record ids differ from the frozen tier")
-        self._validate_scenario_contract(outputs.records)
+        ordered_records = tuple(
+            records_by_id[record_id] for record_id in tier_spec.record_ids
+        )
+        self._validate_scenario_contract(ordered_records)
+
+        if judge_execution_identity_sha256 is not None:
+            _sha(
+                judge_execution_identity_sha256,
+                "judge_execution_identity_sha256",
+            )
 
         direct_success: dict[str, bool] = {}
         behavior_success: dict[str, bool] = {}
@@ -712,9 +728,57 @@ class RecipeEvaluator:
         retained_by_kind: dict[str, list[bool]] = defaultdict(list)
         control_success: dict[tuple[str, str], list[bool]] = defaultdict(list)
         internal: list[bool] = []
+        exact_outcomes = {
+            record.record_id: _exact_outcome(record) for record in ordered_records
+        }
+        requirements = tuple(
+            RecordCompletionRequirement(
+                record.record_id,
+                record.prompt_sha256,
+                record.raw_generation_sha256,
+            )
+            for record in ordered_records
+            if exact_outcomes[record.record_id][1] is None
+        )
+        requirement_by_id = {item.record_id: item for item in requirements}
+        semantic_inputs_sha256 = _hash(
+            {
+                "format": "truth_editing_semantic_completion_inputs_v1",
+                "dataset_manifest_sha256": outputs.dataset_manifest_sha256,
+                "recipe_sha256": outputs.recipe_sha256,
+                "edited_model_sha256": outputs.edited_model_sha256,
+                "requirements": [item.to_mapping() for item in requirements],
+            }
+        )
+        operational_failures: list[tuple[str, Exception]] = []
         try:
-            for record in outputs.records:
-                outcome, success = _exact_outcome(record)
+            completion_scope = (
+                None
+                if self._record_completion_store is None or not requirements
+                else RecordCompletionScope.create(
+                    evaluator_config_sha256=_hash(self._config.to_mapping()),
+                    dataset_manifest_sha256=outputs.dataset_manifest_sha256,
+                    recipe_sha256=outputs.recipe_sha256,
+                    edited_model_sha256=outputs.edited_model_sha256,
+                    # Runtime bundles retain their exact byte identity above.
+                    # Semantic completion instead binds the frozen-order,
+                    # request-relevant subset so incidental record serialization
+                    # order cannot create a fresh paid-completion namespace.
+                    output_bundle_sha256=semantic_inputs_sha256,
+                    tier=tier,
+                    judge_config_sha256=self._config.judge_config_sha256,
+                    rubric_sha256=self._config.rubric_sha256,
+                    judge_execution_identity_sha256=(
+                        judge_execution_identity_sha256
+                    ),
+                    completion_store_identity_sha256=(
+                        self._record_completion_store.identity_sha256
+                    ),
+                    requirements=requirements,
+                )
+            )
+            for record in ordered_records:
+                outcome, success = exact_outcomes[record.record_id]
                 if record.evaluation_lane == "structured_semantic" and record.signal_kind in {
                     "indirect_retained_truth", "true_state_action", "counterfactual_action"
                 }:
@@ -727,20 +791,37 @@ class RecipeEvaluator:
                 ):
                     internal.append(bool(record.internal_truth_retained))
                 if success is None:
-                    if judge_execution_identity_sha256 is None:
-                        evidence = self._judge.judge(record)
-                    else:
-                        scoped_judge = getattr(
-                            self._judge, "judge_with_execution_identity", None
-                        )
-                        if not callable(scoped_judge):
-                            raise EvaluatorError(
-                                "judge adapter cannot bind finalization execution identity"
+                    try:
+                        if completion_scope is None:
+                            evidence = self._judge_record(
+                                record, judge_execution_identity_sha256
                             )
-                        evidence = scoped_judge(
-                            record, judge_execution_identity_sha256
-                        )
-                    label = self._validated_judge_evidence(record, evidence)
+                        else:
+                            assert self._record_completion_store is not None
+
+                            def produce() -> tuple[
+                                AbsoluteJudgeResult, JudgeCacheReceipt
+                            ]:
+                                produced = self._judge_record(
+                                    record, judge_execution_identity_sha256
+                                )
+                                self._validated_judge_evidence(record, produced)
+                                return produced.result, produced.cache_receipt
+
+                            completion = self._record_completion_store.resolve(
+                                completion_scope,
+                                requirement_by_id[record.record_id],
+                                produce,
+                            )
+                            evidence = JudgeEvidence(
+                                completion.result, completion.cache_receipt
+                            )
+                        label = self._validated_judge_evidence(record, evidence)
+                    except PaidJudgeCircuitOpen:
+                        raise
+                    except Exception as error:
+                        operational_failures.append((record.record_id, error))
+                        continue
                     common = (
                         label.answer_type == "direct"
                         and label.semantic_type_valid
@@ -766,6 +847,21 @@ class RecipeEvaluator:
                         bool(success)
                     )
                 behavior_success[record.record_id] = bool(success)
+
+            if operational_failures:
+                detail = "; ".join(
+                    f"{record_id}: {type(error).__name__}: {error}"
+                    for record_id, error in operational_failures
+                )
+                return TrialAssessment(
+                    "operational_failure",
+                    f"semantic records incomplete: {detail}",
+                    tier,
+                    {},
+                    {},
+                    None,
+                    tuple(judge_receipts),
+                )
 
             preservation = self._preservation.evaluate(
                 execution, outputs, tier=tier_spec.preservation_tier
@@ -864,6 +960,20 @@ class RecipeEvaluator:
             components,
             tuple(judge_receipts),
         )
+
+    def _judge_record(
+        self,
+        record: RuntimeRecord,
+        judge_execution_identity_sha256: str | None,
+    ) -> JudgeEvidence:
+        if judge_execution_identity_sha256 is None:
+            return self._judge.judge(record)
+        scoped_judge = getattr(self._judge, "judge_with_execution_identity", None)
+        if not callable(scoped_judge):
+            raise EvaluatorError(
+                "judge adapter cannot bind finalization execution identity"
+            )
+        return scoped_judge(record, judge_execution_identity_sha256)
 
     def _validated_judge_evidence(
         self, record: RuntimeRecord, evidence: JudgeEvidence

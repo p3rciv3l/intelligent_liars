@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import importlib.util
 import json
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -20,6 +21,7 @@ from intelligent_liars.truth_editing_study import (
     OfflineDeterministicSearchDriver,
     OfflineSyntheticEvaluator,
     OptunaSearchDriver,
+    StudyError,
     TruthEditingStudy,
 )
 
@@ -273,7 +275,22 @@ def test_rescore_driver_appends_exact_replays_then_quarantines_and_continues(
             {"name": "finalist", "record_limit": 6, "through_trial": 12},
         ],
     )
-    driver = RescoreOptunaSearchDriver(seed=config.sampler_seed, generation=generation)
+    repair_only = RescoreOptunaSearchDriver(
+        seed=config.sampler_seed, generation=generation
+    )
+    with pytest.raises(StudyError, match="generation is exhausted"):
+        TruthEditingStudy(config, _direction_bank()).run(
+            driver=repair_only,
+            evaluator=TargetEvaluator(),
+            journal_path=tmp_path / "repair-only-journal.json",
+            stop_after_trials=10,
+        )
+
+    driver = RescoreOptunaSearchDriver(
+        seed=config.sampler_seed,
+        generation=generation,
+        continue_optimization_after_replay=True,
+    )
     target_journal = tmp_path / "target-journal.json"
     target = TruthEditingStudy(config, _direction_bank()).run(
         driver=driver,
@@ -299,6 +316,7 @@ def test_rescore_driver_appends_exact_replays_then_quarantines_and_continues(
     assert driver.quarantined_request_sha256s == frozenset(
         {generation.replay_requests[1].request_sha256}
     )
+    assert driver.identity["continuation"] == "repair_then_continue"
 
     import optuna
 
@@ -318,3 +336,22 @@ def test_rescore_driver_appends_exact_replays_then_quarantines_and_continues(
     assert 7 not in states
     assert states[3] == "PRUNED"
     assert states[6] == "COMPLETE"
+
+
+def test_report_does_not_resolve_a_failure_with_same_proposal_at_other_tier(
+    tmp_path: Path,
+) -> None:
+    report, _report_path, _journal_path, _checkpoint_path = _source_artifacts(tmp_path)
+    failure = report.trials[1]
+    success_at_other_tier = replace(
+        failure,
+        trial_id="trial-0006",
+        ordinal=6,
+        batch_ordinal=3,
+        tier_name="expanded",
+        evaluation_record_ids=report.trials[2].evaluation_record_ids,
+        result=report.trials[0].result,
+    )
+    narrowed = replace(report, trials=(failure, success_at_other_tier))
+
+    assert narrowed.unresolved_operational_failures == 1

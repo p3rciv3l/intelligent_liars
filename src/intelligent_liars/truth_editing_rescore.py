@@ -755,7 +755,13 @@ def load_rescore_generation_v1(
 class RescoreOptunaSearchDriver(OptunaSearchDriver):
     """Append one bounded replay generation to an immutable Optuna history."""
 
-    def __init__(self, *, seed: int, generation: RescoreGeneration) -> None:
+    def __init__(
+        self,
+        *,
+        seed: int,
+        generation: RescoreGeneration,
+        continue_optimization_after_replay: bool = False,
+    ) -> None:
         if not isinstance(generation, RescoreGeneration):
             raise RescoreGenerationError("rescore driver requires a validated generation")
         if _sha(generation.unsigned_dict()) != generation.generation_sha256:
@@ -774,6 +780,9 @@ class RescoreOptunaSearchDriver(OptunaSearchDriver):
                 "source Optuna driver identity differs from the restart runtime"
             )
         self.generation = generation
+        self.continue_optimization_after_replay = bool(
+            continue_optimization_after_replay
+        )
         self._quarantined_request_sha256s: set[str] = set()
         self._source_trials_by_ordinal = {
             int(entry["ordinal"]): {
@@ -797,6 +806,11 @@ class RescoreOptunaSearchDriver(OptunaSearchDriver):
             "generation_sha256": self.generation.generation_sha256,
             "source_study_identity_sha256": (
                 self.generation.source.study_identity_sha256
+            ),
+            "continuation": (
+                "repair_then_continue"
+                if self.continue_optimization_after_replay
+                else "repair_only"
             ),
         }
 
@@ -865,6 +879,8 @@ class RescoreOptunaSearchDriver(OptunaSearchDriver):
         self._assert_generation_unchanged()
         replay = self._replay_request(request.ordinal)
         if replay is None:
+            if not self.continue_optimization_after_replay:
+                raise StudyError("rescore generation is exhausted")
             return super().suggest(request)
         proposal = replay.proposal
         self._pending_proposals[request.ordinal] = proposal
