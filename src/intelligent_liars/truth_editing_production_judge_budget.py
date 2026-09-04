@@ -47,6 +47,7 @@ MAXIMUM_ALL_IN_SPEND_USD = Decimal("50")
 MINIMUM_CALL_RESERVATION_USD = Decimal("0.025")
 DEFAULT_MAX_CONCURRENCY = 4
 MAX_MAX_CONCURRENCY = 8
+MAXIMUM_AMBIGUOUS_RETRIES = 3
 _INPUT_USD_PER_TOKEN = Decimal("0.000000075")
 _OUTPUT_USD_PER_TOKEN = Decimal("0.00000025")
 _THREAD_LOCKS: dict[str, threading.RLock] = {}
@@ -372,27 +373,32 @@ class ProductionJudgeBudget:
                 # another provider call or surfacing an in-flight failure.
                 with ledger._request_lock(canonical_request_sha):
                     with ledger._transport_slot():
-                        request_sha, replay = ledger._reserve_or_replay(
-                            canonical_request_sha, request_copy
-                        )
-                        if replay is not None:
-                            return replay
-                        try:
-                            response = downstream.complete(request_copy)
-                        except Exception as error:
-                            ledger._record_ambiguous(request_sha, error)
-                            raise ProductionJudgeRequestAmbiguous(
-                                "production judge transport outcome is ambiguous; exact request is blocked"
-                            ) from error
-                        try:
-                            return ledger._reconcile(request_sha, response)
-                        except ProductionJudgeBudgetCircuitOpen:
-                            raise
-                        except Exception as error:
-                            ledger._record_ambiguous(request_sha, error)
-                            raise ProductionJudgeRequestAmbiguous(
-                                "production judge response cost is ambiguous; exact request is blocked"
-                            ) from error
+                        while True:
+                            request_sha, replay = ledger._reserve_or_replay(
+                                canonical_request_sha, request_copy
+                            )
+                            if replay is not None:
+                                return replay
+                            try:
+                                response = downstream.complete(request_copy)
+                            except Exception as error:
+                                ledger._record_ambiguous(request_sha, error)
+                                if ledger._authorize_fully_reserved_ambiguous_resend(request_sha):
+                                    continue
+                                raise ProductionJudgeRequestAmbiguous(
+                                    "production judge transport outcome remains ambiguous after three retries"
+                                ) from error
+                            try:
+                                return ledger._reconcile(request_sha, response)
+                            except ProductionJudgeBudgetCircuitOpen:
+                                raise
+                            except Exception as error:
+                                ledger._record_ambiguous(request_sha, error)
+                                if ledger._authorize_fully_reserved_ambiguous_resend(request_sha):
+                                    continue
+                                raise ProductionJudgeRequestAmbiguous(
+                                    "production judge response cost remains ambiguous after three retries"
+                                ) from error
 
         return BudgetedTransport()
 
@@ -402,11 +408,13 @@ class ProductionJudgeBudget:
         The transport lock proves that no paid call is still active when a
         reservation is classified as orphaned.  Recovery is append-only: the
         original reservation remains charged at its full authorization.  This
-        method does not authorize another paid attempt; the separate explicit
-        reconciliation seam does that at most once for a canonical request.
+        recovery advances the exact request through at most three new retry
+        identities. Every ambiguous attempt remains charged at its full
+        reservation, so a possible provider charge is never hidden.
         """
 
         recovered: list[dict[str, Any]] = []
+        retryable_request_shas: list[str] = []
         with self._transport_slots(), self._locked():
             for call_dir in sorted((self.path / "calls").iterdir()):
                 if call_dir.is_symlink() or not call_dir.is_dir():
@@ -432,6 +440,17 @@ class ProductionJudgeBudget:
                         self._validated_orphan_recovery(
                             call_dir, reservation, legacy_recovery
                         )
+                    elif (
+                        (call_dir / "ambiguous.json").exists()
+                        and not (call_dir / "completed.json").exists()
+                        and not (call_dir / "overrun.json").exists()
+                        and not (call_dir / "ambiguity-resolution.json").exists()
+                    ):
+                        # A process can die after the ambiguity marker is
+                        # durable but before its retry edge is. Complete that
+                        # missing append-only edge during the next recovery.
+                        self._read_event(call_dir / "ambiguous.json", "ambiguous")
+                        retryable_request_shas.append(call_dir.name)
                     continue
                 request_sha = call_dir.name
                 canonical_sha = str(
@@ -469,6 +488,9 @@ class ProductionJudgeBudget:
                 path = call_dir / "ambiguous.json"
                 self._write_once(path, unsigned)
                 recovered.append(self._read_event(path, "ambiguous"))
+                retryable_request_shas.append(request_sha)
+        for request_sha in retryable_request_shas:
+            self._authorize_fully_reserved_ambiguous_resend(request_sha)
         return tuple(copy.deepcopy(recovered))
 
     def receipt(self) -> dict[str, Any]:
@@ -900,6 +922,8 @@ class ProductionJudgeBudget:
         attempt_number = reservation.get("attempt_number", 0)
         retry_number = recovery.get("retry_attempt_number")
         retry_sha = recovery.get("retry_request_sha256")
+        reason = recovery.get("reason")
+        ambiguous = self._read_optional_event(call_dir / "ambiguous.json", "ambiguous")
         if (
             recovery.get("request_sha256") != request_sha
             or not _is_sha256(canonical_sha)
@@ -912,7 +936,23 @@ class ProductionJudgeBudget:
             or retry_sha != _retry_request_sha(str(canonical_sha), attempt_number + 1)
             or recovery.get("reservation_event_sha256")
             != reservation.get("content_sha256")
-            or recovery.get("reason") != "orphaned_reservation_fully_accounted"
+            or reason not in {
+                "orphaned_reservation_fully_accounted",
+                "ambiguous_attempt_fully_accounted",
+            }
+            or (
+                reason == "ambiguous_attempt_fully_accounted"
+                and (
+                    ambiguous is None
+                    or recovery.get("ambiguous_event_sha256")
+                    != ambiguous.get("content_sha256")
+                )
+            )
+            or (
+                reason == "orphaned_reservation_fully_accounted"
+                and "ambiguous_event_sha256" in recovery
+            )
+            or retry_number > MAXIMUM_AMBIGUOUS_RETRIES
         ):
             raise ProductionJudgeBudgetError("judge budget retry identity differs")
         return str(retry_sha)
@@ -946,6 +986,44 @@ class ProductionJudgeBudget:
             # reservation remains charged and the same wire request is blocked
             # above until externally reconciled; unrelated requests must not be
             # poisoned by a global circuit marker.
+
+    def _authorize_fully_reserved_ambiguous_resend(self, request_sha: str) -> bool:
+        """Resend despite uncertain billing while retaining the full prior charge."""
+
+        with self._locked():
+            call_dir = self.path / "calls" / request_sha
+            reservation = self._read_event(call_dir / "reservation.json", "reservation")
+            ambiguous = self._read_event(call_dir / "ambiguous.json", "ambiguous")
+            canonical_sha = str(
+                reservation.get("canonical_request_sha256", request_sha)
+            )
+            attempt_number = reservation.get("attempt_number", 0)
+            if (
+                not _is_sha256(canonical_sha)
+                or isinstance(attempt_number, bool)
+                or not isinstance(attempt_number, int)
+                or attempt_number < 0
+            ):
+                raise ProductionJudgeBudgetError("judge budget retry identity differs")
+            if attempt_number >= MAXIMUM_AMBIGUOUS_RETRIES:
+                return False
+            retry_number = attempt_number + 1
+            unsigned = self._event(
+                "orphan_recovery",
+                request_sha,
+                canonical_request_sha256=canonical_sha,
+                attempt_number=attempt_number,
+                retry_attempt_number=retry_number,
+                retry_request_sha256=_retry_request_sha(canonical_sha, retry_number),
+                reservation_event_sha256=str(reservation["content_sha256"]),
+                ambiguous_event_sha256=str(ambiguous["content_sha256"]),
+                reason="ambiguous_attempt_fully_accounted",
+            )
+            path = call_dir / "orphan-recovery.json"
+            self._write_once(path, unsigned)
+            committed = self._read_event(path, "orphan_recovery")
+            self._validated_orphan_recovery(call_dir, reservation, committed)
+            return True
 
     def _validated_paid_response(
         self, response: Mapping[str, Any] | None
@@ -1036,9 +1114,8 @@ class ProductionJudgeBudget:
                     call_dir, reservation, orphan_recovery
                 )
             terminal_count = sum(
-                item is not None
-                for item in (completed, ambiguous, overrun, orphan_recovery)
-            )
+                item is not None for item in (completed, overrun)
+            ) + int(ambiguous is not None or orphan_recovery is not None)
             if terminal_count > 1:
                 raise ProductionJudgeBudgetError("judge budget call has conflicting outcomes")
             if completed is not None:

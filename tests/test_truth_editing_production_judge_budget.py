@@ -280,7 +280,7 @@ def test_monitoring_snapshot_sums_completed_call_latency_for_critical_path(
     assert monitoring["elapsed_ms"] == pytest.approx(19.75)
 
 
-def test_ambiguous_transport_failure_is_durable_and_never_retried(tmp_path: Path) -> None:
+def test_ambiguous_transport_failure_gets_three_accounted_retries_then_blocks(tmp_path: Path) -> None:
     transport = _Transport(error=TimeoutError("possibly charged"))
     budget = ProductionJudgeBudget(tmp_path / "ledger", config=_config())
 
@@ -290,14 +290,39 @@ def test_ambiguous_transport_failure_is_durable_and_never_retried(tmp_path: Path
     with pytest.raises(ProductionJudgeRequestAmbiguous, match="ambiguous prior outcome"):
         reopened.transport(transport).complete(_request())
 
-    assert transport.calls == 1
+    assert transport.calls == 4
     receipt = parse_production_judge_budget_receipt(reopened.receipt())
     assert receipt["actual_spend_usd"] == "0"
-    assert receipt["reserved_or_spent_usd"] == "0.025"
-    assert receipt["ambiguous_call_count"] == 1
+    assert receipt["reserved_or_spent_usd"] == "0.1"
+    assert receipt["ambiguous_call_count"] == 4
     assert receipt["circuit_open"] is False
     rendered = json.dumps(receipt)
     assert "possibly charged" not in rendered
+
+
+def test_ambiguous_transport_succeeds_on_third_retry_and_accounts_every_attempt(
+    tmp_path: Path,
+) -> None:
+    class ThreeFailuresThenSuccess(_Transport):
+        def complete(self, request: object) -> dict[str, object]:
+            if self.calls < 3:
+                self.calls += 1
+                raise TimeoutError("possibly charged")
+            return super().complete(request)
+
+    transport = ThreeFailuresThenSuccess(price=0.01)
+    budget = ProductionJudgeBudget(tmp_path / "ledger", config=_config())
+
+    response = budget.transport(transport).complete(_request())
+
+    assert response["price_usd"] == 0.01
+    assert transport.calls == 4
+    receipt = budget.receipt()
+    assert receipt["actual_spend_usd"] == "0.01"
+    assert receipt["reserved_or_spent_usd"] == "0.085"
+    assert receipt["completed_call_count"] == 1
+    assert receipt["ambiguous_call_count"] == 3
+    assert len(tuple((tmp_path / "ledger").glob("calls/*/orphan-recovery.json"))) == 3
 
 
 def test_openrouter_failure_persists_only_safe_structured_metadata(
@@ -375,14 +400,14 @@ def test_ambiguous_transport_immediately_keeps_exact_request_blocked_but_allows_
         budget.transport(_Transport()).complete(_request(1))
     fresh = _Transport(price=0.01)
     budget.transport(fresh).complete(_request(2))
-    assert failed.calls == 1
+    assert failed.calls == 4
     assert fresh.calls == 1
-    assert budget.receipt()["reserved_or_spent_usd"] == "0.035"
+    assert budget.receipt()["reserved_or_spent_usd"] == "0.11"
 
     assert budget.acknowledge_ambiguous_transport_circuit() is None
 
 
-def test_ambiguous_request_needs_external_unbilled_evidence_for_one_retry(
+def test_exhausted_ambiguous_request_stays_blocked_after_legacy_resolution(
     tmp_path: Path,
 ) -> None:
     root = tmp_path / "ledger"
@@ -424,18 +449,13 @@ def test_ambiguous_request_needs_external_unbilled_evidence_for_one_retry(
     assert retry_sha != resolution["canonical_request_sha256"]
 
     retry = _Transport(price=0.01)
-    first_response = budget.transport(retry).complete(_request(1))
-    second_response = budget.transport(retry).complete(_request(1))
-    independent = _Transport(price=0.01)
-    budget.transport(independent).complete(_request(3))
-
-    assert first_response == second_response
-    assert retry.calls == 1
-    assert independent.calls == 1
-    assert (root / "calls" / retry_sha / "completed.json").is_file()
+    with pytest.raises(ProductionJudgeRequestAmbiguous, match="ambiguous prior outcome"):
+        budget.transport(retry).complete(_request(1))
+    assert retry.calls == 0
+    assert not (root / "calls" / retry_sha / "completed.json").exists()
     assert next(root.glob("calls/*/ambiguous.json")).is_file()
     assert len(tuple(root.glob("calls/*/ambiguity-resolution.json"))) == 1
-    assert budget.receipt()["reserved_or_spent_usd"] == "0.03"
+    assert budget.receipt()["reserved_or_spent_usd"] == "0.085"
 
 
 def test_recovered_provider_result_resolves_exact_ambiguity_without_rebilling(
@@ -466,9 +486,9 @@ def test_recovered_provider_result_resolves_exact_ambiguity_without_rebilling(
     assert first["resolution_kind"] == "recovered_response"
     receipt = budget.receipt()
     assert receipt["actual_spend_usd"] == "0.01"
-    assert receipt["reserved_or_spent_usd"] == "0.01"
+    assert receipt["reserved_or_spent_usd"] == "0.085"
     assert receipt["completed_call_count"] == 1
-    assert receipt["ambiguous_call_count"] == 0
+    assert receipt["ambiguous_call_count"] == 3
 
     with pytest.raises(ProductionJudgeBudgetError, match="identity differs"):
         budget.record_recovered_ambiguous_response(
@@ -699,12 +719,12 @@ def test_distinct_paid_transport_waiters_proceed_after_request_local_ambiguity(
         ]
 
     assert outcomes == ["blocked"] * 8
-    assert transport.calls == 8
+    assert transport.calls == 32
     receipt = parse_production_judge_budget_receipt(
         ProductionJudgeBudget(root, config=_config()).receipt()
     )
-    assert receipt["ambiguous_call_count"] == 8
-    assert receipt["reserved_or_spent_usd"] == "0.2"
+    assert receipt["ambiguous_call_count"] == 32
+    assert receipt["reserved_or_spent_usd"] == "0.8"
     assert receipt["circuit_open"] is False
 
 
@@ -763,7 +783,7 @@ def test_paid_transport_gate_is_released_when_worker_crashes(tmp_path: Path) -> 
     assert result["price_usd"] == 0.01
 
 
-def test_orphaned_reservation_stays_blocked_until_explicit_reconciliation(
+def test_orphaned_reservation_recovers_to_one_accounted_retry(
     tmp_path: Path,
 ) -> None:
     context = multiprocessing.get_context("fork")
@@ -786,21 +806,6 @@ def test_orphaned_reservation_stays_blocked_until_explicit_reconciliation(
 
     recovery = budget.recover_orphaned_reservations()
 
-    before_reconciliation = _Transport()
-    with pytest.raises(ProductionJudgeRequestAmbiguous, match="ambiguous prior outcome"):
-        budget.transport(before_reconciliation).complete(_request(0))
-    assert before_reconciliation.calls == 0
-    assert budget.reconcile_ambiguous_requests() == ()
-    still_blocked = _Transport()
-    with pytest.raises(ProductionJudgeRequestAmbiguous, match="ambiguous prior outcome"):
-        budget.transport(still_blocked).complete(_request(0))
-    assert still_blocked.calls == 0
-
-    resolution = budget.authorize_definitely_unbilled_retry(
-        _request(0),
-        evidence=_billing_evidence(_request(0), kind="definitely_unbilled"),
-    )
-
     class RecordingRetryTransport(_Transport):
         def __init__(self) -> None:
             super().__init__(price=0.01)
@@ -820,37 +825,34 @@ def test_orphaned_reservation_stays_blocked_until_explicit_reconciliation(
     assert len(recovery) == 1
     assert recovery[0]["status"] == "ambiguous"
     assert recovery[0]["ambiguity_origin"] == "orphaned_reservation"
-    assert resolution["status"] == "ambiguity_resolution"
-    assert resolution["resolution_kind"] == "definitely_unbilled"
     assert first == second
     assert transport.calls == 1
     assert transport.request == _request(0)
     receipt = reopened.receipt()
     assert receipt["actual_spend_usd"] == "0.01"
-    assert receipt["reserved_or_spent_usd"] == "0.01"
+    assert receipt["reserved_or_spent_usd"] == "0.035"
     assert receipt["completed_call_count"] == 1
-    assert receipt["ambiguous_call_count"] == 0
+    assert receipt["ambiguous_call_count"] == 1
     assert receipt["pending_call_count"] == 0
     assert not (root / "circuit.json").exists()
 
-    original = next(root.glob("calls/*/ambiguity-resolution.json"))
+    original = next(root.glob("calls/*/orphan-recovery.json"))
     event = json.loads(original.read_text())
-    assert event["canonical_request_sha256"] == original.parent.name
     retry_dir = root / "calls" / event["retry_request_sha256"]
     assert (retry_dir / "completed.json").exists()
     assert (original.parent / "reservation.json").exists()
     assert (original.parent / "ambiguous.json").exists()
-    assert not tuple(root.glob("calls/*/orphan-recovery.json"))
+    assert len(tuple(root.glob("calls/*/orphan-recovery.json"))) == 1
 
 
-def test_ambiguous_recovery_attempt_never_derives_a_second_paid_retry(
+def test_crash_recovery_derives_exactly_three_paid_retries(
     tmp_path: Path,
 ) -> None:
     context = multiprocessing.get_context("fork")
     root = tmp_path / "ledger"
 
     budget = ProductionJudgeBudget(root, config=_config())
-    for expected_attempt in (0, 1):
+    for expected_attempt in range(4):
         entered = context.Event()
         process = context.Process(
             target=_process_crash_inside_transport,
@@ -865,30 +867,18 @@ def test_ambiguous_recovery_attempt_never_derives_a_second_paid_retry(
         assert len(recovered) == 1
         assert recovered[0]["attempt_number"] == expected_attempt
         assert budget.reconcile_ambiguous_requests() == ()
-        if expected_attempt == 0:
-            resolution = budget.authorize_definitely_unbilled_retry(
-                _request(0),
-                evidence=_billing_evidence(_request(0), kind="definitely_unbilled"),
-            )
 
     blocked = _Transport(price=0.01)
     with pytest.raises(ProductionJudgeRequestAmbiguous, match="ambiguous prior outcome"):
         budget.transport(blocked).complete(_request(0))
 
     assert blocked.calls == 0
-    assert (
-        budget.authorize_definitely_unbilled_retry(
-            _request(0),
-            evidence=_billing_evidence(_request(0), kind="definitely_unbilled"),
-        )
-        == resolution
-    )
     receipt = budget.receipt()
     assert receipt["actual_spend_usd"] == "0"
-    assert receipt["reserved_or_spent_usd"] == "0.025"
-    assert receipt["ambiguous_call_count"] == 1
+    assert receipt["reserved_or_spent_usd"] == "0.1"
+    assert receipt["ambiguous_call_count"] == 4
     assert receipt["completed_call_count"] == 0
-    assert len(tuple(root.glob("calls/*/ambiguity-resolution.json"))) == 1
+    assert len(tuple(root.glob("calls/*/orphan-recovery.json"))) == 3
 
 
 def test_ambiguity_resolution_identity_fails_closed_on_tampering(

@@ -445,7 +445,7 @@ def test_absolute_bundle_response_identity_mismatch_is_never_cached(tmp_path: Pa
     with pytest.raises(OperationalJudgeFailure, match="schema_validation_error"):
         TruthEditingLiveJudge(
             transport=StoredJudgeTransport(
-                [_transport_response(response), _transport_response(response)]
+                [_transport_response(response) for _ in range(4)]
             ),
             cache=cache,
         ).judge_bundle((_record(),))
@@ -468,6 +468,45 @@ def test_absolute_invalid_json_gets_one_json_only_correction() -> None:
     assert correction["operation"] == "json_syntax_correction_v1"
     assert correction["previous_invalid_output"] == fenced["content"]
     assert transport.requests[1]["plugins"] == [{"id": "response-healing"}]
+
+
+@pytest.mark.parametrize(
+    "failure_kind",
+    ["empty", "malformed_json", "duplicate_key", "nonfinite", "nonobject", "schema"],
+)
+def test_response_contract_failures_succeed_on_third_retry_with_all_calls_accounted(
+    failure_kind: str,
+) -> None:
+    failed = _transport_response(_absolute_response())
+    if failure_kind == "empty":
+        failed["content"] = ""
+    elif failure_kind == "malformed_json":
+        failed["content"] = "not-json"
+    elif failure_kind == "duplicate_key":
+        failed["content"] = '{"responses":[],"responses":[]}'
+    elif failure_kind == "nonfinite":
+        failed["content"] = '{"responses":[],"score":NaN}'
+    elif failure_kind == "nonobject":
+        failed["content"] = "[]"
+    else:
+        invalid = _absolute_response()
+        invalid["unexpected"] = True
+        failed["content"] = json.dumps(invalid, sort_keys=True)
+    transport = StoredJudgeTransport(
+        [failed for _ in range(3)] + [_transport_response(_absolute_response())]
+    )
+
+    evidence = TruthEditingLiveJudge(transport=transport).judge(_record())
+
+    assert evidence.result.operational_status == "succeeded"
+    assert evidence.cache_receipt.attempts == 4
+    assert len(transport.requests) == 4
+    prompts = [
+        json.loads(request["messages"][1]["content"])
+        for request in transport.requests[1:]
+    ]
+    assert [prompt["correction_attempt_number"] for prompt in prompts] == [1, 2, 3]
+    assert all(prompt["maximum_correction_attempts"] == 3 for prompt in prompts)
 
 
 @pytest.mark.parametrize(
@@ -503,7 +542,7 @@ def test_malformed_or_semantically_incomplete_healed_json_fails_closed(
         else json.dumps(healed_content, sort_keys=True)
     )
     cache = FileJudgeCache(tmp_path / "judge-cache")
-    transport = StoredJudgeTransport([initial, healed])
+    transport = StoredJudgeTransport([initial] + [healed for _ in range(3)])
 
     with pytest.raises(OperationalJudgeFailure) as captured:
         TruthEditingLiveJudge(transport=transport, cache=cache).judge(_record())
@@ -513,7 +552,7 @@ def test_malformed_or_semantically_incomplete_healed_json_fails_closed(
     assert receipt.operational_failure is not None
     assert receipt.operational_failure.retryable is False
     assert receipt.parsed_result_sha256 is None
-    assert len(transport.requests) == 2
+    assert len(transport.requests) == 4
     assert list(cache.path.glob("*.json")) == []
     assert len(list((cache.path / "terminal-failures").glob("*.json"))) == 1
 
@@ -744,11 +783,10 @@ def test_pairwise_public_evidence_rejects_nested_response_labels() -> None:
     assert transport.requests == []
 
 
-def test_pairwise_different_scenarios_fail_closed_after_one_invalid_correction() -> None:
+def test_pairwise_different_scenarios_fail_closed_after_three_invalid_corrections() -> None:
     transport = StoredJudgeTransport(
         [
-            _transport_response(_pairwise_response("A")),
-            _transport_response(_pairwise_response("A")),
+            *[_transport_response(_pairwise_response("A")) for _ in range(4)],
         ]
     )
     other_scenario = _pairwise_candidate("London")
@@ -762,7 +800,7 @@ def test_pairwise_different_scenarios_fail_closed_after_one_invalid_correction()
             comparison_group_sha256=_sha_text("group"),
         )
 
-    assert len(transport.requests) == 2
+    assert len(transport.requests) == 4
 
 
 def test_authored_pairwise_prompt_explicitly_requires_invalid_comparison_for_scenario_mismatch() -> None:
@@ -846,10 +884,10 @@ def test_authored_pairwise_correction_repeats_mismatch_requirement() -> None:
     assert receipt.attempts == 2
 
 
-def test_authored_pairwise_mismatch_fails_closed_after_one_invalid_correction() -> None:
+def test_authored_pairwise_mismatch_fails_closed_after_three_invalid_corrections() -> None:
     transport = StoredJudgeTransport([
         _transport_response(_pairwise_response("A")),
-        _transport_response(_pairwise_response("B")),
+        *[_transport_response(_pairwise_response("B")) for _ in range(3)],
     ])
     other_scenario = _pairwise_candidate("London")
     other_scenario["question"] = "What is the capital of England?"
@@ -865,7 +903,7 @@ def test_authored_pairwise_mismatch_fails_closed_after_one_invalid_correction() 
             presentation_order="AB",
         )
 
-    assert len(transport.requests) == 2
+    assert len(transport.requests) == 4
 
 
 def test_authored_known_dominance_allows_normalized_cross_scenario_comparison() -> None:
@@ -1159,12 +1197,16 @@ def test_duplicate_json_keys_and_nonfinite_constants_fail_closed() -> None:
     duplicate = _transport_response(_absolute_response())
     duplicate["content"] = '{"responses":[],"responses":[]}'
     with pytest.raises(OperationalJudgeFailure, match="invalid_json"):
-        TruthEditingLiveJudge(transport=StoredJudgeTransport([duplicate])).judge(_record())
+        TruthEditingLiveJudge(
+            transport=StoredJudgeTransport([duplicate for _ in range(4)])
+        ).judge(_record())
 
     nonfinite = _transport_response(_absolute_response())
     nonfinite["content"] = '{"responses":NaN}'
     with pytest.raises(OperationalJudgeFailure, match="invalid_json"):
-        TruthEditingLiveJudge(transport=StoredJudgeTransport([nonfinite])).judge(_record())
+        TruthEditingLiveJudge(
+            transport=StoredJudgeTransport([nonfinite for _ in range(4)])
+        ).judge(_record())
 
 
 def test_concurrent_file_cache_misses_return_one_canonical_winner(tmp_path: Path) -> None:
@@ -1469,17 +1511,18 @@ def test_paid_empty_openrouter_response_becomes_known_cost_invalid_json(monkeypa
     assert receipt.operational_status == "invalid_json"
     assert receipt.operational_failure is not None
     assert receipt.operational_failure.code == "empty_response"
-    assert receipt.operational_failure.retryable is True
+    assert receipt.operational_failure.retryable is False
     assert receipt.operational_failure.message == "error_class=EmptyResponse"
     assert not isinstance(captured.value.__cause__, PaidJudgeCircuitOpen)
-    assert receipt.raw_response_sha256 == _sha_json(payload)
+    assert receipt.raw_response_sha256 is not None
     assert receipt.usage is not None
     assert receipt.usage.to_payload() == {
-        "input_tokens": 100,
+        "input_tokens": 400,
         "output_tokens": 0,
-        "total_tokens": 100,
+        "total_tokens": 400,
     }
-    assert receipt.price_usd == 0.00001
+    assert receipt.price_usd == 0.00004
+    assert receipt.attempts == 4
     assert cache.failure_receipts(receipt.cache_key_sha256) == (receipt,)
 
 
@@ -1489,7 +1532,7 @@ def test_invalid_json_persists_failure_receipt_but_not_success_cache(tmp_path: P
     cache = FileJudgeCache(tmp_path / "judge-cache")
     with pytest.raises(OperationalJudgeFailure) as captured:
         TruthEditingLiveJudge(
-            transport=StoredJudgeTransport([invalid, invalid]), cache=cache
+            transport=StoredJudgeTransport([invalid for _ in range(4)]), cache=cache
         ).judge(_record())
 
     receipt = captured.value.receipt
@@ -1497,7 +1540,7 @@ def test_invalid_json_persists_failure_receipt_but_not_success_cache(tmp_path: P
     assert receipt.operational_failure is not None
     assert receipt.operational_failure.code == "json_decode_error"
     assert receipt.operational_failure.retryable is False
-    assert receipt.attempts == 2
+    assert receipt.attempts == 4
     assert receipt.parsed_result_sha256 is None
     assert receipt.raw_response_sha256 is not None
     assert cache.get(receipt.cache_key_sha256) is None
@@ -1605,6 +1648,43 @@ def test_correction_circuit_restart_resumes_only_the_correction_request(
     assert resumed_prompt["operation"] == "semantic_schema_correction_v1"
 
 
+def test_restart_after_two_invalid_corrections_resumes_only_third_retry(
+    tmp_path: Path,
+) -> None:
+    invalid = _absolute_response()
+    invalid["unexpected"] = True
+
+    class CircuitOnThirdCorrection:
+        def __init__(self) -> None:
+            self.responses = [_transport_response(invalid) for _ in range(3)]
+            self.requests: list[object] = []
+
+        def complete(self, request):
+            self.requests.append(copy.deepcopy(request))
+            if self.responses:
+                return self.responses.pop(0)
+            raise ProductionJudgeBudgetCircuitOpen("stop before third correction")
+
+    cache = FileJudgeCache(tmp_path / "judge-cache")
+    interrupted = CircuitOnThirdCorrection()
+    with pytest.raises(ProductionJudgeBudgetCircuitOpen):
+        TruthEditingLiveJudge(transport=interrupted, cache=cache).judge(_record())
+    pending = cache.pending_correction(
+        next((cache.path / "pending-corrections").glob("*.json")).stem
+    )
+    assert pending is not None
+    assert pending["correction_attempt_number"] == 3
+
+    resumed = StoredJudgeTransport([_transport_response(_absolute_response())])
+    evidence = TruthEditingLiveJudge(transport=resumed, cache=cache).judge(_record())
+
+    assert evidence.result.operational_status == "succeeded"
+    assert evidence.cache_receipt.attempts == 4
+    assert len(resumed.requests) == 1
+    prompt = json.loads(resumed.requests[0]["messages"][1]["content"])
+    assert prompt["correction_attempt_number"] == 3
+
+
 def test_legacy_budget_circuit_terminal_alias_is_ignored_but_preserved(
     tmp_path: Path,
 ) -> None:
@@ -1672,7 +1752,7 @@ def test_prior_compatible_adapter_schema_terminal_replays_without_rebilling(
     with pytest.raises(OperationalJudgeFailure) as first:
         TruthEditingLiveJudge(
             transport=StoredJudgeTransport(
-                [_transport_response(invalid), _transport_response(invalid)]
+                [_transport_response(invalid) for _ in range(4)]
             ),
             cache=cache,
         ).judge(_record())
@@ -1706,7 +1786,9 @@ def test_prior_compatible_adapter_empty_correction_terminal_replays_without_rebi
     cache = FileJudgeCache(tmp_path / "judge-cache")
     with pytest.raises(OperationalJudgeFailure) as first:
         TruthEditingLiveJudge(
-            transport=StoredJudgeTransport([_transport_response(invalid), empty]),
+            transport=StoredJudgeTransport(
+                [_transport_response(invalid)] + [empty for _ in range(3)]
+            ),
             cache=cache,
         ).judge(_record())
     receipt = first.value.receipt
@@ -1737,7 +1819,7 @@ def test_terminal_alias_rejects_cross_wired_correction_request_hash(
     with pytest.raises(OperationalJudgeFailure):
         TruthEditingLiveJudge(
             transport=StoredJudgeTransport(
-                [_transport_response(invalid), _transport_response(invalid)]
+                [_transport_response(invalid) for _ in range(4)]
             ),
             cache=cache,
         ).judge(_record())
@@ -1784,7 +1866,7 @@ def test_budget_ledger_remains_authoritative_for_exact_ambiguous_request(
         ).judge(_record())
     assert not isinstance(first.value, PaidJudgeCircuitOpen)
     assert isinstance(first.value.__cause__, ProductionJudgeRequestAmbiguous)
-    assert failed_transport.calls == 1
+    assert failed_transport.calls == 4
 
     budget.acknowledge_ambiguous_transport_circuit()
     exact_retry = StoredJudgeTransport(
@@ -1823,9 +1905,9 @@ def test_response_owned_retry_count_is_bound_on_schema_failure() -> None:
     cache = MemoryJudgeCache()
     with pytest.raises(OperationalJudgeFailure) as captured:
         TruthEditingLiveJudge(
-            transport=StoredJudgeTransport([invalid, invalid]), cache=cache
+            transport=StoredJudgeTransport([invalid for _ in range(4)]), cache=cache
         ).judge(_record())
-    assert captured.value.receipt.attempts == 8
+    assert captured.value.receipt.attempts == 16
 
 
 def test_duplicate_failure_event_is_atomic_first_writer_wins(tmp_path: Path) -> None:

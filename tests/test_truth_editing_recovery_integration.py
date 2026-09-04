@@ -806,7 +806,7 @@ def test_file_judge_cache_reuses_only_compatible_identity_and_rejects_malformed(
     with pytest.raises(OperationalJudgeFailure) as captured:
         TruthEditingLiveJudge(
             transport=budget.transport(
-                StoredJudgeTransport([malformed, malformed])
+                    StoredJudgeTransport([malformed for _ in range(4)])
             ),
             cache=malformed_cache,
         ).judge(_live_record("Nice"))
@@ -814,5 +814,5 @@ def test_file_judge_cache_reuses_only_compatible_identity_and_rejects_malformed(
     assert receipt.operational_status == "invalid_json"
     assert receipt.operational_failure is not None
     assert receipt.operational_failure.code == "json_decode_error"
-    assert receipt.attempts == 2
+    assert receipt.attempts == 4
     assert malformed_cache.get(receipt.cache_key_sha256) is None

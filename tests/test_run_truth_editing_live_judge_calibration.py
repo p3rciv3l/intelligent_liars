@@ -411,8 +411,8 @@ def test_schema_invalid_completed_response_gets_one_explicit_correction_call(tmp
     cache_entry = json.loads(cache_entries[0].read_text())
     assert cache_entry["format"] == "truth_editing_live_judge_cache_entry_v2"
     lineage = cache_entry["correction_lineage"]
-    assert lineage["format"] == "truth_editing_semantic_correction_lineage_v1"
-    assert lineage["validation_error_categories"] == ["field_set_mismatch"]
+    assert lineage["format"] == "truth_editing_semantic_correction_lineage_v2"
+    assert lineage["attempts"][0]["validation_error_categories"] == ["field_set_mismatch"]
     assert [item["response_status"] for item in lineage["attempts"]] == [
         "schema_error", "succeeded",
     ]
@@ -431,14 +431,14 @@ def test_schema_invalid_completed_response_gets_one_explicit_correction_call(tmp
     assert resumed_transport.requests == []
 
 
-def test_semantic_correction_failure_is_terminal_after_exactly_two_calls(tmp_path: Path) -> None:
+def test_semantic_correction_failure_is_terminal_after_exactly_four_calls(tmp_path: Path) -> None:
     invalid = _response()
     semantic = json.loads(str(invalid["content"]))
     semantic["responses"][0]["unexpected"] = True
     invalid["content"] = json.dumps(semantic)
     second_invalid = dict(invalid)
     second_invalid["price_usd"] = 0.003
-    transport = StoredJudgeTransport([invalid, second_invalid])
+    transport = StoredJudgeTransport([invalid] + [second_invalid for _ in range(3)])
 
     report = run_live_judge_calibration(
         _plan(), cache_dir=tmp_path / "cache", attempt_dir=tmp_path / "attempts",
@@ -447,9 +447,9 @@ def test_semantic_correction_failure_is_terminal_after_exactly_two_calls(tmp_pat
 
     assert report["status"] == "complete_with_failures"
     assert report["failed_operation_ids"] == ["absolute-1"]
-    assert report["actual_paid_calls"] == 2
-    assert report["actual_spend_usd"] == 0.005
-    assert len(transport.requests) == 2
+    assert report["actual_paid_calls"] == 4
+    assert report["actual_spend_usd"] == 0.011
+    assert len(transport.requests) == 4
     assert len(report["judge_failure_receipt_sha256s"]) == 1
 
 
@@ -465,7 +465,7 @@ def test_terminal_semantic_failure_is_replayed_from_cache_without_provider_call(
 
     first = run_live_judge_calibration(
         _plan(), cache_dir=tmp_path / "cache", attempt_dir=tmp_path / "attempt-1",
-        transport=StoredJudgeTransport([invalid, second_invalid]),
+        transport=StoredJudgeTransport([invalid] + [second_invalid for _ in range(3)]),
     )
     resumed_transport = StoredJudgeTransport([])
     resumed = run_live_judge_calibration(
@@ -492,7 +492,7 @@ def test_pre_alias_terminal_failure_receipts_are_inferred_without_provider_call(
     invalid["content"] = json.dumps(semantic)
     run_live_judge_calibration(
         _plan(), cache_dir=tmp_path / "cache", attempt_dir=tmp_path / "attempt-1",
-        transport=StoredJudgeTransport([invalid, invalid]),
+        transport=StoredJudgeTransport([invalid for _ in range(4)]),
     )
     for path in (tmp_path / "cache" / "terminal-failures").glob("*.json"):
         path.unlink()
@@ -517,7 +517,7 @@ def test_terminal_failure_alias_tampering_fails_closed_before_provider(
     invalid["content"] = json.dumps(semantic)
     run_live_judge_calibration(
         _plan(), cache_dir=tmp_path / "cache", attempt_dir=tmp_path / "attempt-1",
-        transport=StoredJudgeTransport([invalid, invalid]),
+        transport=StoredJudgeTransport([invalid for _ in range(4)]),
     )
     alias = next((tmp_path / "cache" / "terminal-failures").glob("*.json"))
     payload = json.loads(alias.read_text())
@@ -540,7 +540,7 @@ def test_versioned_prompt_identity_does_not_reuse_terminal_failure(tmp_path: Pat
     invalid["content"] = json.dumps(semantic)
     run_live_judge_calibration(
         _plan(), cache_dir=tmp_path / "cache", attempt_dir=tmp_path / "attempt-1",
-        transport=StoredJudgeTransport([invalid, invalid]),
+        transport=StoredJudgeTransport([invalid for _ in range(4)]),
     )
 
     changed = _plan()
@@ -560,14 +560,16 @@ def test_versioned_prompt_identity_does_not_reuse_terminal_failure(tmp_path: Pat
     assert len(transport.requests) == 1
 
 
-def test_malformed_json_from_correction_is_terminal_after_exactly_two_calls(tmp_path: Path) -> None:
+def test_malformed_json_from_correction_is_terminal_after_exactly_four_calls(tmp_path: Path) -> None:
     invalid = _response()
     semantic = json.loads(str(invalid["content"]))
     semantic["responses"][0]["unexpected"] = True
     invalid["content"] = json.dumps(semantic)
     malformed_correction = _response()
     malformed_correction["content"] = "not json"
-    transport = StoredJudgeTransport([invalid, malformed_correction, _response()])
+    transport = StoredJudgeTransport(
+        [invalid] + [malformed_correction for _ in range(3)]
+    )
 
     report = run_live_judge_calibration(
         _plan(), cache_dir=tmp_path / "cache", attempt_dir=tmp_path / "attempts",
@@ -575,8 +577,8 @@ def test_malformed_json_from_correction_is_terminal_after_exactly_two_calls(tmp_
     )
 
     assert report["status"] == "complete_with_failures"
-    assert report["actual_paid_calls"] == 2
-    assert len(transport.requests) == 2
+    assert report["actual_paid_calls"] == 4
+    assert len(transport.requests) == 4
 
 
 def test_correction_lineage_tampering_fails_closed_without_transport(tmp_path: Path) -> None:
@@ -590,7 +592,9 @@ def test_correction_lineage_tampering_fails_closed_without_transport(tmp_path: P
     )
     cache_entry = next((tmp_path / "cache").glob("*.json"))
     payload = json.loads(cache_entry.read_text())
-    payload["correction_lineage"]["validation_error_categories"] = ["enum_violation"]
+    payload["correction_lineage"]["attempts"][0]["validation_error_categories"] = [
+        "enum_violation"
+    ]
     cache_entry.write_text(json.dumps(payload))
     replay = StoredJudgeTransport([])
 

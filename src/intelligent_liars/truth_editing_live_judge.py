@@ -63,6 +63,7 @@ _LOADED_ADAPTER_CODE_SHA256 = hashlib.sha256(Path(__file__).read_bytes()).hexdig
 # the number of rows the judge must classify.
 _JUDGE_TIMEOUT_BASE_SECONDS = 60.0
 _JUDGE_TIMEOUT_SECONDS_PER_RECORD = 3.0
+MAXIMUM_RESPONSE_RETRIES = 3
 
 
 def judge_timeout_seconds_for_bundle_size(bundle_size: int) -> float:
@@ -97,6 +98,9 @@ def _bundle_size_from_prompt(prompt: Mapping[str, Any]) -> int:
         return 2
     return 1
 _COMPATIBLE_ADAPTER_CODE_SHA256S = {
+    # Production adapter immediately before bounded three-retry response and
+    # crash-ambiguity recovery. Its successful result contract is unchanged.
+    "e4febe9a89b7e4124813c43e9c35050b9be058e6e1980c444ce9514c310e0a12",
     # Long-soak process loaded before crash-quarantine handling was added.
     # These three identities differ only because the old implementation read
     # the source file again for every receipt while this file was being edited;
@@ -749,6 +753,10 @@ class JudgeCache(Protocol):
         self, key: str, state: Mapping[str, Any]
     ) -> Mapping[str, Any]: ...
 
+    def advance_pending_correction(
+        self, key: str, state: Mapping[str, Any]
+    ) -> Mapping[str, Any]: ...
+
     def terminal_failure(self, key: str) -> JudgeCacheReceipt | None: ...
 
     def record_terminal_failure(
@@ -792,6 +800,65 @@ def _is_nonsemantic_transport_failure(receipt: JudgeCacheReceipt) -> bool:
 def _parse_pending_correction_state(
     value: Mapping[str, Any], *, expected_key: str
 ) -> dict[str, Any]:
+    if isinstance(value, Mapping) and value.get("format") == (
+        "truth_editing_live_judge_pending_correction_v2"
+    ):
+        fields = {
+            "format", "procedure_cache_key_sha256", "attempt_role", "judge_kind",
+            "initial_request_sha256", "correction_cache_key_sha256",
+            "correction_request_sha256", "initial_response",
+            "correction_attempt_number", "paid_attempts",
+            "validation_error_categories", "content_sha256",
+        }
+        if set(value) != fields:
+            raise LiveJudgeError("judge pending correction has an incompatible schema")
+        unsigned = {
+            name: item for name, item in value.items() if name != "content_sha256"
+        }
+        attempt_number = value["correction_attempt_number"]
+        attempts = value["paid_attempts"]
+        categories = value["validation_error_categories"]
+        if (
+            value["procedure_cache_key_sha256"] != expected_key
+            or value["attempt_role"] != "response_requires_correction"
+            or value["judge_kind"] not in {"absolute", "pairwise"}
+            or value["content_sha256"] != _sha(unsigned)
+            or isinstance(attempt_number, bool)
+            or not isinstance(attempt_number, int)
+            or not 1 <= attempt_number <= MAXIMUM_RESPONSE_RETRIES
+            or not isinstance(attempts, list)
+            or len(attempts) != attempt_number
+            or not isinstance(categories, list)
+            or not categories
+            or not isinstance(value["initial_response"], Mapping)
+        ):
+            raise LiveJudgeError("judge pending correction identity differs")
+        attempt_fields = {
+            "ordinal", "request_sha256", "response_status", "response",
+            "validation_error_categories",
+        }
+        for ordinal, attempt in enumerate(attempts):
+            if (
+                not isinstance(attempt, Mapping)
+                or set(attempt) != attempt_fields
+                or attempt["ordinal"] != ordinal
+                or attempt["response_status"] not in {"invalid_json", "schema_error"}
+                or not isinstance(attempt["response"], Mapping)
+                or not isinstance(attempt["validation_error_categories"], list)
+                or not attempt["validation_error_categories"]
+            ):
+                raise LiveJudgeError("judge pending correction attempt differs")
+            _lower_sha(attempt["request_sha256"], "pending correction request_sha256")
+            _canonical_json(attempt["response"])
+        if attempts[0]["request_sha256"] != value["initial_request_sha256"]:
+            raise LiveJudgeError("judge pending correction initial identity differs")
+        for name in (
+            "procedure_cache_key_sha256", "initial_request_sha256",
+            "correction_cache_key_sha256", "correction_request_sha256",
+        ):
+            _lower_sha(value[name], f"pending correction {name}")
+        _canonical_json(value["initial_response"])
+        return copy.deepcopy(dict(value))
     fields = {
         "format", "procedure_cache_key_sha256", "attempt_role", "judge_kind",
         "initial_request_sha256", "correction_cache_key_sha256",
@@ -831,12 +898,30 @@ def _validate_terminal_alias_binding(
         raise LiveJudgeError("cross-key terminal failure lacks correction lineage")
     state = _parse_pending_correction_state(pending_correction, expected_key=key)
     if (
-        state["attempt_role"] != "initial_response_requires_correction"
+        state["attempt_role"] not in {
+            "initial_response_requires_correction", "response_requires_correction"
+        }
         or state["judge_kind"] != receipt.judge_kind
         or state["correction_cache_key_sha256"] != receipt.cache_key_sha256
         or state["correction_request_sha256"] != receipt.raw_request_sha256
     ):
         raise LiveJudgeError("cross-key terminal failure correction identity differs")
+
+
+def _validate_pending_correction_advance(
+    prior: Mapping[str, Any] | None,
+    candidate: Mapping[str, Any],
+    *,
+    key: str,
+) -> dict[str, Any]:
+    if prior is None:
+        raise LiveJudgeError("judge pending correction cannot advance before creation")
+    prior_parsed = _parse_pending_correction_state(prior, expected_key=key)
+    parsed = _parse_pending_correction_state(candidate, expected_key=key)
+    prior_number = prior_parsed.get("correction_attempt_number", 1)
+    if parsed.get("correction_attempt_number") != prior_number + 1:
+        raise LiveJudgeError("judge pending correction did not advance once")
+    return parsed
 
 
 class MemoryJudgeCache:
@@ -876,6 +961,14 @@ class MemoryJudgeCache:
         parsed = _parse_pending_correction_state(state, expected_key=key)
         committed = self._pending_corrections.setdefault(key, parsed)
         return copy.deepcopy(dict(committed))
+
+    def advance_pending_correction(
+        self, key: str, state: Mapping[str, Any]
+    ) -> Mapping[str, Any]:
+        prior = self._pending_corrections.get(key)
+        parsed = _validate_pending_correction_advance(prior, state, key=key)
+        self._pending_corrections[key] = parsed
+        return copy.deepcopy(dict(parsed))
 
     def terminal_failure(self, key: str) -> JudgeCacheReceipt | None:
         explicit = self._terminal_failures.get(key)
@@ -1057,6 +1150,28 @@ class FileJudgeCache:
         _fsync_directory(self.path)
         _fsync_directory(target.parent)
         self._atomic_first_write(target, _canonical_json(parsed) + "\n")
+        committed = self.pending_correction(key)
+        if committed is None:  # pragma: no cover - filesystem invariant
+            raise LiveJudgeError(f"judge pending correction {key} was not committed")
+        return committed
+
+    def advance_pending_correction(
+        self, key: str, state: Mapping[str, Any]
+    ) -> Mapping[str, Any]:
+        target = self._pending_correction_target(key)
+        prior = self.pending_correction(key)
+        parsed = _validate_pending_correction_advance(prior, state, key=key)
+        temporary = target.parent / f".{target.name}.{os.getpid()}.{time.time_ns()}.tmp"
+        descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        try:
+            with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+                handle.write(_canonical_json(parsed) + "\n")
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(temporary, target)
+            _fsync_directory(target.parent)
+        finally:
+            temporary.unlink(missing_ok=True)
         committed = self.pending_correction(key)
         if committed is None:  # pragma: no cover - filesystem invariant
             raise LiveJudgeError(f"judge pending correction {key} was not committed")
@@ -1498,10 +1613,10 @@ class TruthEditingLiveJudge:
                 raise LiveJudgeError("cache kind differs from requested absolute judgment")
             return cached.result, self._hit_receipt(cached.receipt, cached.result)
         started = time.monotonic()
-        # A terminal result for the complete one-correction procedure wins over
+        # A terminal result for the complete bounded-correction procedure wins over
         # its retained pending-correction checkpoint.  The checkpoint is kept
         # for crash recovery and lineage validation, but must not authorize a
-        # third paid attempt after the correction itself failed terminally.
+        # another paid attempt after all correction retries failed terminally.
         self._raise_cached_terminal_failure(cache_key)
         pending = self._cache.pending_correction(cache_key)
         if pending is not None:
@@ -1527,10 +1642,9 @@ class TruthEditingLiveJudge:
         except Exception as error:
             status, _code, _retryable, _error_class = _classify_operational_error(error)
             if (
-                status != "invalid_json"
+                status not in {"invalid_json", "schema_error"}
                 or response_format_type != "json_object"
                 or not isinstance(error, _ResponseFailure)
-                or error.error_class != "JSONDecodeError"
             ):
                 self._raise_operational_failure(
                     kind="absolute", identities=identities,
@@ -1693,10 +1807,9 @@ class TruthEditingLiveJudge:
         except Exception as error:
             status, _code, _retryable, _error_class = _classify_operational_error(error)
             if (
-                status != "invalid_json"
+                status not in {"invalid_json", "schema_error"}
                 or response_format_type != "json_object"
                 or not isinstance(error, _ResponseFailure)
-                or error.error_class != "JSONDecodeError"
             ):
                 self._raise_operational_failure(
                     kind="pairwise", identities=identities,
@@ -1785,195 +1898,310 @@ class TruthEditingLiveJudge:
         Mapping[str, str],
         Mapping[str, Any] | None,
     ]:
-        """Validate once, then make at most one explicit JSON-only correction call."""
+        """Validate once, then make at most three checkpointed correction calls."""
 
-        normalization_lineage: Mapping[str, Any] | None = None
-        normalized_semantic = semantic
-        normalized_response = response
-        if kind == "absolute" and semantic is not None:
-            normalized_semantic, normalization_rules = (
-                _normalize_unambiguous_absolute_json(semantic)
-            )
-            if normalization_rules:
-                normalization_lineage = _normalization_lineage(
-                    kind=kind,
-                    rules=normalization_rules,
-                    identities=identities,
-                    response=response,
-                    normalized_semantic=normalized_semantic,
+        def assess(
+            candidate_response: Mapping[str, Any],
+            candidate_semantic: Mapping[str, Any] | None,
+            candidate_identities: Mapping[str, str],
+        ) -> tuple[
+            AbsoluteJudgeResult | PairwiseJudgeResult | None,
+            Mapping[str, Any],
+            tuple[str, ...] | None,
+            Any,
+            Exception | None,
+        ]:
+            normalized_response = candidate_response
+            normalized_semantic = candidate_semantic
+            if kind == "absolute" and candidate_semantic is not None:
+                normalized_semantic, rules = _normalize_unambiguous_absolute_json(
+                    candidate_semantic
                 )
-                normalized_response = _combine_normalized_response(
-                    response, normalization_lineage
+                if rules:
+                    normalization = _normalization_lineage(
+                        kind=kind, rules=rules, identities=candidate_identities,
+                        response=candidate_response,
+                        normalized_semantic=normalized_semantic,
+                    )
+                    normalized_response = _combine_normalized_response(
+                        candidate_response, normalization
+                    )
+            if normalized_semantic is None:
+                raw_content = candidate_response.get("content")
+                if isinstance(raw_content, str) and raw_content:
+                    try:
+                        decoded = json.loads(
+                            raw_content,
+                            object_pairs_hook=_unique_json_object,
+                            parse_constant=lambda value: _raise_invalid_constant(value),
+                        )
+                    except (json.JSONDecodeError, LiveJudgeError):
+                        decoded = None
+                    if decoded is not None and not isinstance(decoded, Mapping):
+                        return (
+                            None, normalized_response,
+                            ("semantic_schema_invariant",),
+                            copy.deepcopy(decoded), LiveJudgeError("non-object JSON"),
+                        )
+                return (
+                    None, normalized_response, ("invalid_json",),
+                    raw_content, None,
                 )
-        if normalized_semantic is None:
-            validation_categories = ("invalid_json",)
-            previous_invalid_output: Any = response.get("content")
-        else:
             try:
                 return (
-                    validate(normalized_semantic, identities["raw_request_sha256"]),
-                    normalized_response,
-                    identities,
-                    normalization_lineage,
+                    validate(
+                        normalized_semantic,
+                        candidate_identities["raw_request_sha256"],
+                    ),
+                    normalized_response, None, None, None,
                 )
             except Exception as error:
-                semantic = normalized_semantic
-                validation_categories = _semantic_validation_categories(error)
-                previous_invalid_output = copy.deepcopy(dict(semantic))
-                failure = self._operational_failure(
-                    kind=kind, identities=identities, response_sha256s=response_sha256s,
-                    error=_ResponseFailure(
-                        status="schema_error", code="schema_validation_error",
-                        retryable=False, error_class=error.__class__.__name__,
-                    ),
-                    response=response, elapsed_ms=(time.monotonic() - started) * 1000.0,
+                return (
+                    None, normalized_response,
+                    _semantic_validation_categories(error),
+                    copy.deepcopy(dict(normalized_semantic)), error,
                 )
-                if not correction_allowed:
-                    committed = self._cache.record_terminal_failure(
-                        identities["cache_key_sha256"], failure.receipt
-                    )
-                    raise OperationalJudgeFailure(committed) from error
 
-        correction_prompt = {
-            "operation": (
-                "json_syntax_correction_v1"
-                if validation_categories == ("invalid_json",)
-                else "semantic_schema_correction_v1"
-            ),
-            "judge_kind": kind,
-            "validation_error_categories": list(validation_categories),
-            "correction_checklist": copy.deepcopy(
-                _ABSOLUTE_CORRECTION_CHECKLIST
-                if kind == "absolute"
-                else _PAIRWISE_CORRECTION_CHECKLIST
-            ),
-            "original_context": copy.deepcopy(dict(prompt)),
-            "previous_invalid_output": previous_invalid_output,
-            "required_output_schema": copy.deepcopy(dict(schema)),
-        }
-        correction_request, correction_identities = self._request(
-            kind, correction_prompt, schema, response_sha256s,
-            schema_name=f"truth_editing_{kind}_semantic_correction_v1",
-            response_format_type="json_object",
-            bundle_size=bundle_size,
+        result, response, categories, previous_invalid_output, validation_error = assess(
+            response, semantic, identities
         )
-        pending_unsigned = {
-            "format": "truth_editing_live_judge_pending_correction_v1",
-            "procedure_cache_key_sha256": identities["cache_key_sha256"],
-            "attempt_role": "initial_response_requires_correction",
-            "judge_kind": kind,
-            "initial_request_sha256": identities["raw_request_sha256"],
-            "correction_cache_key_sha256": correction_identities["cache_key_sha256"],
-            "correction_request_sha256": correction_identities["raw_request_sha256"],
-            "initial_response": copy.deepcopy(dict(response)),
-        }
-        pending_state = self._cache.record_pending_correction(
-            identities["cache_key_sha256"],
-            {**pending_unsigned, "content_sha256": _sha(pending_unsigned)},
-        )
-        parsed_pending = _parse_pending_correction_state(
-            pending_state, expected_key=identities["cache_key_sha256"]
-        )
-        if (
-            parsed_pending["correction_cache_key_sha256"]
-            != correction_identities["cache_key_sha256"]
-            or parsed_pending["correction_request_sha256"]
-            != correction_identities["raw_request_sha256"]
-        ):
-            raise LiveJudgeError("pending correction request identity differs")
-        # Pre-alias cache generations recorded the correction failure only
-        # under its own exact request key. Replay that terminal evidence before
-        # the retained procedure checkpoint can authorize another paid call.
-        self._raise_cached_terminal_failure(
-            correction_identities["cache_key_sha256"]
-        )
-        correction_started = time.monotonic()
-        try:
-            corrected_response = self._transport.complete(correction_request)
-        except Exception as correction_error:
-            self._raise_operational_failure(
-                kind=kind, identities=correction_identities,
-                response_sha256s=response_sha256s,
-                error=_terminal_correction_failure(correction_error),
-                response=None,
-                elapsed_ms=(time.monotonic() - correction_started) * 1000.0,
-                terminal_cache_key=identities["cache_key_sha256"],
+        if result is not None:
+            lineage = (
+                response.get("raw_payload")
+                if isinstance(response.get("raw_payload"), Mapping)
+                and response["raw_payload"].get("format")
+                == "truth_editing_semantic_normalization_lineage_v1"
+                else None
             )
-        try:
-            corrected_semantic = self._strict_response(corrected_response)
-        except Exception as correction_error:
-            combined_failure_response = _combine_paid_failure_responses(
-                response, corrected_response
-            )
-            self._raise_operational_failure(
-                kind=kind, identities=correction_identities,
-                response_sha256s=response_sha256s,
-                error=_terminal_correction_failure(correction_error),
-                response=combined_failure_response,
-                elapsed_ms=(time.monotonic() - correction_started) * 1000.0,
-                terminal_cache_key=identities["cache_key_sha256"],
-            )
-        # Apply the same mechanically safe JSON normalizations to the explicit
-        # correction response.  The correction model can reproduce a
-        # candidate-free ``forced_guessing`` label (or omit ``confidence``)
-        # even after being shown the validation categories; accepting those
-        # deterministic repairs keeps response healing from turning a valid
-        # paid response into a terminal cache poison.  Bind the normalized
-        # correction in the paid-response lineage so the receipt remains
-        # content-addressed and auditable.
-        corrected_normalization_lineage: Mapping[str, Any] | None = None
-        if kind == "absolute":
-            corrected_semantic, correction_rules = (
-                _normalize_unambiguous_absolute_json(corrected_semantic)
-            )
-            if correction_rules:
-                corrected_normalization_lineage = _normalization_lineage(
-                    kind=kind,
-                    rules=correction_rules,
-                    identities=correction_identities,
-                    response=corrected_response,
-                    normalized_semantic=corrected_semantic,
-                )
-                corrected_response = _combine_normalized_response(
-                    corrected_response, corrected_normalization_lineage
-                )
-        try:
-            corrected_result = validate(
-                corrected_semantic, correction_identities["raw_request_sha256"]
-            )
-        except Exception as correction_error:
-            self._raise_operational_failure(
-                kind=kind, identities=correction_identities,
-                response_sha256s=response_sha256s,
+            return result, response, identities, lineage
+        assert categories is not None
+        if not correction_allowed:
+            failure = self._operational_failure(
+                kind=kind, identities=identities, response_sha256s=response_sha256s,
                 error=_ResponseFailure(
                     status="schema_error", code="schema_validation_error",
-                    retryable=False, error_class=correction_error.__class__.__name__,
+                    retryable=False,
+                    error_class=(validation_error or LiveJudgeError()).__class__.__name__,
                 ),
-                response=corrected_response,
-                elapsed_ms=(time.monotonic() - correction_started) * 1000.0,
-                terminal_cache_key=identities["cache_key_sha256"],
+                response=response, elapsed_ms=(time.monotonic() - started) * 1000.0,
             )
-        lineage = _correction_lineage(
-            kind=kind,
-            validation_error_categories=validation_categories,
-            initial_identities=identities,
-            initial_response=response,
-            correction_identities=correction_identities,
-            correction_response=corrected_response,
+            committed = self._cache.record_terminal_failure(
+                identities["cache_key_sha256"], failure.receipt
+            )
+            raise OperationalJudgeFailure(committed) from validation_error
+
+        status = "invalid_json" if categories == ("invalid_json",) else "schema_error"
+        paid_attempts: list[dict[str, Any]] = [{
+            "ordinal": 0,
+            "request_sha256": identities["raw_request_sha256"],
+            "response_status": status,
+            "response": copy.deepcopy(dict(response)),
+            "validation_error_categories": list(categories),
+        }]
+        pending = self._cache.pending_correction(identities["cache_key_sha256"])
+        correction_attempt = 1
+        legacy_pending = pending is not None and pending.get("format") == (
+            "truth_editing_live_judge_pending_correction_v1"
         )
-        # The cache key remains the identity of the complete one-correction
-        # procedure. The raw request and parsed result point to the request that
-        # actually produced the accepted output; the lineage binds both calls.
-        receipt_identities = dict(identities)
-        receipt_identities["raw_request_sha256"] = correction_identities[
-            "raw_request_sha256"
-        ]
-        return (
-            corrected_result,
-            _combine_paid_responses(response, corrected_response, lineage=lineage),
-            receipt_identities,
-            lineage,
-        )
+        if pending is not None and not legacy_pending:
+            parsed = _parse_pending_correction_state(
+                pending, expected_key=identities["cache_key_sha256"]
+            )
+            paid_attempts = copy.deepcopy(parsed["paid_attempts"])
+            correction_attempt = int(parsed["correction_attempt_number"])
+            categories = tuple(parsed["validation_error_categories"])
+            prior_response = paid_attempts[-1]["response"]
+            previous_invalid_output = (
+                prior_response.get("content")
+                if categories == ("invalid_json",)
+                else json.loads(str(prior_response["content"]))
+            )
+
+        while correction_attempt <= MAXIMUM_RESPONSE_RETRIES:
+            correction_prompt = {
+                "operation": (
+                    "json_syntax_correction_v1"
+                    if categories == ("invalid_json",)
+                    else "semantic_schema_correction_v1"
+                ),
+                "judge_kind": kind,
+                "validation_error_categories": list(categories),
+                "correction_checklist": copy.deepcopy(
+                    _ABSOLUTE_CORRECTION_CHECKLIST
+                    if kind == "absolute" else _PAIRWISE_CORRECTION_CHECKLIST
+                ),
+                "original_context": copy.deepcopy(dict(prompt)),
+                "previous_invalid_output": previous_invalid_output,
+                "required_output_schema": copy.deepcopy(dict(schema)),
+            }
+            if not legacy_pending:
+                correction_prompt["correction_attempt_number"] = correction_attempt
+                correction_prompt["maximum_correction_attempts"] = MAXIMUM_RESPONSE_RETRIES
+            correction_request, correction_identities = self._request(
+                kind, correction_prompt, schema, response_sha256s,
+                schema_name=f"truth_editing_{kind}_semantic_correction_v1",
+                response_format_type="json_object", bundle_size=bundle_size,
+            )
+            if pending is None:
+                pending_unsigned = {
+                    "format": "truth_editing_live_judge_pending_correction_v2",
+                    "procedure_cache_key_sha256": identities["cache_key_sha256"],
+                    "attempt_role": "response_requires_correction",
+                    "judge_kind": kind,
+                    "initial_request_sha256": identities["raw_request_sha256"],
+                    "correction_cache_key_sha256": correction_identities["cache_key_sha256"],
+                    "correction_request_sha256": correction_identities["raw_request_sha256"],
+                    "initial_response": copy.deepcopy(dict(paid_attempts[0]["response"])),
+                    "correction_attempt_number": correction_attempt,
+                    "paid_attempts": copy.deepcopy(paid_attempts),
+                    "validation_error_categories": list(categories),
+                }
+                pending = self._cache.record_pending_correction(
+                    identities["cache_key_sha256"],
+                    {**pending_unsigned, "content_sha256": _sha(pending_unsigned)},
+                )
+            parsed_pending = _parse_pending_correction_state(
+                pending, expected_key=identities["cache_key_sha256"]
+            )
+            if (
+                parsed_pending["correction_cache_key_sha256"]
+                != correction_identities["cache_key_sha256"]
+                or parsed_pending["correction_request_sha256"]
+                != correction_identities["raw_request_sha256"]
+            ):
+                raise LiveJudgeError("pending correction request identity differs")
+            self._raise_cached_terminal_failure(correction_identities["cache_key_sha256"])
+            correction_started = time.monotonic()
+            try:
+                corrected_response = self._transport.complete(correction_request)
+            except Exception as correction_error:
+                self._raise_operational_failure(
+                    kind=kind, identities=correction_identities,
+                    response_sha256s=response_sha256s,
+                    error=_terminal_correction_failure(correction_error), response=None,
+                    elapsed_ms=(time.monotonic() - correction_started) * 1000.0,
+                    terminal_cache_key=identities["cache_key_sha256"],
+                )
+            try:
+                corrected_semantic: Mapping[str, Any] | None = self._strict_response(
+                    corrected_response
+                )
+            except _ResponseFailure:
+                corrected_semantic = None
+            corrected_result, corrected_response, next_categories, next_invalid, error = assess(
+                corrected_response, corrected_semantic, correction_identities
+            )
+            if corrected_result is not None:
+                lineage = _correction_lineage_from_attempts(
+                    kind=kind,
+                    paid_attempts=paid_attempts,
+                    success_identities=correction_identities,
+                    success_response=corrected_response,
+                )
+                receipt_identities = dict(identities)
+                receipt_identities["raw_request_sha256"] = correction_identities[
+                    "raw_request_sha256"
+                ]
+                return (
+                    corrected_result,
+                    _combine_paid_response_sequence(
+                        [attempt["response"] for attempt in paid_attempts]
+                        + [corrected_response],
+                        lineage=lineage,
+                    ),
+                    receipt_identities,
+                    lineage,
+                )
+            assert next_categories is not None
+            next_status = (
+                "invalid_json" if next_categories == ("invalid_json",) else "schema_error"
+            )
+            paid_attempts.append({
+                "ordinal": len(paid_attempts),
+                "request_sha256": correction_identities["raw_request_sha256"],
+                "response_status": next_status,
+                "response": copy.deepcopy(dict(corrected_response)),
+                "validation_error_categories": list(next_categories),
+            })
+            if correction_attempt >= MAXIMUM_RESPONSE_RETRIES:
+                combined = _combine_paid_response_sequence(
+                    [attempt["response"] for attempt in paid_attempts],
+                    lineage={
+                        "format": "truth_editing_paid_correction_failure_v2",
+                        "attempt_response_sha256s": [
+                            _sha(attempt["response"].get("raw_payload", attempt["response"]))
+                            for attempt in paid_attempts
+                        ],
+                    },
+                )
+                self._raise_operational_failure(
+                    kind=kind, identities=correction_identities,
+                    response_sha256s=response_sha256s,
+                    error=_ResponseFailure(
+                        status=next_status,
+                        code=("empty_response" if next_categories == ("invalid_json",)
+                              and not corrected_response.get("content")
+                              else "json_decode_error" if next_categories == ("invalid_json",)
+                              else "schema_validation_error"),
+                        retryable=False,
+                        error_class=(
+                            "EmptyResponse"
+                            if next_categories == ("invalid_json",)
+                            and not corrected_response.get("content")
+                            else "JSONDecodeError"
+                            if next_categories == ("invalid_json",)
+                            else (error or LiveJudgeError()).__class__.__name__
+                        ),
+                    ),
+                    response=combined,
+                    elapsed_ms=(time.monotonic() - correction_started) * 1000.0,
+                    terminal_cache_key=identities["cache_key_sha256"],
+                )
+            correction_attempt += 1
+            categories = next_categories
+            previous_invalid_output = next_invalid
+            legacy_pending = False
+            next_prompt = {
+                "operation": (
+                    "json_syntax_correction_v1"
+                    if categories == ("invalid_json",)
+                    else "semantic_schema_correction_v1"
+                ),
+                "judge_kind": kind,
+                "validation_error_categories": list(categories),
+                "correction_checklist": copy.deepcopy(
+                    _ABSOLUTE_CORRECTION_CHECKLIST
+                    if kind == "absolute" else _PAIRWISE_CORRECTION_CHECKLIST
+                ),
+                "original_context": copy.deepcopy(dict(prompt)),
+                "previous_invalid_output": previous_invalid_output,
+                "required_output_schema": copy.deepcopy(dict(schema)),
+                "correction_attempt_number": correction_attempt,
+                "maximum_correction_attempts": MAXIMUM_RESPONSE_RETRIES,
+            }
+            _, next_identities = self._request(
+                kind, next_prompt, schema, response_sha256s,
+                schema_name=f"truth_editing_{kind}_semantic_correction_v1",
+                response_format_type="json_object", bundle_size=bundle_size,
+            )
+            pending_unsigned = {
+                "format": "truth_editing_live_judge_pending_correction_v2",
+                "procedure_cache_key_sha256": identities["cache_key_sha256"],
+                "attempt_role": "response_requires_correction",
+                "judge_kind": kind,
+                "initial_request_sha256": identities["raw_request_sha256"],
+                "correction_cache_key_sha256": next_identities["cache_key_sha256"],
+                "correction_request_sha256": next_identities["raw_request_sha256"],
+                "initial_response": copy.deepcopy(dict(paid_attempts[0]["response"])),
+                "correction_attempt_number": correction_attempt,
+                "paid_attempts": copy.deepcopy(paid_attempts),
+                "validation_error_categories": list(categories),
+            }
+            pending = self._cache.advance_pending_correction(
+                identities["cache_key_sha256"],
+                {**pending_unsigned, "content_sha256": _sha(pending_unsigned)},
+            )
+        raise LiveJudgeError("semantic response retry loop exhausted")  # pragma: no cover
 
     def _request(
         self,
@@ -2057,7 +2285,7 @@ class TruthEditingLiveJudge:
         if not isinstance(parsed, Mapping):
             raise _ResponseFailure(
                 status="schema_error", code="schema_validation_error",
-                retryable=False, error_class="NonObjectJSON",
+                retryable=True, error_class="NonObjectJSON",
             )
         # Re-encoding equality is deliberately not required: insignificant JSON
         # whitespace is valid, but markdown fences or surrounding prose are not.
@@ -3127,6 +3355,60 @@ def _combine_paid_responses(
     }
 
 
+def _combine_paid_response_sequence(
+    responses: Sequence[Mapping[str, Any]], *, lineage: Mapping[str, Any]
+) -> dict[str, Any]:
+    """Aggregate one initial response and up to three paid retry responses."""
+
+    if not 2 <= len(responses) <= MAXIMUM_RESPONSE_RETRIES + 1:
+        raise LiveJudgeError("semantic retry response count differs")
+    combined = copy.deepcopy(dict(responses[0]))
+    for response in responses[1:]:
+        combined = _combine_paid_responses(combined, response, lineage=lineage)
+    combined["raw_payload"] = copy.deepcopy(dict(lineage))
+    return combined
+
+
+def _correction_lineage_from_attempts(
+    *,
+    kind: str,
+    paid_attempts: Sequence[Mapping[str, Any]],
+    success_identities: Mapping[str, str],
+    success_response: Mapping[str, Any],
+) -> dict[str, Any]:
+    attempts = [
+        {
+            "ordinal": ordinal,
+            "request_sha256": attempt["request_sha256"],
+            "response_status": attempt["response_status"],
+            "validation_error_categories": copy.deepcopy(
+                list(attempt["validation_error_categories"])
+            ),
+            "raw_response_sha256": _sha(
+                attempt["response"].get("raw_payload", attempt["response"])
+            ),
+        }
+        for ordinal, attempt in enumerate(paid_attempts)
+    ]
+    attempts.append({
+        "ordinal": len(attempts),
+        "request_sha256": success_identities["raw_request_sha256"],
+        "response_status": "succeeded",
+        "validation_error_categories": [],
+        "raw_response_sha256": _sha(
+            success_response.get("raw_payload", success_response)
+        ),
+    })
+    unsigned = {
+        "format": "truth_editing_semantic_correction_lineage_v2",
+        "judge_kind": kind,
+        "attempts": attempts,
+    }
+    return _parse_correction_lineage(
+        {**unsigned, "content_sha256": _sha(unsigned)}
+    )
+
+
 def _combine_paid_failure_responses(
     initial: Mapping[str, Any], corrected: Mapping[str, Any]
 ) -> dict[str, Any]:
@@ -3248,6 +3530,61 @@ def _parse_correction_lineage(value: Any) -> dict[str, Any]:
             "request_sha256", "raw_response_sha256", "normalized_semantic_sha256"
         ):
             _lower_sha(value[name], f"normalization {name}")
+        return copy.deepcopy(dict(value))
+    if isinstance(value, Mapping) and value.get("format") == (
+        "truth_editing_semantic_correction_lineage_v2"
+    ):
+        fields = {"format", "judge_kind", "attempts", "content_sha256"}
+        unsigned = {
+            key: item for key, item in value.items() if key != "content_sha256"
+        }
+        attempts = value.get("attempts")
+        if (
+            set(value) != fields
+            or value.get("judge_kind") not in {"absolute", "pairwise"}
+            or value.get("content_sha256") != _sha(unsigned)
+            or not isinstance(attempts, list)
+            or not 2 <= len(attempts) <= MAXIMUM_RESPONSE_RETRIES + 1
+        ):
+            raise LiveJudgeError("semantic correction lineage identity differs")
+        allowed_categories = {
+            "response_identity_mismatch", "field_set_mismatch", "enum_violation",
+            "type_violation", "cross_field_invariant", "bounds_violation",
+            "semantic_schema_invariant", "invalid_json",
+        }
+        attempt_fields = {
+            "ordinal", "request_sha256", "response_status",
+            "validation_error_categories", "raw_response_sha256",
+        }
+        request_shas: set[str] = set()
+        for ordinal, attempt in enumerate(attempts):
+            if not isinstance(attempt, Mapping) or set(attempt) != attempt_fields:
+                raise LiveJudgeError("semantic correction attempt schema differs")
+            categories = attempt["validation_error_categories"]
+            final = ordinal == len(attempts) - 1
+            if (
+                attempt["ordinal"] != ordinal
+                or attempt["response_status"]
+                != ("succeeded" if final else (
+                    "invalid_json" if categories == ["invalid_json"] else "schema_error"
+                ))
+                or not isinstance(categories, list)
+                or (final and categories != [])
+                or (not final and (
+                    not categories
+                    or any(item not in allowed_categories for item in categories)
+                ))
+            ):
+                raise LiveJudgeError("semantic correction attempt order differs")
+            request_sha = _lower_sha(
+                attempt["request_sha256"], "correction request_sha256"
+            )
+            _lower_sha(
+                attempt["raw_response_sha256"], "correction raw_response_sha256"
+            )
+            if request_sha in request_shas:
+                raise LiveJudgeError("semantic correction request identities repeat")
+            request_shas.add(request_sha)
         return copy.deepcopy(dict(value))
     fields = {
         "format", "judge_kind", "validation_error_categories", "attempts",

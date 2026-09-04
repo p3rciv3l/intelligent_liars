@@ -238,10 +238,7 @@ def test_malformed_or_incomplete_json_cannot_create_a_scored_record(
     cache = MemoryJudgeCache()
     judge = TruthEditingLiveJudge(
         transport=StoredJudgeTransport(
-            [
-                _transport_payload(invalid_content),
-                _transport_payload(invalid_content),
-            ]
+            [_transport_payload(invalid_content) for _ in range(4)]
         ),
         cache=cache,
     )
