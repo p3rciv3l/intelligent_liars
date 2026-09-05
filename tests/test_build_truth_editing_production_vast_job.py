@@ -864,6 +864,22 @@ def test_record_completion_is_in_static_production_source_closure() -> None:
     )
 
 
+def test_canonical_adaptive_job_includes_recovery_runtime_modules() -> None:
+    repo = Path(__file__).parents[1]
+    job = json.loads(
+        (
+            repo
+            / "configs/truth_editing_production_vast_job_adaptive_v2_r10_refreshable_aws.json"
+        ).read_text()
+    )
+    bundle_paths = set(job["base_job"]["bundle_paths"])
+
+    assert {
+        "src/intelligent_liars/truth_editing_record_completion.py",
+        "src/intelligent_liars/truth_editing_rescore.py",
+    }.issubset(bundle_paths)
+
+
 def test_rescore_driver_is_in_static_production_source_closure() -> None:
     assert (
         "src/intelligent_liars/truth_editing_rescore.py"

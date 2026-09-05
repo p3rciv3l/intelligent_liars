@@ -729,6 +729,46 @@ def test_real_main_discovers_latest_offhost_resume_without_manual_tuple() -> Non
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
     }
     assert "read_latest_binding_if_present" in calls
+    assert "rearm_expired_search_lease" in calls
+
+
+def test_offhost_auto_resume_accepts_only_bootstrap_model_receipts(
+    tmp_path: Path,
+) -> None:
+    output_root = tmp_path / "outputs"
+    model_root = output_root / "model"
+    model_root.mkdir(parents=True)
+    (model_root / "cache-hydration-receipt.json").write_text("{}\n")
+    (model_root / "model-verification-receipt.json").write_text("{}\n")
+
+    assert MODULE._output_root_is_clean_for_offhost_restore(output_root)
+
+    def hydrate(
+        snapshot_root: Path,
+        clean_output_root: Path,
+        *,
+        binding: object,
+    ) -> dict[str, object]:
+        assert snapshot_root == tmp_path / "snapshot"
+        assert binding == "binding"
+        assert not clean_output_root.exists()
+        (clean_output_root / "study").mkdir(parents=True)
+        (clean_output_root / "study/checkpoint.json").write_text("{}\n")
+        return {"hydrated": True}
+
+    result = MODULE._hydrate_preserving_bootstrap_outputs(
+        tmp_path / "snapshot",
+        output_root,
+        binding="binding",
+        hydrate=hydrate,
+    )
+    assert result == {"hydrated": True}
+    assert (output_root / "study/checkpoint.json").is_file()
+    assert (model_root / "cache-hydration-receipt.json").is_file()
+    assert (model_root / "model-verification-receipt.json").is_file()
+
+    (output_root / "unexpected.json").write_text("{}\n")
+    assert not MODULE._output_root_is_clean_for_offhost_restore(output_root)
 
 
 def test_real_main_reconciles_only_a_validated_restored_judge_boundary() -> None:
@@ -1257,6 +1297,31 @@ def test_rearm_spend_reader_carries_prior_host_cost_into_new_lease(
 
     assert snapshot.actual_infrastructure_usd == Decimal("48.9")
     assert snapshot.actual_evaluation_usd == Decimal("0.6")
+
+
+def test_resumed_spend_baseline_does_not_depend_on_minimum_rearm(
+    tmp_path: Path,
+) -> None:
+    checkpoint = tmp_path / "adaptive-run-checkpoint.json"
+    checkpoint.write_text(
+        json.dumps(
+            {
+                "last_spend_snapshot": {
+                    "actual_total_usd": "32.5",
+                    "actual_infrastructure_usd": "32",
+                    "actual_evaluation_usd": "0.5",
+                    "pending_infrastructure_usd": "0",
+                    "pending_evaluation_usd": "0.1",
+                }
+            }
+        )
+    )
+
+    spend = MODULE._prior_spend_from_checkpoint(checkpoint)
+
+    assert spend is not None
+    assert spend.actual_infrastructure_usd == Decimal("32")
+    assert MODULE._prior_spend_from_checkpoint(tmp_path / "missing.json") is None
 
 
 def test_rolling_capacity_signs_conservative_observation_when_telemetry_is_missing(

@@ -771,12 +771,8 @@ class AdaptiveBatchScheduler:
             spend=spend,
             current_capacity_receipt=current_capacity_receipt,
             current_next_batch_projection=projection,
-            accounted_infrastructure=Decimal(
-                self._checkpoint["accounted_infrastructure_usd"]
-            ),
-            accounted_evaluation=Decimal(
-                self._checkpoint["accounted_evaluation_usd"]
-            ),
+            accounted_infrastructure=spend.reserved_infrastructure_usd,
+            accounted_evaluation=spend.reserved_evaluation_usd,
             projected_search_eta_seconds=min(
                 float(remaining_batches * duration),
                 search_seconds_remaining,
@@ -853,13 +849,69 @@ class AdaptiveBatchScheduler:
             current_next_batch_projection=self._checkpoint[
                 "current_next_batch_projection"
             ],
-            accounted_infrastructure=Decimal(
-                self._checkpoint["accounted_infrastructure_usd"]
-            ),
-            accounted_evaluation=Decimal(
-                self._checkpoint["accounted_evaluation_usd"]
-            ),
+            accounted_infrastructure=spend.reserved_infrastructure_usd,
+            accounted_evaluation=spend.reserved_evaluation_usd,
             projected_search_eta_seconds=0.0,
+        )
+
+    def rearm_expired_search_lease(
+        self, *, started_at: datetime | None = None
+    ) -> None:
+        """Renew an expired active search clock on a fresh host lease."""
+
+        if self._checkpoint is None or self._checkpoint["phase"] in _TERMINAL_PHASES:
+            return
+        now = _utc(self._clock(), "current time")
+        if _parse_utc(
+            self._checkpoint["search_deadline_utc"], "search_deadline_utc"
+        ) > now:
+            return
+        started = now if started_at is None else _utc(started_at, "started_at")
+        if started > now:
+            raise AdaptiveRunError("renewed lease start cannot be in the future")
+        completed = int(self._checkpoint["completed_trials"])
+        authorized = int(self._checkpoint["authorized_through_trial"])
+        if completed != authorized:
+            raise AdaptiveRunError("expired search lease has an incomplete batch")
+        if completed >= self.policy.maximum_trials:
+            return
+        current_capacity_receipt = self._current_capacity_receipt()
+        if current_capacity_receipt["completed_through_trial"] != completed:
+            raise AdaptiveRunError(
+                "fresh capacity receipt must be bound to the completed trial boundary"
+            )
+        spend = self._spend_reader()
+        if not isinstance(spend, SpendSnapshot):
+            raise AdaptiveRunError("spend reader must return SpendSnapshot")
+        previous_spend = SpendSnapshot.from_mapping(
+            self._checkpoint["last_spend_snapshot"]
+        )
+        self._reject_spend_rollback(previous_spend, spend)
+        next_completed = min(
+            self.policy.maximum_trials, completed + self.policy.batch_size
+        )
+        projection, _duration, _infrastructure, _evaluation, _total = (
+            self._next_batch_projection(
+                current_capacity_receipt,
+                next_completed_trials=next_completed,
+                batch_size=self.policy.batch_size,
+            )
+        )
+        self._save(
+            started=started,
+            authorized=authorized,
+            completed=completed,
+            coverage_complete=bool(self._checkpoint["coverage_complete"]),
+            phase=str(self._checkpoint["phase"]),
+            stop_reason=None,
+            spend=spend,
+            current_capacity_receipt=current_capacity_receipt,
+            current_next_batch_projection=projection,
+            accounted_infrastructure=spend.reserved_infrastructure_usd,
+            accounted_evaluation=spend.reserved_evaluation_usd,
+            projected_search_eta_seconds=float(
+                self._checkpoint["projected_search_eta_seconds"]
+            ),
         )
 
     def rearm_minimum_guarantee_abort(
@@ -946,12 +998,8 @@ class AdaptiveBatchScheduler:
             spend=spend,
             current_capacity_receipt=current_capacity_receipt,
             current_next_batch_projection=projection,
-            accounted_infrastructure=Decimal(
-                self._checkpoint["accounted_infrastructure_usd"]
-            ),
-            accounted_evaluation=Decimal(
-                self._checkpoint["accounted_evaluation_usd"]
-            ),
+            accounted_infrastructure=spend.reserved_infrastructure_usd,
+            accounted_evaluation=spend.reserved_evaluation_usd,
             projected_search_eta_seconds=float(
                 self._checkpoint["projected_search_eta_seconds"]
             ),

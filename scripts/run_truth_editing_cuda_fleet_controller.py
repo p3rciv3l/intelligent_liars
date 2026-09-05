@@ -122,6 +122,69 @@ from intelligent_liars.truth_editing_wandb_monitoring import (  # noqa: E402
 )
 
 
+_OFFHOST_RESTORE_BOOTSTRAP_OUTPUTS = frozenset(
+    {
+        "model/cache-hydration-receipt.json",
+        "model/model-verification-receipt.json",
+    }
+)
+
+
+def _output_root_is_clean_for_offhost_restore(output_root: Path) -> bool:
+    """Allow only model receipts created before the controller starts."""
+
+    if not output_root.exists():
+        return True
+    if output_root.is_symlink() or not output_root.is_dir():
+        return False
+    for path in output_root.rglob("*"):
+        if path.is_symlink():
+            return False
+        relative = path.relative_to(output_root).as_posix()
+        if path.is_dir():
+            if relative != "model":
+                return False
+        elif not path.is_file() or relative not in _OFFHOST_RESTORE_BOOTSTRAP_OUTPUTS:
+            return False
+    return True
+
+
+def _hydrate_preserving_bootstrap_outputs(
+    snapshot_root: Path,
+    output_root: Path,
+    *,
+    binding: SnapshotBinding | PartialBatchBinding,
+    hydrate: Callable[..., dict[str, object]],
+) -> dict[str, object]:
+    """Hydrate on a clean path, then restore verified bootstrap receipts."""
+
+    if not _output_root_is_clean_for_offhost_restore(output_root):
+        raise OffHostCheckpointError(
+            "off-host hydration output contains non-bootstrap state"
+        )
+    preserved = {
+        relative: (output_root / relative).read_bytes()
+        for relative in _OFFHOST_RESTORE_BOOTSTRAP_OUTPUTS
+        if (output_root / relative).is_file()
+    }
+    if output_root.exists():
+        shutil.rmtree(output_root)
+    try:
+        result = hydrate(snapshot_root, output_root, binding=binding)
+    finally:
+        for relative, payload in preserved.items():
+            destination = output_root / relative
+            if destination.exists():
+                if not destination.is_file() or destination.read_bytes() != payload:
+                    raise OffHostCheckpointError(
+                        "off-host snapshot collides with a bootstrap model receipt"
+                    )
+                continue
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            destination.write_bytes(payload)
+    return result
+
+
 class _OrderedDurableCallback:
     """Serialize concurrent worker callbacks at the durable ordinal frontier.
 
@@ -609,6 +672,18 @@ class _ControllerSpendReader:
                 - judge_actual
             ),
         )
+
+
+def _prior_spend_from_checkpoint(
+    checkpoint_path: Path,
+) -> SpendSnapshot | None:
+    if not checkpoint_path.is_file():
+        return None
+    checkpoint = _read_object(checkpoint_path, "adaptive checkpoint")
+    try:
+        return SpendSnapshot.from_mapping(checkpoint["last_spend_snapshot"])
+    except KeyError as error:
+        raise ValueError("adaptive checkpoint spend baseline is missing") from error
 
 
 class _RollingCapacityController:
@@ -1366,10 +1441,11 @@ def main(argv: list[str] | None = None) -> int:
                 offhost_repository.restore_latest(
                     restored_snapshot, restore_binding
                 )
-                hydrate_offhost_snapshot(
+                _hydrate_preserving_bootstrap_outputs(
                     restored_snapshot,
                     args.output_root.resolve(),
                     binding=restore_binding,
+                    hydrate=hydrate_offhost_snapshot,
                 )
             latest_binding = restore_binding
             restored_judge_boundary_is_durable = True
@@ -1389,7 +1465,9 @@ def main(argv: list[str] | None = None) -> int:
             else args.output_root.resolve() / "study/adaptive-run-checkpoint.json"
         )
         if latest_binding is not None and not local_scheduler.is_file():
-            if args.output_root.resolve().exists():
+            if not _output_root_is_clean_for_offhost_restore(
+                args.output_root.resolve()
+            ):
                 raise ValueError(
                     "off-host resume requires a clean output root when local "
                     "adaptive state is absent"
@@ -1407,19 +1485,21 @@ def main(argv: list[str] | None = None) -> int:
                     offhost_repository.restore_latest(
                         restored_snapshot, latest_binding
                     )
-                    hydrate_offhost_snapshot(
+                    _hydrate_preserving_bootstrap_outputs(
                         restored_snapshot,
                         args.output_root.resolve(),
                         binding=latest_binding,
+                        hydrate=hydrate_offhost_snapshot,
                     )
                 else:
                     offhost_repository.restore_latest_partial(
                         restored_snapshot, partial_binding
                     )
-                    hydrate_offhost_partial_snapshot(
+                    _hydrate_preserving_bootstrap_outputs(
                         restored_snapshot,
                         args.output_root.resolve(),
                         binding=partial_binding,
+                        hydrate=hydrate_offhost_partial_snapshot,
                     )
             restored_judge_boundary_is_durable = True
     worker_script = Path(__file__).with_name("run_truth_editing_cuda_fleet_worker.py")
@@ -1567,15 +1647,7 @@ def main(argv: list[str] | None = None) -> int:
         host_hourly_usd=Decimal(str(args.host_hourly_usd)),
         host_lease_started_at=host_lease_started_at,
         worker_count=fleet.worker_count,
-        prior_spend=(
-            SpendSnapshot.from_mapping(
-                _read_object(adaptive_checkpoint_path, "adaptive checkpoint")[
-                    "last_spend_snapshot"
-                ]
-            )
-            if args.rearm_minimum_guarantee and adaptive_checkpoint_path.exists()
-            else None
-        ),
+        prior_spend=_prior_spend_from_checkpoint(adaptive_checkpoint_path),
     )
     rolling_capacity_path = (
         args.rolling_capacity_receipt
@@ -1608,6 +1680,8 @@ def main(argv: list[str] | None = None) -> int:
         clock=lambda: datetime.now(timezone.utc),
         initial_started_at=host_lease_started_at,
     )
+    if restored_judge_boundary_is_durable:
+        scheduler.rearm_expired_search_lease(started_at=host_lease_started_at)
     if args.rearm_minimum_guarantee:
         scheduler.rearm_minimum_guarantee_abort(started_at=host_lease_started_at)
     durable_batch_admission = _DurableBatchAdmission(

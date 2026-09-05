@@ -243,6 +243,32 @@ def test_persists_exact_eight_trial_authorization_and_resumes_pending_batch(
     assert json.loads((tmp_path / "adaptive-run-checkpoint.json").read_text()) == first
 
 
+def test_completed_batch_releases_unused_projected_spend_reserve(
+    tmp_path: Path,
+) -> None:
+    rolling = [_receipt()]
+    ledger = [_spend(infrastructure="1", evaluation="0.1")]
+    scheduler = _scheduler(
+        tmp_path, spend=ledger, rolling_receipt=rolling
+    )
+    assert scheduler.admit_batch(
+        completed_trials=0, batch_size=8, coverage_complete=False
+    )
+    admitted = json.loads(
+        (tmp_path / "adaptive-run-checkpoint.json").read_text()
+    )
+    assert Decimal(admitted["accounted_evaluation_usd"]) > Decimal("0.1")
+
+    _commit_with_observation(
+        scheduler, rolling, completed_trials=8, coverage_complete=False
+    )
+    committed = json.loads(
+        (tmp_path / "adaptive-run-checkpoint.json").read_text()
+    )
+    assert committed["accounted_infrastructure_usd"] == "1"
+    assert committed["accounted_evaluation_usd"] == "0.1"
+
+
 def test_preauthorized_unstarted_batch_is_rechecked_at_absolute_deadline(
     tmp_path: Path,
 ) -> None:
@@ -293,6 +319,39 @@ def test_preauthorized_started_batch_replays_after_deadline_without_reauthorizat
         batch_started=True,
     )
     assert checkpoint_path.read_bytes() == before
+
+
+def test_expired_active_checkpoint_rearms_on_a_fresh_host_lease(
+    tmp_path: Path,
+) -> None:
+    now = [NOW]
+    rolling = [_receipt()]
+    scheduler = _scheduler(tmp_path, now=now, rolling_receipt=rolling)
+    assert scheduler.admit_batch(
+        completed_trials=0, batch_size=8, coverage_complete=False
+    )
+    _commit_with_observation(
+        scheduler, rolling, completed_trials=8, coverage_complete=False
+    )
+
+    fresh_lease = NOW + timedelta(seconds=_policy().search_seconds + 60)
+    now[0] = fresh_lease
+    resumed = _scheduler(tmp_path, now=now, rolling_receipt=rolling)
+    resumed.rearm_expired_search_lease(started_at=fresh_lease)
+
+    checkpoint = json.loads(
+        (tmp_path / "adaptive-run-checkpoint.json").read_text()
+    )
+    assert checkpoint["started_at_utc"] == fresh_lease.isoformat().replace(
+        "+00:00", "Z"
+    )
+    assert checkpoint["completed_trials"] == 8
+    assert checkpoint["authorized_through_trial"] == 8
+    assert checkpoint["phase"] == "broad_coverage"
+    assert checkpoint["stop_reason"] is None
+    assert resumed.admit_batch(
+        completed_trials=8, batch_size=8, coverage_complete=False
+    )
 
 
 def test_preauthorized_unstarted_batch_is_rechecked_against_live_budget_reserve(
