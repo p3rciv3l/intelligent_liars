@@ -21,13 +21,15 @@ from intelligent_liars.truth_editing_phase_checkpoint import (  # noqa: E402
 BOUNDARIES = {"discovery": 80, "expanded": 160, "finalist": 200}
 
 
-def _completed_trials(journal: dict[str, object]) -> int:
+def _completed_trials(journal: dict[str, object]) -> tuple[int, bool]:
     if journal.get("format") != "truth_editing_study_journal_v1":
         raise PhaseCheckpointError("study journal format differs")
     batches = journal.get("batches")
     if not isinstance(batches, list):
         raise PhaseCheckpointError("study journal batches are invalid")
     identifiers: set[str] = set()
+    completed = 0
+    incomplete = False
     for batch in batches:
         if not isinstance(batch, dict) or not isinstance(batch.get("trials"), list):
             raise PhaseCheckpointError("study journal batch is invalid")
@@ -38,7 +40,11 @@ def _completed_trials(journal: dict[str, object]) -> int:
             if trial_id in identifiers:
                 raise PhaseCheckpointError("study journal contains duplicate trials")
             identifiers.add(trial_id)
-    return len(identifiers)
+            if trial.get("result") is None:
+                incomplete = True
+            else:
+                completed += 1
+    return completed, incomplete
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -65,7 +71,18 @@ def main(argv: list[str] | None = None) -> int:
             raise PhaseCheckpointError("journal must use the production study/study-journal.json layout")
         journal = json.loads(args.journal.read_text(encoding="utf-8"))
         study_identity = journal["study_identity_sha256"]
-        completed = _completed_trials(journal)
+        completed, incomplete = _completed_trials(journal)
+        if incomplete:
+            print(
+                json.dumps(
+                    {
+                        "status": "deferred",
+                        "reason": "current_batch_incomplete",
+                        "completed_trials": completed,
+                    }
+                )
+            )
+            return 0
         optuna_log = args.journal.with_name(args.journal.name + ".optuna.log")
         if optuna_log.is_symlink() or not optuna_log.is_file():
             raise PhaseCheckpointError("study journal or Optuna log is missing or unsafe")

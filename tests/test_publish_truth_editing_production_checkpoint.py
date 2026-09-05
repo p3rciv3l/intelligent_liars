@@ -186,6 +186,40 @@ def test_periodic_publisher_dispatches_exact_rolling_adaptive_state(
     )
 
 
+def test_adaptive_publisher_defers_nonfatally_during_an_incomplete_batch(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    journal = tmp_path / "study/study-journal.json"
+    _journal(journal, 232)
+    value = json.loads(journal.read_text())
+    for trial in value["batches"][-1]["trials"]:
+        trial["result"] = None
+    value.pop("journal_sha256")
+    value["journal_sha256"] = _sha(value)
+    journal.write_text(json.dumps(value))
+
+    def unexpected_publish(*args: object, **kwargs: object) -> None:
+        raise AssertionError("an incomplete batch must not be published")
+
+    monkeypatch.setattr(
+        MODULE, "publish_adaptive_checkpoint", unexpected_publish
+    )
+    assert MODULE.main(
+        [
+            "--journal", str(journal),
+            "--output", str(tmp_path / "checkpoints"),
+            "--adaptive",
+            "--study-config-sha256", "b" * 64,
+            "--optuna-study-name", "fixture-study",
+        ]
+    ) == 0
+    assert json.loads(capsys.readouterr().out) == {
+        "status": "deferred",
+        "reason": "current_batch_incomplete",
+        "completed_trials": 224,
+    }
+
+
 def test_adaptive_publisher_fails_closed_without_study_config_identity(
     tmp_path: Path, capsys
 ) -> None:
