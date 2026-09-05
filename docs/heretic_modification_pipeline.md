@@ -2,7 +2,7 @@
 
 **Status:** design and implementation handoff. No API call, GPU execution, paid optimization, model upload, or external write is authorized by this document.
 
-Fresh implementation sessions should start with `truth_editing_implementation_handoff.md`. This file is the technical entry point for the three-document specification package:
+Fresh implementation sessions should start with `truth_editing_live_run_history.md`. This file is the technical entry point for the remaining specification package:
 
 - `heretic_modification_pipeline.md`: current status, settled decisions, work packages, causal evidence, and execution gates.
 - `heretic_optuna_port.md`: complete upstream Heretic inventory and expanded optimizer contract.

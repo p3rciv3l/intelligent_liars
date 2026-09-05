@@ -65,18 +65,17 @@ Parallelize independent work. Useful agent lanes are listed later in this docume
 Read these before editing. They contain the frozen contracts and experiment boundaries; do not re-invent them from chat history.
 
 1. `AGENTS.md`, if present in the checkout. It may be local and untracked; do not commit it blindly.
-2. `docs/truth_editing_implementation_handoff.md` — historical implementation handoff. Operational details in this document supersede its stale run status.
-3. `docs/heretic_modification_pipeline.md`
-4. `docs/heretic_optuna_port.md`
-5. `docs/llm_judge_harness.md`
-6. `docs/simple_truth_direction_experiment_protocol_20260825.md`
-7. `docs/simple_truth_direction_run_plan_20260826.md`
-8. `README.md`
-9. `docs/truth_editing_live_run_history.md` — append-only operational history.
-10. `docs/adr/0001-freeze-response-healing-in-json-judge.md`
-11. `docs/adr/0004-use-batched-optuna-suggestions.md`
-12. `docs/adr/0011-run-optuna-without-a-separate-fixed-screen.md`
-13. `docs/adr/0015-use-240-human-labels-for-live-judge-calibration.md`
+2. `docs/heretic_modification_pipeline.md`
+3. `docs/heretic_optuna_port.md`
+4. `docs/llm_judge_harness.md`
+5. `docs/simple_truth_direction_experiment_protocol_20260825.md`
+6. `docs/simple_truth_direction_run_plan_20260826.md`
+7. `README.md`
+8. `docs/truth_editing_live_run_history.md` — append-only operational history.
+9. `docs/adr/0001-freeze-response-healing-in-json-judge.md`
+10. `docs/adr/0004-use-batched-optuna-suggestions.md`
+11. `docs/adr/0011-run-optuna-without-a-separate-fixed-screen.md`
+12. `docs/adr/0015-use-240-human-labels-for-live-judge-calibration.md`
 
 Also inspect the implementation and tests named under **Primary code seams** below.
 

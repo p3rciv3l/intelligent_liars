@@ -11,7 +11,6 @@ WRAPPER = REPOSITORY / "scripts" / "vastai_openai_ua.py"
 LAUNCHERS = (
     REPOSITORY / "scripts" / "run_truth_editing_vast_prerequisites.py",
     REPOSITORY / "scripts" / "run_truth_editing_vast_production.py",
-    REPOSITORY / "scripts" / "run_truth_editing_vast_fleet.py",
 )
 REQUIRED_USER_AGENT = "OpenAI File Downloader, XaiImageApiFetch/1.0"
 
