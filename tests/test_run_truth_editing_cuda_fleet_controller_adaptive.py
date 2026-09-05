@@ -696,6 +696,32 @@ def test_real_main_publishes_committed_batch_before_next_batch_admission() -> No
     assert isinstance(initial_hook, ast.Name)
     assert initial_hook.id == "after_prepare_before_first_admission"
 
+    initial_callback = next(
+        node
+        for node in main.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == "after_prepare_before_first_admission"
+    )
+    initial_source = ast.unparse(initial_callback)
+    assert "resuming_durable_batch = _batch_has_durable_receipt" in initial_source
+    assert "batch_started=resuming_durable_batch" in initial_source
+    resume_guard = next(
+        node
+        for node in initial_callback.body
+        if isinstance(node, ast.If)
+        and isinstance(node.test, ast.Name)
+        and node.test.id == "resuming_durable_batch"
+    )
+    assert any(isinstance(node, ast.Return) for node in resume_guard.body)
+    assert initial_callback.body.index(resume_guard) < next(
+        index
+        for index, node in enumerate(initial_callback.body)
+        if isinstance(node, ast.Expr)
+        and isinstance(node.value, ast.Call)
+        and isinstance(node.value.func, ast.Name)
+        and node.value.func.id == "publish_boundary"
+    )
+
     callback = next(
         node
         for node in main.body

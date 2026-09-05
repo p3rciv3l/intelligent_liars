@@ -1826,13 +1826,28 @@ def main(argv: list[str] | None = None) -> int:
         # capacity-bound boundary before dispatch.
         if context.completed_trials != 0 and scheduler.has_checkpoint:
             return
+        resuming_durable_batch = _batch_has_durable_receipt(
+            evaluator.receipt_directory,
+            fleet_config_sha256=fleet.identity_sha256,
+            completed_trials=context.completed_trials,
+            batch_size=capacity_policy.batch_size,
+            trial_number_start=study_config.trial_number_start,
+        )
         admitted = durable_batch_admission.admit_batch(
             completed_trials=context.completed_trials,
             batch_size=capacity_policy.batch_size,
             coverage_complete=context.coverage_complete,
+            batch_started=resuming_durable_batch,
         )
         if not admitted:
             raise ValueError("prepared adaptive study cannot authorize its next batch")
+        # A crash after dispatch can leave an intentionally incomplete journal
+        # alongside individually durable worker receipts.  That is not a valid
+        # checkpoint boundary yet: let the study replay those receipts into the
+        # journal first, without dispatching or calling the judge again.  The
+        # normal completed-batch callback will then publish the exact boundary.
+        if resuming_durable_batch:
+            return
         initial_progress_path = monitoring_root / "adaptive-progress.json"
         if not initial_progress_path.exists():
             evaluator.receipt_directory.mkdir(parents=True, exist_ok=True)
