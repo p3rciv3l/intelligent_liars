@@ -670,14 +670,14 @@ def test_successful_trials_publish_readable_live_loss_charts(tmp_path: Path) -> 
         ),
     )
 
-    _wait_until(lambda: len(wandb.plot.line_series_calls) == 3)
-    assert len(wandb.plot.line_series_calls) == 3
-    overview, components, preservation = wandb.plot.line_series_calls
+    _wait_until(lambda: len(wandb.plot.line_series_calls) == 4)
+    assert len(wandb.plot.line_series_calls) == 4
+    overview, components, objectives, preservation = wandb.plot.line_series_calls
     assert overview["keys"] == [
         "Trial overall loss",
         "Best overall loss so far",
     ]
-    assert overview["xs"] == [[0, 1], [0, 1]]
+    assert overview["xs"] == [[1, 2], [1, 2]]
     first_loss = 1.0 - (0.8 * 0.6 * 0.9) ** (1 / 3)
     second_loss = 1.0 - (0.5 * 0.5 * 0.8) ** (1 / 3)
     assert overview["ys"][0] == pytest.approx([first_loss, second_loss])
@@ -689,14 +689,22 @@ def test_successful_trials_publish_readable_live_loss_charts(tmp_path: Path) -> 
         "Retained-truth loss",
         "Capability loss",
     ]
-    assert components["xs"] == [[0, 1], [0, 1], [0, 1]]
+    assert components["xs"] == [[1, 2], [1, 2], [1, 2]]
     assert components["ys"][0] == pytest.approx([0.2, 0.5])
     assert components["ys"][1] == pytest.approx([0.4, 0.5])
     assert components["ys"][2] == pytest.approx([0.1, 0.2])
     assert components["title"] == "Loss components by trial"
 
+    assert objectives["xs"] == [[1, 2], [1, 2], [1, 2]]
+    assert objectives["ys"] == [
+        [0.8, 0.5],
+        [0.6, 0.5],
+        [0.9, 0.8],
+    ]
+    assert objectives["title"] == "Raw objective metrics by trial"
+
     assert preservation["keys"] == ["Worst preservation KL"]
-    assert preservation["xs"] == [[0, 1]]
+    assert preservation["xs"] == [[1, 2]]
     assert preservation["ys"][0] == pytest.approx([
         -math.log(0.9),
         -math.log(0.8),
@@ -708,8 +716,58 @@ def test_successful_trials_publish_readable_live_loss_charts(tmp_path: Path) -> 
     assert set(chart_rows[0]) == {
         "charts/loss_overview",
         "charts/loss_components",
+        "charts/raw_objectives",
         "charts/preservation_kl",
     }
+
+
+def test_infeasible_and_operational_trials_never_enter_loss_charts(
+    tmp_path: Path,
+) -> None:
+    run = _FakeRun()
+    wandb = _FakeWandbWithPlots(run)
+    monitor = CoordinatorMonitor(
+        run_id="scientific-loss-only",
+        project="intelligent-liars",
+        entity=None,
+        run_name="ignored",
+        receipt_path=tmp_path / "events.jsonl",
+        total_trials=8,
+        batch_size=8,
+        wandb_module=wandb,
+    )
+    metrics = {
+        "valid_false_report_rate_lcb": 0.8,
+        "truth_report_dissociation_lcb": 0.7,
+        "capability_preservation_lcb": 0.9,
+    }
+
+    monitor.record_batch(
+        0,
+        (_request(0), _request(1), _request(2)),
+        (
+            EvaluationResult.scientifically_infeasible(metrics, "gate"),
+            EvaluationResult.operational_failure("transport"),
+            EvaluationResult.successful(metrics),
+        ),
+    )
+
+    _wait_until(lambda: len(wandb.plot.line_series_calls) == 4)
+    assert all(call["xs"][0] == [3] for call in wandb.plot.line_series_calls)
+    _wait_until(
+        lambda: any(
+            "progress/operationally_unresolved_trials" in values
+            for values, _step in run.logged
+        )
+    )
+    summary = next(
+        values
+        for values, _step in run.logged
+        if "progress/operationally_unresolved_trials" in values
+    )
+    assert summary["progress/successful_trials"] == 1
+    assert summary["progress/scientifically_infeasible_trials"] == 1
+    assert summary["progress/operationally_unresolved_trials"] == 1
 
 
 def test_every_dashboard_row_uses_one_monotonic_coordinator_event_step(
@@ -748,7 +806,7 @@ def test_every_dashboard_row_uses_one_monotonic_coordinator_event_step(
         ),
     )
 
-    _wait_until(lambda: len(wandb.plot.line_series_calls) == 3)
+    _wait_until(lambda: len(wandb.plot.line_series_calls) == 4)
     monitor.record_gpu(
         GpuTelemetryRecord(
             0, 91.0, 20100.0, 24576.0, 42.5, "trial-0056", "2026-08-28T00:00:00Z"

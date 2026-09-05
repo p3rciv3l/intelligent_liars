@@ -300,6 +300,11 @@ def _safe_metric_value(name: object, value: Any) -> str | bool | float | None:
         return value if isinstance(value, str) and _SHA256.fullmatch(value) else None
     numeric_names = {
         "progress/completed_trials",
+        "progress/active_trials",
+        "progress/authorized_trials",
+        "progress/successful_trials",
+        "progress/scientifically_infeasible_trials",
+        "progress/operationally_unresolved_trials",
         "progress/current_batch",
         "progress/total_batches",
         "progress/elapsed_seconds",
@@ -329,6 +334,7 @@ def _safe_metric_value(name: object, value: Any) -> str | bool | float | None:
         "canary/resumed_session",
         "pareto/size",
         "trial/ordinal",
+        "trial/number",
         "judge/calls",
         "judge/failures",
         "judge/latency_ms",
@@ -442,6 +448,12 @@ class CoordinatorMonitor:
         self._init_calls: list[dict[str, Any]] = []
         self._finish_calls = 0
         self._completed_trials = 0
+        self._outcome_counts = {
+            "successful": 0,
+            "scientifically_infeasible": 0,
+            "operational_failure": 0,
+            "stopped": 0,
+        }
         self._objectives: list[dict[str, float]] = []
         self._objective_ordinals: list[int] = []
         self._objective_parameters: list[dict[str, Any]] = []
@@ -1007,7 +1019,9 @@ class CoordinatorMonitor:
         ]
         if not complete:
             return
-        trial_ordinals = [ordinal for ordinal, _ in complete]
+        # Internal study ordinals stay zero-based for deterministic replay;
+        # public/dashboard trial numbers are deliberately one-based.
+        trial_numbers = [ordinal + 1 for ordinal, _ in complete]
         false_report = [row[names[0]] for _, row in complete]
         retained_truth = [row[names[1]] for _, row in complete]
         capability = [row[names[2]] for _, row in complete]
@@ -1029,7 +1043,7 @@ class CoordinatorMonitor:
         ]
         try:
             overview = line_series(
-                xs=[trial_ordinals, trial_ordinals],
+                xs=[trial_numbers, trial_numbers],
                 ys=[overall_loss, best_loss_so_far],
                 keys=[
                     "Trial overall loss",
@@ -1039,7 +1053,7 @@ class CoordinatorMonitor:
                 xname="Trial",
             )
             components = line_series(
-                xs=[trial_ordinals, trial_ordinals, trial_ordinals],
+                xs=[trial_numbers, trial_numbers, trial_numbers],
                 ys=[
                     [1.0 - value for value in false_report],
                     [1.0 - value for value in retained_truth],
@@ -1056,10 +1070,21 @@ class CoordinatorMonitor:
             charts: dict[str, Any] = {
                 "charts/loss_overview": overview,
                 "charts/loss_components": components,
+                "charts/raw_objectives": line_series(
+                    xs=[trial_numbers, trial_numbers, trial_numbers],
+                    ys=[false_report, retained_truth, capability],
+                    keys=[
+                        "Valid false-report rate LCB",
+                        "Truth-report dissociation LCB",
+                        "Capability preservation LCB",
+                    ],
+                    title="Raw objective metrics by trial",
+                    xname="Trial",
+                ),
             }
             if kl_points:
                 charts["charts/preservation_kl"] = line_series(
-                    xs=[[ordinal for ordinal, _ in kl_points]],
+                    xs=[[ordinal + 1 for ordinal, _ in kl_points]],
                     ys=[[value for _, value in kl_points]],
                     keys=["Worst preservation KL"],
                     title="Preservation KL by trial",
@@ -1108,6 +1133,7 @@ class CoordinatorMonitor:
                 parameters = _sanitized_parameters(request.proposal)
                 values: dict[str, Any] = {
                     "trial/ordinal": request.ordinal,
+                    "trial/number": request.ordinal + 1,
                     "trial/outcome_kind": result.outcome_kind,
                 }
                 values.update(
@@ -1124,13 +1150,14 @@ class CoordinatorMonitor:
                 values.update(
                     {f"trial/objectives/{name}": value for name, value in objectives.items()}
                 )
-                if objectives and result.outcome_kind != "operational_failure":
+                if objectives and result.outcome_kind == "successful":
                     self._loss_chart_points[request.ordinal] = objectives
                 if objectives and result.outcome_kind == "successful":
                     self._objectives.append(objectives)
                     self._objective_ordinals.append(request.ordinal)
                     self._objective_parameters.append(parameters)
                 self._completed_trials = max(self._completed_trials, request.ordinal + 1)
+                self._outcome_counts[result.outcome_kind] += 1
                 self._safe_log(values)
             self._log_loss_chart()
             elapsed = max(0.0, float(self._monotonic()) - self._started_at)
@@ -1148,6 +1175,13 @@ class CoordinatorMonitor:
                 "progress/elapsed_seconds": elapsed,
                 "progress/eta_seconds": eta,
                 "progress/phase": _phase(self._completed_trials),
+                "progress/successful_trials": self._outcome_counts["successful"],
+                "progress/scientifically_infeasible_trials": self._outcome_counts[
+                    "scientifically_infeasible"
+                ],
+                "progress/operationally_unresolved_trials": self._outcome_counts[
+                    "operational_failure"
+                ] + self._outcome_counts["stopped"],
                 "pareto/size": self._pareto_size(self._objectives),
             }
             for name in {key for row in self._objectives for key in row}:
@@ -1279,6 +1313,32 @@ class CoordinatorMonitor:
             except ValueError:
                 pass
         self._safe_log(values, telemetry_key=f"gpu/{snapshot.gpu_slot}")
+
+    def record_execution_counts(self, *, active: int, authorized: int) -> None:
+        """Mirror execution state without treating it as scientific evidence."""
+
+        if any(
+            isinstance(value, bool) or not isinstance(value, int) or value < 0
+            for value in (active, authorized)
+        ):
+            self._receipt("monitoring_input_rejected", {"category": "trial_shape"})
+            return
+        self._safe_log(
+            {
+                "progress/active_trials": active,
+                "progress/authorized_trials": authorized,
+            },
+            telemetry_key="progress/execution_counts",
+        )
+
+    def record_active_trials(self, active: int) -> None:
+        if isinstance(active, bool) or not isinstance(active, int) or active < 0:
+            self._receipt("monitoring_input_rejected", {"category": "trial_shape"})
+            return
+        self._safe_log(
+            {"progress/active_trials": active},
+            telemetry_key="progress/active_trials",
+        )
 
     def record_worker_telemetry(
         self, gpu_slot: int, trial_id: str, telemetry: Mapping[str, float]
@@ -1600,8 +1660,13 @@ class CoordinatorTelemetryPump:
     def _run(self) -> None:
         while not self._stop.is_set():
             try:
-                for record in self._collector.poll():
+                records = self._collector.poll()
+                for record in records:
                     self._monitor.record_gpu(record)
+                scheduler = self._collector.snapshot_scheduler_state()
+                self._monitor.record_active_trials(
+                    sum(trial_id is not None for trial_id, _ in scheduler.values())
+                )
                 diagnostic = self._collector.last_error
                 if diagnostic is not None:
                     self._monitor.record_operational(

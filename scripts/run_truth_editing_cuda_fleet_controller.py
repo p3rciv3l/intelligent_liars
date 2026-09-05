@@ -1174,10 +1174,12 @@ class _DurableBatchAdmission:
         scheduler: AdaptiveBatchScheduler,
         rolling_capacity: _RollingCapacityController,
         batch_started_reader: Callable[[int, int], bool] | None = None,
+        admission_callback: Callable[[int, int], None] | None = None,
     ) -> None:
         self._scheduler = scheduler
         self._rolling_capacity = rolling_capacity
         self._batch_started_reader = batch_started_reader
+        self._admission_callback = admission_callback
 
     def admit_batch(
         self,
@@ -1202,6 +1204,8 @@ class _DurableBatchAdmission:
             self._rolling_capacity.record_batch_admission(
                 completed_trials=completed_trials
             )
+            if self._admission_callback is not None:
+                self._admission_callback(completed_trials, batch_size)
         return admitted
 
 
@@ -1692,6 +1696,10 @@ def main(argv: list[str] | None = None) -> int:
             fleet_config_sha256=fleet.identity_sha256,
             completed_trials=completed,
             batch_size=size,
+        ),
+        admission_callback=lambda completed, size: monitor.record_execution_counts(
+            active=0,
+            authorized=completed + size,
         ),
     )
     pump = CoordinatorTelemetryPump(
