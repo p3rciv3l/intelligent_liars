@@ -1108,6 +1108,12 @@ def test_runtime_config_rewrites_only_mutable_outputs_and_preserves_source(
     )
     assert runtime_path != source
 
+    second_runtime_path = MODULE._runtime_config(source, tmp_path / "other-outputs")
+    assert second_runtime_path != runtime_path
+    assert json.loads(second_runtime_path.read_text())["journal_path"] == str(
+        (tmp_path / "other-outputs/study/study-journal.json").resolve()
+    )
+
 
 def test_identity_valid_partial_receipt_marks_null_journal_batch_started(
     tmp_path: Path,

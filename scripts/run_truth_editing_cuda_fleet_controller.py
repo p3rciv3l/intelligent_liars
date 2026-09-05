@@ -513,8 +513,14 @@ def _runtime_config(source_path: Path, output_root: Path) -> Path:
         if not isinstance(value, str) or Path(value).is_absolute():
             raise ValueError(f"production {field} must be a portable relative path")
     source_sha = hashlib.sha256(source_path.read_bytes()).hexdigest()
+    runtime_identity = canonical_sha256(
+        {
+            "production_config_sha256": source_sha,
+            "output_root": str(output_root.resolve()),
+        }
+    )
     target = source_path.with_name(
-        f".truth_editing_production_runtime.{source_sha[:16]}.json"
+        f".truth_editing_production_runtime.{runtime_identity[:16]}.json"
     )
     payload = json.dumps(runtime, allow_nan=False, indent=2, sort_keys=True) + "\n"
     if target.exists() or target.is_symlink():
