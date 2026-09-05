@@ -582,20 +582,28 @@ def _validate_phase_contract(
             "maximum_evaluation_spend_usd": "5",
             "evaluation_budget_reserve_fraction": "0.20",
             "evaluation_spend_reserve_usd": "1",
-            "broad_coverage": {
-                "required_before_concentration": True,
-            },
+        }
+        if not isinstance(policy, Mapping):
+            raise RuntimeError("adaptive production search policy is missing")
+        broad_coverage = policy.get("broad_coverage")
+        policy_without_coverage = {
+            key: value for key, value in policy.items() if key != "broad_coverage"
         }
         if (
             actual != ADAPTIVE_PHASE_BOUNDARIES
             or study.get("max_trials") != 800
             or study.get("batch_size") != 8
-            or policy != expected_policy
+            or policy_without_coverage != expected_policy
+            or not isinstance(broad_coverage, Mapping)
+            or set(broad_coverage) != {"required_before_concentration"}
+            or not isinstance(
+                broad_coverage.get("required_before_concentration"), bool
+            )
         ):
             raise RuntimeError(
                 "adaptive production study must retain 80/200/800 tiers, "
-                "a 200-trial total floor, coverage-gated concentration, and the "
-                "frozen 21h + 3h budget policy"
+                "a 200-trial total floor, an explicit coverage policy, and the frozen "
+                "21h + 3h budget policy"
             )
         return
     if (
@@ -802,6 +810,9 @@ def build_production_job(
     fleet_config: str | Path | None = None,
     production_config_opener: Any = ProductionRunConfig.open,
     adaptive_capacity_opener: Any = _adaptive_capacity_inputs,
+    offhost_key_prefix: str = CANONICAL_ADAPTIVE_OFFHOST_KEY_PREFIX,
+    wandb_run_id: str | None = None,
+    stop_after_trials: int | None = None,
 ) -> dict[str, Any]:
     repo = repo.resolve()
     production_relative, production_path, production_raw, _ = _strict_open_production_config(
@@ -888,8 +899,19 @@ def build_production_job(
         )
         OffHostCheckpointTarget.from_model_registry_config(
             model_registry_path,
-            key_prefix=CANONICAL_ADAPTIVE_OFFHOST_KEY_PREFIX,
+            key_prefix=offhost_key_prefix,
         )
+        if stop_after_trials is not None and (
+            isinstance(stop_after_trials, bool)
+            or stop_after_trials < 8
+            or stop_after_trials > 800
+            or stop_after_trials % 8 != 0
+        ):
+            raise RuntimeError("adaptive stop_after_trials must be an 8-trial batch boundary")
+        if wandb_run_id is not None and re.fullmatch(
+            r"[A-Za-z0-9][A-Za-z0-9_-]{0,127}", wandb_run_id
+        ) is None:
+            raise RuntimeError("adaptive W&B run ID is invalid")
         if (
             adaptive_fleet.format != ADAPTIVE_FLEET_FORMAT
             or adaptive_fleet.adaptive_capacity_policy_path
@@ -983,13 +1005,17 @@ def build_production_job(
                 "--model-registry-config",
                 model_registry_relative,
                 "--offhost-key-prefix",
-                CANONICAL_ADAPTIVE_OFFHOST_KEY_PREFIX,
+                offhost_key_prefix,
                 "--final-model-slug",
                 CANONICAL_FINAL_MODEL_SLUG,
                 "--receipt",
                 "/workspace/outputs/study/adaptive-run-receipt.json",
             ]
         )
+        if wandb_run_id is not None:
+            workload.extend(["--wandb-run-id", wandb_run_id])
+        if stop_after_trials is not None:
+            workload.extend(["--stop-after-trials", str(stop_after_trials)])
     else:
         workload.extend(
             [
@@ -1331,6 +1357,9 @@ def write_adaptive_production_job(
     optuna_study_name: str | None = None,
     production_config_opener: Any = ProductionRunConfig.open,
     adaptive_capacity_opener: Any | None = None,
+    offhost_key_prefix: str = CANONICAL_ADAPTIVE_OFFHOST_KEY_PREFIX,
+    wandb_run_id: str | None = None,
+    stop_after_trials: int | None = None,
 ) -> dict[str, Any]:
     """Write and strict-reopen the adaptive Vast job bound to measured capacity."""
 
@@ -1355,6 +1384,9 @@ def write_adaptive_production_job(
         fleet_config=fleet_config,
         production_config_opener=production_config_opener,
         adaptive_capacity_opener=open_capacity_inputs,
+        offhost_key_prefix=offhost_key_prefix,
+        wandb_run_id=wandb_run_id,
+        stop_after_trials=stop_after_trials,
     )
     _write_new(output, raw)
     reopened_raw = _read_object(output, "adaptive production job output")
@@ -1397,6 +1429,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--maximum-elapsed-seconds", type=int)
     parser.add_argument("--maximum-cost-usd", type=float)
+    parser.add_argument(
+        "--offhost-key-prefix", default=CANONICAL_ADAPTIVE_OFFHOST_KEY_PREFIX
+    )
+    parser.add_argument("--wandb-run-id")
+    parser.add_argument("--stop-after-trials", type=int)
     args = parser.parse_args(argv)
     if args.build_adaptive_fleet:
         if (
@@ -1458,6 +1495,9 @@ def main(argv: list[str] | None = None) -> int:
                 output=args.output,
                 maximum_elapsed_seconds=args.maximum_elapsed_seconds,
                 maximum_cost_usd=args.maximum_cost_usd,
+                offhost_key_prefix=args.offhost_key_prefix,
+                wandb_run_id=args.wandb_run_id,
+                stop_after_trials=args.stop_after_trials,
             )
         else:
             if (

@@ -573,6 +573,44 @@ def test_builder_emits_adaptive_24_hour_job_without_a_fixed_trial_barrier(
     assert "study/frozen/study-artifact-receipt.json" in raw["base_job"]["expected_outputs"]
 
 
+def test_adaptive_phase_contract_accepts_neutral_exploration_without_coverage_gate(
+    tmp_path: Path,
+) -> None:
+    repo = _repo(tmp_path, adaptive=True)
+    production_path = repo / PRODUCTION_CONFIG
+    study_path = repo / "configs/truth_editing_study_v2.json"
+    study = json.loads(study_path.read_text())
+    study["search_policy"]["broad_coverage"]["required_before_concentration"] = False
+    study_path.write_text(json.dumps(study))
+
+    MODULE._validate_phase_contract(repo, production_path, phase="adaptive")
+
+
+def test_adaptive_builder_binds_fresh_lineage_and_canary_boundary(
+    tmp_path: Path,
+) -> None:
+    repo = _repo(tmp_path, adaptive=True)
+    raw = MODULE.build_production_job(
+        repo,
+        production_config=PRODUCTION_CONFIG,
+        phase="adaptive",
+        fleet_config=FLEET_CONFIG,
+        adaptive_capacity_opener=_fixture_capacity_inputs,
+        production_config_opener=_open_fixture,
+        optuna_study_name="neutral-v4-test-study",
+        offhost_key_prefix="model-registry/v1/truth-editing/neutral-v4-test",
+        wandb_run_id="neutral-v4-canary",
+        stop_after_trials=8,
+    )
+
+    workload = raw["study"]["workload_command"]
+    assert workload[workload.index("--offhost-key-prefix") + 1] == (
+        "model-registry/v1/truth-editing/neutral-v4-test"
+    )
+    assert workload[workload.index("--wandb-run-id") + 1] == "neutral-v4-canary"
+    assert workload[workload.index("--stop-after-trials") + 1] == "8"
+
+
 def test_adaptive_release_writers_no_clobber_and_strict_reopen(
     tmp_path: Path,
 ) -> None:
