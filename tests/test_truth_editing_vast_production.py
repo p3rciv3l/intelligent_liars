@@ -360,8 +360,14 @@ def test_execute_wraps_base_lifecycle_and_proves_zero_label_lineage(tmp_path: Pa
         return {"format": "truth_editing_vast_prerequisite_lifecycle_v2", "destroyed": True,
                 "instance_id": "999", "estimated_cost_usd": 0.2, "self_sha256": "a" * 64}
 
+    inventory_attempts = 0
+
     def run(command: list[str], **_kwargs: object) -> SimpleNamespace:
+        nonlocal inventory_attempts
         assert command[1:3] == ["show", "instances"]
+        inventory_attempts += 1
+        if inventory_attempts < 3:
+            raise subprocess.CalledProcessError(1, command)
         return SimpleNamespace(stdout=json.dumps([{"id": 7, "label": "unrelated"}]), returncode=0)
 
     receipt = execute_production_lifecycle(
@@ -372,6 +378,7 @@ def test_execute_wraps_base_lifecycle_and_proves_zero_label_lineage(tmp_path: Pa
     assert len(base_calls) == 1
     assert receipt["zero_lineage_instances_verified"] is True
     assert receipt["base_lifecycle_receipt_sha256"] == "a" * 64
+    assert inventory_attempts == 3
     assert base_calls[0]["workload_secret"].environment_name == "OPENROUTER_API_KEY"  # type: ignore[union-attr]
 
 

@@ -27,6 +27,7 @@ from intelligent_liars.truth_editing_vast_prerequisites import (
     build_bundle,
     execute_lifecycle,
     lifecycle_plan,
+    _revalidate_offer,
     _remote_pack_command,
     _remote_input_bundle_verification_command,
     _secret_stdin_wrapper,
@@ -1332,6 +1333,38 @@ def test_execute_revalidates_offer_before_create(tmp_path: Path) -> None:
             run_command=run,
         )
     assert not any(command[1:3] == ["create", "instance"] for command in calls)
+
+
+def test_offer_revalidation_retries_transient_inventory_failures() -> None:
+    attempts = 0
+
+    def run(command: list[str], **_kwargs: object) -> SimpleNamespace:
+        nonlocal attempts
+        attempts += 1
+        if attempts < 3:
+            raise subprocess.CalledProcessError(1, command)
+        offer = _offer()
+        return SimpleNamespace(
+            stdout=json.dumps(
+                [
+                    {
+                        "id": offer.offer_id,
+                        "gpu_name": offer.gpu_name,
+                        "num_gpus": offer.gpu_count,
+                        "gpu_ram": offer.gpu_ram_gib,
+                        "dph_base": offer.base_hourly_price_usd,
+                        "dph_total": offer.advertised_hourly_price_usd,
+                        "storage_cost": offer.storage_cost_usd_per_gib_month,
+                        "inet_down_cost": offer.internet_download_cost_usd_per_gib,
+                        "inet_up_cost": offer.internet_upload_cost_usd_per_gib,
+                    }
+                ]
+            ),
+            returncode=0,
+        )
+
+    assert _revalidate_offer(run, "vastai", _config(), _offer()) == _offer()
+    assert attempts == 3
 
 
 def test_readiness_poll_and_transient_copy_are_bounded_and_recorded(tmp_path: Path) -> None:

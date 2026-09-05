@@ -559,25 +559,35 @@ def _verify_zero_lineage_instances(
     label: str,
     sleeper: Callable[[float], None],
 ) -> None:
+    last_inventory_error: BaseException | None = None
     for attempt in range(5):
-        result = run_command(
-            [vastai, "show", "instances", "--raw"],
-            check=True,
-            capture_output=True,
-            text=True,
-            timeout=60,
-        )
         try:
+            result = run_command(
+                [vastai, "show", "instances", "--raw"],
+                check=True,
+                capture_output=True,
+                text=True,
+                timeout=60,
+            )
             rows = json.loads(result.stdout)
             if not isinstance(rows, list):
                 raise TypeError
             remaining = [row for row in rows if isinstance(row, Mapping) and row.get("label") == label]
-        except (TypeError, json.JSONDecodeError) as error:
-            raise ProductionVastError("Vast instance inventory is unreadable") from error
+            last_inventory_error = None
+        except (subprocess.SubprocessError, OSError, TypeError, json.JSONDecodeError) as error:
+            last_inventory_error = error
+            if attempt < 4:
+                sleeper(2.0)
+                continue
+            break
         if not remaining:
             return
         if attempt < 4:
             sleeper(2.0)
+    if last_inventory_error is not None:
+        raise ProductionVastError(
+            "Vast instance inventory failed after bounded retries"
+        ) from last_inventory_error
     identifiers = [str(row.get("id", "unknown")) for row in remaining]
     raise ProductionVastError(f"lineage instance remains after destruction: {identifiers}")
 

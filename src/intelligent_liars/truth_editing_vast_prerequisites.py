@@ -1212,45 +1212,58 @@ def _revalidate_offer(
     approved: Offer,
 ) -> Offer:
     matches: list[Mapping[str, Any]] = []
+    last_inventory_error: BaseException | None = None
     # Vast's inventory endpoint is eventually consistent and its documented
     # ``id=...`` filter intermittently returns an empty list.  Re-query the
     # narrow eligible inventory a bounded number of times, but still require
     # one exact approved ID below before any instance is created.
     for _ in range(5):
-        result = run_command(
-            [
-                vastai,
-                "search",
-                "offers",
-                (
-                    f"gpu_name={approved.gpu_name.replace(' ', '_')} "
-                    f"rentable=true verified=true rented=false num_gpus={approved.gpu_count} "
-                    "direct_port_count>=1"
-                ),
-                "--raw",
-                "--limit",
-                "200",
-                "--order",
-                "dph_total",
-                "--storage",
-                str(config.disk_gib),
-            ],
-            check=True,
-            capture_output=True,
-            text=True,
-            timeout=60,
-        )
         try:
+            result = run_command(
+                [
+                    vastai,
+                    "search",
+                    "offers",
+                    (
+                        f"gpu_name={approved.gpu_name.replace(' ', '_')} "
+                        "rentable=true verified=true rented=false "
+                        f"num_gpus={approved.gpu_count} direct_port_count>=1"
+                    ),
+                    "--raw",
+                    "--limit",
+                    "200",
+                    "--order",
+                    "dph_total",
+                    "--storage",
+                    str(config.disk_gib),
+                ],
+                check=True,
+                capture_output=True,
+                text=True,
+                timeout=60,
+            )
             rows = json.loads(result.stdout)
             matches = [
                 row
                 for row in rows
                 if int(row.get("id", -1)) == approved.offer_id
             ]
-        except (TypeError, ValueError, json.JSONDecodeError) as error:
-            raise VastPrerequisiteError("current Vast offer inventory is unreadable") from error
+            last_inventory_error = None
+        except (
+            subprocess.SubprocessError,
+            OSError,
+            TypeError,
+            ValueError,
+            json.JSONDecodeError,
+        ) as error:
+            last_inventory_error = error
+            continue
         if matches:
             break
+    if last_inventory_error is not None and not matches:
+        raise VastPrerequisiteError(
+            "current Vast offer inventory failed after bounded retries"
+        ) from last_inventory_error
     if not matches:
         # The exact create call below is still pinned to ``approved.offer_id``.
         # Vast's search inventory can omit a live ask across repeated reads, so
