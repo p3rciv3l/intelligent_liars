@@ -354,6 +354,11 @@ def _safe_metric_value(name: object, value: Any) -> str | bool | float | None:
     if name.startswith("trial/objectives/"):
         objective = name.removeprefix("trial/objectives/")
         return _safe_number(value) if objective in OBJECTIVES else None
+    if name in {"loss/current", "loss/best_so_far"}:
+        return _safe_number(value)
+    if name.startswith("loss/components/"):
+        objective = name.removeprefix("loss/components/")
+        return _safe_number(value) if objective in OBJECTIVES else None
     if name.startswith("best/"):
         parts = name.split("/")
         if len(parts) in {2, 3} and parts[1] in OBJECTIVES and (
@@ -1152,6 +1157,30 @@ class CoordinatorMonitor:
                 )
                 if objectives and result.outcome_kind == "successful":
                     self._loss_chart_points[request.ordinal] = objectives
+                    if all(name in objectives for name in OBJECTIVES):
+                        component_losses = {
+                            name: 1.0 - objectives[name] for name in OBJECTIVES
+                        }
+                        current_loss = 1.0 - math.prod(
+                            objectives[name] for name in OBJECTIVES
+                        ) ** (1.0 / len(OBJECTIVES))
+                        prior_losses = [
+                            1.0
+                            - math.prod(point[name] for name in OBJECTIVES)
+                            ** (1.0 / len(OBJECTIVES))
+                            for point in self._loss_chart_points.values()
+                            if all(name in point for name in OBJECTIVES)
+                        ]
+                        values.update(
+                            {
+                                "loss/current": current_loss,
+                                "loss/best_so_far": min(prior_losses),
+                                **{
+                                    f"loss/components/{name}": value
+                                    for name, value in component_losses.items()
+                                },
+                            }
+                        )
                 if objectives and result.outcome_kind == "successful":
                     self._objectives.append(objectives)
                     self._objective_ordinals.append(request.ordinal)

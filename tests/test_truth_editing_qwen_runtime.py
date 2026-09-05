@@ -89,8 +89,10 @@ class FakeProcessor:
         *,
         tokenize: bool,
         add_generation_prompt: bool,
+        enable_thinking: bool,
     ) -> str:
         assert tokenize is False
+        assert enable_thinking is False
         body = "|".join(f"{item['role']}:{item['content']}" for item in messages)
         return body + ("|assistant:" if add_generation_prompt else "|end")
 
@@ -458,8 +460,10 @@ def test_teacher_forcing_uses_closed_thinking_prefix_for_answer_scoring(
             *,
             tokenize: bool,
             add_generation_prompt: bool,
+            enable_thinking: bool,
         ) -> str:
             assert tokenize is False
+            assert enable_thinking is False
             if add_generation_prompt:
                 body = "|".join(
                     f"{item['role']}:{item['content']}" for item in messages

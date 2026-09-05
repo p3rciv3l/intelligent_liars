@@ -689,6 +689,7 @@ class TrialRuntime:
                 [dict(message) for message in conversation],
                 tokenize=False,
                 add_generation_prompt=False,
+                enable_thinking=False,
             )
             for conversation in blank_completed
         ]
@@ -1306,6 +1307,7 @@ def _build_inputs(
             add_generation_prompt=not (
                 conversation and conversation[-1].get("role") == "assistant"
             ),
+            enable_thinking=False,
         )
         for conversation in conversations
     ]

@@ -719,6 +719,25 @@ def test_successful_trials_publish_readable_live_loss_charts(tmp_path: Path) -> 
         "charts/raw_objectives",
         "charts/preservation_kl",
     }
+    trial_rows = [
+        values for values, _step in run.logged if "loss/current" in values
+    ]
+    assert [row["trial/number"] for row in trial_rows] == [1, 2]
+    assert [row["loss/current"] for row in trial_rows] == pytest.approx(
+        [first_loss, second_loss]
+    )
+    assert [row["loss/best_so_far"] for row in trial_rows] == pytest.approx(
+        [first_loss, first_loss]
+    )
+    assert trial_rows[0][
+        "loss/components/valid_false_report_rate_lcb"
+    ] == pytest.approx(0.2)
+    assert trial_rows[0][
+        "loss/components/truth_report_dissociation_lcb"
+    ] == pytest.approx(0.4)
+    assert trial_rows[0][
+        "loss/components/capability_preservation_lcb"
+    ] == pytest.approx(0.1)
 
 
 def test_infeasible_and_operational_trials_never_enter_loss_charts(
@@ -768,6 +787,9 @@ def test_infeasible_and_operational_trials_never_enter_loss_charts(
     assert summary["progress/successful_trials"] == 1
     assert summary["progress/scientifically_infeasible_trials"] == 1
     assert summary["progress/operationally_unresolved_trials"] == 1
+    rows_with_loss = [values for values, _step in run.logged if "loss/current" in values]
+    assert len(rows_with_loss) == 1
+    assert rows_with_loss[0]["trial/number"] == 3
 
 
 def test_every_dashboard_row_uses_one_monotonic_coordinator_event_step(

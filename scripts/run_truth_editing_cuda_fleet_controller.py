@@ -286,6 +286,7 @@ def offhost_partial_event_is_already_published(
     committed_binding: SnapshotBinding,
     durable_event: Mapping[str, object],
     expected_receipt_directory: Path,
+    trial_number_start: int = 0,
 ) -> bool:
     """Recognize one exact receipt already bound by a validated partial pointer."""
 
@@ -300,6 +301,11 @@ def offhost_partial_event_is_already_published(
     }
     ordinal = durable_event.get("ordinal")
     receipt_path = durable_event.get("receipt_path")
+    expected_trial_id = (
+        f"trial-{ordinal + trial_number_start:04d}"
+        if isinstance(ordinal, int) and not isinstance(ordinal, bool)
+        else None
+    )
     if (
         set(durable_event) != expected_fields
         or durable_event.get("format")
@@ -308,11 +314,11 @@ def offhost_partial_event_is_already_published(
         != committed_binding.fleet_config_sha256
         or isinstance(ordinal, bool)
         or not isinstance(ordinal, int)
-        or durable_event.get("trial_id") != f"trial-{ordinal:04d}"
+        or durable_event.get("trial_id") != expected_trial_id
         or not isinstance(receipt_path, str)
         or not receipt_path
         or Path(receipt_path).resolve()
-        != (expected_receipt_directory / f"trial-{ordinal:04d}.json").resolve()
+        != (expected_receipt_directory / f"{expected_trial_id}.json").resolve()
     ):
         raise OffHostCheckpointError("restored partial event identity differs")
     existing: PartialBatchBinding | None = (
@@ -341,6 +347,7 @@ def publish_partial_event_if_needed(
     durable_event: Mapping[str, object],
     expected_receipt_directory: Path,
     publish: Callable[[], object],
+    trial_number_start: int = 0,
 ) -> object | None:
     """Publish a new frontier, but never rebuild an exact restored frontier."""
 
@@ -349,6 +356,7 @@ def publish_partial_event_if_needed(
         committed_binding=committed_binding,
         durable_event=durable_event,
         expected_receipt_directory=expected_receipt_directory,
+        trial_number_start=trial_number_start,
     ):
         return None
     return publish()
@@ -1448,6 +1456,7 @@ def main(argv: list[str] | None = None) -> int:
                 optuna_study_name=args.restore_optuna_study_name,
                 wandb_run_id=args.restore_offhost_wandb_run_id,
                 completed_trials=args.restore_completed_trials,
+                trial_number_start=study_config.trial_number_start,
             )
             with tempfile.TemporaryDirectory(
                 prefix="truth-editing-offhost-restore-"
@@ -1566,6 +1575,7 @@ def main(argv: list[str] | None = None) -> int:
             optuna_study_name=driver.persistent_study_name,
             wandb_run_id=monitor.run_id,
             completed_trials=completed_trials,
+            trial_number_start=study_config.trial_number_start,
         )
         receipt_directory = args.output_root.resolve() / "fleet-receipts"
         published = publish_partial_event_if_needed(
@@ -1573,6 +1583,7 @@ def main(argv: list[str] | None = None) -> int:
             committed_binding=committed,
             durable_event=event,
             expected_receipt_directory=receipt_directory,
+            trial_number_start=study_config.trial_number_start,
             publish=lambda: offhost_repository.publish_partial_from_runtime(
                 args.output_root.resolve() / "checkpoint-staging/partial",
                 committed_binding=committed,
@@ -1752,6 +1763,7 @@ def main(argv: list[str] | None = None) -> int:
             optuna_study_name=driver.persistent_study_name,
             wandb_run_id=monitor.run_id,
             completed_trials=completed_trials,
+            trial_number_start=study_config.trial_number_start,
         )
         if offhost_boundary_is_already_published(latest_binding, binding):
             return

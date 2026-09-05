@@ -162,6 +162,7 @@ class SnapshotBinding:
     optuna_study_name: str
     wandb_run_id: str
     completed_trials: int
+    trial_number_start: int = 0
 
     def __post_init__(self) -> None:
         _digest(self.study_identity_sha256, "study identity")
@@ -178,6 +179,8 @@ class SnapshotBinding:
             raise OffHostCheckpointError(
                 "completed trials must be an eight-trial barrier in [0, 800]"
             )
+        if self.trial_number_start not in {0, 1}:
+            raise OffHostCheckpointError("trial number start must be zero or one")
 
     def to_mapping(self) -> dict[str, Any]:
         return {
@@ -187,6 +190,7 @@ class SnapshotBinding:
             "optuna_study_name": self.optuna_study_name,
             "wandb_run_id": self.wandb_run_id,
             "completed_trials": self.completed_trials,
+            "trial_number_start": self.trial_number_start,
         }
 
 
@@ -203,7 +207,8 @@ class PartialTrialReceiptBinding:
             isinstance(self.ordinal, bool)
             or not isinstance(self.ordinal, int)
             or self.ordinal < 0
-            or self.trial_id != f"trial-{self.ordinal:04d}"
+            or self.trial_id
+            not in {f"trial-{self.ordinal:04d}", f"trial-{self.ordinal + 1:04d}"}
         ):
             raise OffHostCheckpointError("partial trial receipt identity is malformed")
         _digest(self.proposal_sha256, "partial proposal identity")
@@ -250,6 +255,12 @@ class PartialBatchBinding:
         )
         if {item.ordinal for item in ordered} - allowed:
             raise OffHostCheckpointError("partial receipt ordinal is outside current batch")
+        if any(
+            item.trial_id
+            != f"trial-{item.ordinal + self.committed.trial_number_start:04d}"
+            for item in ordered
+        ):
+            raise OffHostCheckpointError("partial receipt numbering differs from study")
 
     def to_mapping(self) -> dict[str, Any]:
         return {
@@ -273,8 +284,11 @@ def _partial_binding_from_mapping(value: Any) -> PartialBatchBinding:
     }:
         raise OffHostCheckpointError("partial batch binding fields differ")
     committed_raw = value["committed"]
-    if not isinstance(committed_raw, Mapping) or set(committed_raw) != set(
-        SnapshotBinding.__dataclass_fields__
+    binding_fields = set(SnapshotBinding.__dataclass_fields__)
+    legacy_binding_fields = binding_fields - {"trial_number_start"}
+    if not isinstance(committed_raw, Mapping) or set(committed_raw) not in (
+        binding_fields,
+        legacy_binding_fields,
     ):
         raise OffHostCheckpointError("partial committed binding fields differ")
     receipts_raw = value["durable_receipts"]
@@ -288,7 +302,9 @@ def _partial_binding_from_mapping(value: Any) -> PartialBatchBinding:
             raise OffHostCheckpointError("partial durable receipt fields differ")
         receipts.append(PartialTrialReceiptBinding(**dict(raw)))
     return PartialBatchBinding(
-        committed=SnapshotBinding(**dict(committed_raw)),
+        committed=SnapshotBinding(
+            **{"trial_number_start": 0, **dict(committed_raw)}
+        ),
         batch_ordinal=value["batch_ordinal"],
         batch_size=value["batch_size"],
         durable_receipts=tuple(receipts),
@@ -1041,10 +1057,14 @@ class OffHostCheckpointRepository:
             "previous_pointer_sha256",
             "pointer_sha256",
         }
-        if set(raw) != fields or raw["format"] != POINTER_FORMAT:
+        legacy_fields = fields - {"trial_number_start"}
+        if set(raw) not in (fields, legacy_fields) or raw["format"] != POINTER_FORMAT:
             raise OffHostCheckpointError("latest pointer fields or format differ")
         parsed_binding = SnapshotBinding(
-            **{name: raw[name] for name in SnapshotBinding.__dataclass_fields__}
+            **{
+                name: raw.get(name, 0)
+                for name in SnapshotBinding.__dataclass_fields__
+            }
         )
         unsigned = dict(raw)
         claimed = _digest(unsigned.pop("pointer_sha256"), "pointer self hash")
@@ -1072,6 +1092,8 @@ class OffHostCheckpointRepository:
             _digest(raw["previous_pointer_sha256"], "previous pointer SHA-256")
         if expected is not None and parsed_binding != expected:
             raise OffHostCheckpointError("latest pointer expected identity differs")
+        if "trial_number_start" not in raw:
+            raw = {**raw, "trial_number_start": 0}
         return raw
 
 
@@ -1187,20 +1209,29 @@ def _copy_resume_tree(
 
 def _validate_fleet_receipts(root: Path, binding: SnapshotBinding) -> None:
     directory = root / "fleet-receipts"
-    expected = {f"trial-{ordinal:04d}.json" for ordinal in range(binding.completed_trials)}
+    expected = {
+        f"trial-{ordinal + binding.trial_number_start:04d}.json"
+        for ordinal in range(binding.completed_trials)
+    }
     actual = {path.name for path in directory.iterdir() if path.is_file()}
     if actual != expected:
         raise OffHostCheckpointError("snapshot must contain exact completed trial receipts")
     for ordinal in range(binding.completed_trials):
         _read_fleet_receipt(
-            directory / f"trial-{ordinal:04d}.json",
+            directory
+            / f"trial-{ordinal + binding.trial_number_start:04d}.json",
             ordinal=ordinal,
             fleet_config_sha256=binding.fleet_config_sha256,
+            trial_number_start=binding.trial_number_start,
         )
 
 
 def _read_fleet_receipt(
-    path: Path, *, ordinal: int, fleet_config_sha256: str
+    path: Path,
+    *,
+    ordinal: int,
+    fleet_config_sha256: str,
+    trial_number_start: int = 0,
 ) -> dict[str, Any]:
     raw = _read_json_bytes(path.read_bytes(), "fleet receipt")
     unsigned = dict(raw)
@@ -1234,7 +1265,7 @@ def _read_fleet_receipt(
     if (
         set(raw) != expected_fields
         or raw.get("fleet_config_sha256") != fleet_config_sha256
-        or raw.get("trial_id") != f"trial-{ordinal:04d}"
+        or raw.get("trial_id") != f"trial-{ordinal + trial_number_start:04d}"
         or raw.get("ordinal") != ordinal
         or claimed != _compact_json_sha(unsigned)
     ):
@@ -1366,8 +1397,9 @@ def _pending_batch_entries(root: Path, committed: SnapshotBinding) -> dict[int, 
     by_ordinal: dict[int, Mapping[str, Any]] = {}
     for expected, entry in zip(expected_ordinals, pending, strict=True):
         if (
-            entry["ordinal"] != expected
-            or entry["trial_id"] != f"trial-{expected:04d}"
+                entry["ordinal"] != expected
+                or entry["trial_id"]
+                != f"trial-{expected + committed.trial_number_start:04d}"
             or not isinstance(entry["proposal"], Mapping)
             or not isinstance(entry["evaluation_record_ids"], list)
             or not isinstance(entry["tier_name"], str)
@@ -1397,7 +1429,8 @@ def _derive_partial_snapshot(
     directory = root / "fleet-receipts"
     actual_names = {path.name for path in directory.iterdir() if path.is_file()}
     committed_names = {
-        f"trial-{ordinal:04d}.json" for ordinal in range(committed.completed_trials)
+        f"trial-{ordinal + committed.trial_number_start:04d}.json"
+        for ordinal in range(committed.completed_trials)
     }
     partial_names = actual_names - committed_names
     if not partial_names or len(partial_names) > 8:
@@ -1405,20 +1438,23 @@ def _derive_partial_snapshot(
     durable: list[PartialTrialReceiptBinding] = []
     for ordinal in range(committed.completed_trials):
         _read_fleet_receipt(
-            directory / f"trial-{ordinal:04d}.json",
+            directory
+            / f"trial-{ordinal + committed.trial_number_start:04d}.json",
             ordinal=ordinal,
             fleet_config_sha256=committed.fleet_config_sha256,
+            trial_number_start=committed.trial_number_start,
         )
     for name in sorted(partial_names):
         if not re.fullmatch(r"trial-\d{4}\.json", name):
             raise OffHostCheckpointError("partial receipt filename is invalid")
-        ordinal = int(name[6:10])
+        ordinal = int(name[6:10]) - committed.trial_number_start
         if ordinal not in entries:
             raise OffHostCheckpointError("partial receipt is outside current batch")
         raw = _read_fleet_receipt(
             directory / name,
             ordinal=ordinal,
             fleet_config_sha256=committed.fleet_config_sha256,
+            trial_number_start=committed.trial_number_start,
         )
         durable.append(
             PartialTrialReceiptBinding(
@@ -1557,7 +1593,10 @@ def materialize_offhost_partial_snapshot(
             (item for item in binding.durable_receipts if item.ordinal == ordinal),
             None,
         )
-        expected_path = Path(fleet_receipt_dir) / f"trial-{ordinal:04d}.json"
+        expected_path = (
+            Path(fleet_receipt_dir)
+            / f"trial-{ordinal + committed_binding.trial_number_start:04d}.json"
+        )
         if (
             event_receipt is None
             or Path(str(durable_event.get("receipt_path"))).resolve()
@@ -1814,12 +1853,13 @@ def _verify_archive(
             if manifest_format == PARTIAL_SNAPSHOT_FORMAT
             else set()
         )
-        if set(manifest) != manifest_fields:
+        legacy_manifest_fields = manifest_fields - {"trial_number_start"}
+        if set(manifest) not in (manifest_fields, legacy_manifest_fields):
             raise OffHostCheckpointError("snapshot manifest fields differ")
         if manifest_format == SNAPSHOT_FORMAT:
             SnapshotBinding(
                 **{
-                    name: manifest[name]
+                    name: manifest.get(name, 0)
                     for name in SnapshotBinding.__dataclass_fields__
                 }
             )

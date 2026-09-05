@@ -39,11 +39,11 @@ def _json(path: Path, value: dict[str, object]) -> None:
     path.write_text(json.dumps(value, sort_keys=True) + "\n")
 
 
-def _receipt(path: Path, ordinal: int) -> None:
+def _receipt(path: Path, ordinal: int, *, trial_number_start: int = 0) -> None:
     unsigned = {
         "format": "truth_editing_vast_fleet_trial_receipt_v2",
         "fleet_config_sha256": FLEET,
-        "trial_id": f"trial-{ordinal:04d}",
+        "trial_id": f"trial-{ordinal + trial_number_start:04d}",
         "ordinal": ordinal,
         "request_sha256": hashlib.sha256(f"request-{ordinal}".encode()).hexdigest(),
         "worker_slot": ordinal % 8,
@@ -62,7 +62,7 @@ def _receipt(path: Path, ordinal: int) -> None:
     _json(path, {**unsigned, "receipt_sha256": _sha(unsigned)})
 
 
-def _snapshot(root: Path, completed: int) -> None:
+def _snapshot(root: Path, completed: int, *, trial_number_start: int = 0) -> None:
     _json(root / "adaptive-state/study/study-journal.json", {"study": STUDY})
     (root / "adaptive-state/study/study-journal.json.optuna.log").write_text("journal\n")
     _json(
@@ -91,7 +91,12 @@ def _snapshot(root: Path, completed: int) -> None:
     for name in ("fleet-receipts", "runtime", "judge-cache"):
         (root / name).mkdir(parents=True, exist_ok=True)
     for ordinal in range(completed):
-        _receipt(root / f"fleet-receipts/trial-{ordinal:04d}.json", ordinal)
+        _receipt(
+            root
+            / f"fleet-receipts/trial-{ordinal + trial_number_start:04d}.json",
+            ordinal,
+            trial_number_start=trial_number_start,
+        )
         _json(
             root / f"runtime/{ordinal:04d}/result.json",
             {"trial_id": f"trial-{ordinal:04d}", "runtime": "verified"},
@@ -106,7 +111,7 @@ def _snapshot(root: Path, completed: int) -> None:
     )
 
 
-def _binding(completed: int) -> SnapshotBinding:
+def _binding(completed: int, *, trial_number_start: int = 0) -> SnapshotBinding:
     return SnapshotBinding(
         study_identity_sha256=STUDY,
         study_config_sha256=CONFIG,
@@ -114,6 +119,7 @@ def _binding(completed: int) -> SnapshotBinding:
         optuna_study_name="truth-editing-adaptive",
         wandb_run_id="wandb-1",
         completed_trials=completed,
+        trial_number_start=trial_number_start,
     )
 
 
@@ -128,17 +134,26 @@ def _repository(tmp_path: Path) -> OffHostCheckpointRepository:
     )
 
 
-def _prime_zero(repository: OffHostCheckpointRepository, root: Path) -> None:
+def _prime_zero(
+    repository: OffHostCheckpointRepository,
+    root: Path,
+    *,
+    trial_number_start: int = 0,
+) -> None:
     initial = root / "trial-zero"
-    _snapshot(initial, 0)
-    repository.publish(initial, _binding(0))
+    _snapshot(initial, 0, trial_number_start=trial_number_start)
+    repository.publish(
+        initial, _binding(0, trial_number_start=trial_number_start)
+    )
 
 
-def _pending_runtime(root: Path, ordinals: tuple[int, ...]) -> dict[int, dict[str, object]]:
+def _pending_runtime(
+    root: Path, ordinals: tuple[int, ...], *, trial_number_start: int = 0
+) -> dict[int, dict[str, object]]:
     _snapshot(root, 0)
     trials = [
         {
-            "trial_id": f"trial-{ordinal:04d}",
+            "trial_id": f"trial-{ordinal + trial_number_start:04d}",
             "ordinal": ordinal,
             "tier_name": "discovery",
             "evaluation_record_ids": ["record-1"],
@@ -159,8 +174,11 @@ def _pending_runtime(root: Path, ordinals: tuple[int, ...]) -> dict[int, dict[st
     )
     events: dict[int, dict[str, object]] = {}
     for ordinal in ordinals:
-        receipt_path = root / f"fleet-receipts/trial-{ordinal:04d}.json"
-        _receipt(receipt_path, ordinal)
+        receipt_path = (
+            root
+            / f"fleet-receipts/trial-{ordinal + trial_number_start:04d}.json"
+        )
+        _receipt(receipt_path, ordinal, trial_number_start=trial_number_start)
         _json(
             root / f"runtime/{ordinal:04d}/result.json",
             {"trial_id": f"trial-{ordinal:04d}", "runtime": "verified"},
@@ -173,7 +191,7 @@ def _pending_runtime(root: Path, ordinals: tuple[int, ...]) -> dict[int, dict[st
         events[ordinal] = {
             "format": "truth_editing_vast_fleet_receipt_durable_event_v1",
             "fleet_config_sha256": FLEET,
-            "trial_id": f"trial-{ordinal:04d}",
+            "trial_id": f"trial-{ordinal + trial_number_start:04d}",
             "ordinal": ordinal,
             "request_sha256": receipt["request_sha256"],
             "receipt_path": str(receipt_path.resolve()),
@@ -331,6 +349,48 @@ def test_partial_crash_restore_runs_only_missing_workers_judges_and_spend(
     assert judge_calls == list(range(partial_count, 8))
     assert len(ledger["paid_ordinals"]) == previous_spend + len(worker_calls)
     assert len(set(ledger["paid_ordinals"])) == 8
+
+
+def test_one_based_partial_and_full_snapshots_restore_exact_receipts(
+    tmp_path: Path,
+) -> None:
+    repository = _repository(tmp_path)
+    _prime_zero(repository, tmp_path, trial_number_start=1)
+    host = tmp_path / "one-based-host"
+    events = _pending_runtime(host, (0, 1, 2), trial_number_start=1)
+    committed = _binding(0, trial_number_start=1)
+
+    _, partial, _ = repository.publish_partial_from_runtime(
+        tmp_path / "one-based-partial-staging",
+        committed_binding=committed,
+        durable_event=events[2],
+        adaptive_state_root=host / "adaptive-state",
+        fleet_receipt_dir=host / "fleet-receipts",
+        runtime_output_dir=host / "runtime",
+        judge_cache_dir=host / "judge-cache",
+        judge_budget_ledger_dir=host / "judge-budget-ledger",
+    )
+    assert partial.receipt_ordinals == frozenset({0, 1, 2})
+    assert [item.trial_id for item in partial.durable_receipts] == [
+        "trial-0001",
+        "trial-0002",
+        "trial-0003",
+    ]
+    restored_partial = tmp_path / "one-based-restored-partial"
+    repository.restore_latest_partial(restored_partial, partial)
+    assert not (restored_partial / "fleet-receipts/trial-0000.json").exists()
+    assert (restored_partial / "fleet-receipts/trial-0003.json").is_file()
+
+    full = tmp_path / "one-based-full"
+    _snapshot(full, 8, trial_number_start=1)
+    full_binding = _binding(8, trial_number_start=1)
+    repository.publish(full, full_binding)
+    restored_full = tmp_path / "one-based-restored-full"
+    repository.restore_latest(restored_full, full_binding)
+    assert not (restored_full / "fleet-receipts/trial-0000.json").exists()
+    assert {
+        path.name for path in (restored_full / "fleet-receipts").iterdir()
+    } == {f"trial-{number:04d}.json" for number in range(1, 9)}
 
 
 def test_concurrent_partial_callbacks_coalesce_monotonically_and_full_barrier_wins(

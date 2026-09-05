@@ -240,6 +240,45 @@ def test_exact_restored_partial_event_is_already_published() -> None:
     ) is True
 
 
+def test_one_based_restored_partial_event_is_already_published() -> None:
+    committed = SnapshotBinding(
+        **{
+            **_partial_binding().committed.to_mapping(),
+            "trial_number_start": 1,
+        }
+    )
+    binding = PartialBatchBinding(
+        committed=committed,
+        batch_ordinal=6,
+        batch_size=8,
+        durable_receipts=(
+            PartialTrialReceiptBinding(
+                trial_id="trial-0049",
+                ordinal=48,
+                proposal_sha256="d" * 64,
+                request_sha256="e" * 64,
+                receipt_sha256="f" * 64,
+            ),
+        ),
+    )
+    repository = SimpleNamespace(
+        read_latest_partial_binding_if_present=lambda candidate: (
+            binding if candidate == committed else None
+        )
+    )
+
+    assert MODULE.offhost_partial_event_is_already_published(
+        repository=repository,
+        committed_binding=committed,
+        durable_event=_durable_event(
+            trial_id="trial-0049",
+            receipt_path="/workspace/outputs/fleet-receipts/trial-0049.json",
+        ),
+        expected_receipt_directory=RECEIPT_DIRECTORY,
+        trial_number_start=1,
+    ) is True
+
+
 def test_restored_partial_event_missing_from_frontier_requires_publication() -> None:
     binding = _partial_binding()
     repository = SimpleNamespace(
