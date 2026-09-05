@@ -584,7 +584,9 @@ class WriterEditRuntime:
                 raise WriterEditError(
                     "failed to apply and completely roll back writer edit transaction; model is poisoned"
                 ) from rollback_error
-            raise WriterEditError("failed to apply writer edit transaction") from error
+            raise WriterEditError(
+                f"failed to apply writer edit transaction: {type(error).__name__}: {error}"
+            ) from error
 
         lease = EditLease(
             runtime=self,

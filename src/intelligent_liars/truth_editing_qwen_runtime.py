@@ -568,12 +568,16 @@ class TrialRuntime:
             strengths=batch.strengths,
         )
         started = self._clock()
+        failure_phase = "writer activation"
         try:
             _reset_cuda_peak(bundle.model)
             lease = self._writer_runtime.activate(bundle.model, edit)
             with lease:
+                failure_phase = "inference"
                 example_results, evidence = self._infer(bundle, batch)
+                failure_phase = "capability preservation"
                 preservation = self._collect_preservation(bundle, batch)
+            failure_phase = "projection and restoration verification"
             projection_evidence = lease.projection_evidence
             if not projection_evidence or not all(
                 item.get("exact_restoration_verified") is True
@@ -597,7 +601,8 @@ class TrialRuntime:
             if isinstance(error, QwenTrialRuntimeError):
                 raise
             raise QwenTrialRuntimeError(
-                "trial failed; writer restoration was attempted and worker is poisoned"
+                f"trial failed during {failure_phase}; {type(error).__name__}: {error}; "
+                "writer restoration was attempted and worker is poisoned"
             ) from error
 
     def _collect_preservation(

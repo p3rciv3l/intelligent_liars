@@ -355,7 +355,10 @@ def test_inference_failure_restores_weights_and_poisons_worker(tmp_path: Path) -
         enforce_production_identity=False,
     )
 
-    with pytest.raises(QwenTrialRuntimeError, match="worker is poisoned"):
+    with pytest.raises(
+        QwenTrialRuntimeError,
+        match="trial failed during inference; RuntimeError: synthetic generation failure",
+    ):
         runtime.evaluate(_batch())
     assert runtime.poisoned
     for name, value in model.named_parameters():
