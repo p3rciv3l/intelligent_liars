@@ -563,6 +563,32 @@ def test_v2_receipt_rejects_private_or_unknown_telemetry_before_upload(
     assert repository.store.object_count == 0
 
 
+def test_v2_receipt_accepts_projection_verification_telemetry(tmp_path: Path) -> None:
+    snapshot = tmp_path / "snapshot"
+    _snapshot(snapshot, 8)
+    path = snapshot / "fleet-receipts/trial-0004.json"
+    raw = json.loads(path.read_text())
+    raw["telemetry"].update(
+        {
+            "projection_max_residual_ratio": 1e-7,
+            "projection_max_error_ratio": 2e-7,
+            "projection_total_weight_delta_norm": 3.5,
+            "projection_edited_writer_count": 4.0,
+            "projection_restoration_verified": 1.0,
+        }
+    )
+    unsigned = dict(raw)
+    unsigned.pop("receipt_sha256")
+    raw["receipt_sha256"] = _sha(unsigned)
+    _json(path, raw)
+    repository = _repository(tmp_path)
+    _prime_zero(repository, tmp_path)
+
+    receipt = repository.publish(snapshot, _binding(8))
+
+    assert receipt["completed_trials"] == 8
+
+
 def test_crash_restore_resumes_next_batch_without_duplicate_paid_calls(
     tmp_path: Path,
 ) -> None:
