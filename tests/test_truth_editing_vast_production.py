@@ -57,9 +57,10 @@ def test_adaptive_remote_initializes_refresh_store_before_bootstrap() -> None:
     )
 
     remote = plan["base_lifecycle"]["remote_command"]
-    initialize = "configure_truth_editing_aws_refresh.py prepare"
+    initialize = "configure_truth_editing_aws_refresh.py initialize"
     bootstrap = "bootstrap.sh"
     assert remote.count(initialize) == 1
+    assert "configure_truth_editing_aws_refresh.py prepare" not in remote
     assert remote.index(initialize) < remote.index(bootstrap)
 
 

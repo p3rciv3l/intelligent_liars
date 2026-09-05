@@ -339,7 +339,7 @@ def production_lifecycle_plan(
     if config.phase == "adaptive":
         bootstrap = (
             "set -euo pipefail; "
-            "python scripts/configure_truth_editing_aws_refresh.py prepare "
+            "python scripts/configure_truth_editing_aws_refresh.py initialize "
             "--root /workspace/.truth-editing-aws; "
             "aws_refresh_attempt=0; "
             "until python scripts/configure_truth_editing_aws_refresh.py emit "

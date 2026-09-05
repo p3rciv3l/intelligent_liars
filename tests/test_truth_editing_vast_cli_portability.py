@@ -66,6 +66,43 @@ def main():
     assert "must-not-be-printed" not in completed.stdout + completed.stderr
 
 
+def test_vast_wrapper_skips_broken_earlier_launcher(tmp_path: Path) -> None:
+    fake_modules = tmp_path / "fake-modules"
+    fake_modules.mkdir()
+    (fake_modules / "requests.py").write_text(
+        "class Session:\n"
+        "    def request(self, method, url, **kwargs): return object()\n"
+        "class _Sessions: Session = Session\n"
+        "sessions = _Sessions()\n"
+    )
+    (fake_modules / "vast.py").write_text("def main(): return 0\n")
+    bad_bin = tmp_path / "bad-bin"
+    good_bin = tmp_path / "good-bin"
+    bad_bin.mkdir()
+    good_bin.mkdir()
+    bad_python = tmp_path / "bad-python"
+    bad_python.write_text("#!/bin/sh\nexit 1\n")
+    bad_python.chmod(0o755)
+    for directory, interpreter in ((bad_bin, bad_python), (good_bin, Path(sys.executable))):
+        launcher = directory / "vastai"
+        launcher.write_text(f"#!{interpreter}\n")
+        launcher.chmod(0o755)
+    environment = dict(os.environ)
+    environment["PYTHONPATH"] = str(fake_modules)
+    environment["PATH"] = os.pathsep.join((str(bad_bin), str(good_bin), environment["PATH"]))
+
+    completed = subprocess.run(
+        [sys.executable, str(WRAPPER)],
+        cwd=tmp_path,
+        env=environment,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+
+
 def test_truth_editing_vast_launchers_default_to_committed_portable_wrapper(
     tmp_path: Path,
 ) -> None:
