@@ -53,6 +53,8 @@ from .truth_editing_weight_editor import (
 RUNTIME_FORMAT = "truth_editing_qwen_trial_runtime_v2"
 RESULT_FORMAT = "truth_editing_qwen_trial_result_v2"
 _SAFE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
+_THINKING_PROMPT_SUFFIX = "<think>\n"
+_EMPTY_THINK_PREFILL = "</think>\n\n"
 
 
 class QwenTrialRuntimeError(RuntimeError):
@@ -1300,17 +1302,26 @@ def _verify_compact_evidence(
 def _build_inputs(
     processor: Any, conversations: Sequence[Sequence[Mapping[str, Any]]]
 ) -> tuple[list[str], Mapping[str, Any]]:
-    texts = [
-        processor.apply_chat_template(
+    texts: list[str] = []
+    for conversation in conversations:
+        add_generation_prompt = not (
+            conversation and conversation[-1].get("role") == "assistant"
+        )
+        rendered = processor.apply_chat_template(
             [dict(message) for message in conversation],
             tokenize=False,
-            add_generation_prompt=not (
-                conversation and conversation[-1].get("role") == "assistant"
-            ),
+            add_generation_prompt=add_generation_prompt,
             enable_thinking=False,
         )
-        for conversation in conversations
-    ]
+        if add_generation_prompt:
+            if not isinstance(rendered, str) or not rendered.endswith(
+                _THINKING_PROMPT_SUFFIX
+            ):
+                raise QwenTrialRuntimeError(
+                    "Qwen chat template has an unexpected thinking prompt suffix"
+                )
+            rendered += _EMPTY_THINK_PREFILL
+        texts.append(rendered)
     return texts, _process_rendered_inputs(processor, texts, conversations)
 
 

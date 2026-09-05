@@ -94,7 +94,7 @@ class FakeProcessor:
         assert tokenize is False
         assert enable_thinking is False
         body = "|".join(f"{item['role']}:{item['content']}" for item in messages)
-        return body + ("|assistant:" if add_generation_prompt else "|end")
+        return body + ("|assistant:<think>\n" if add_generation_prompt else "|end")
 
     def __call__(
         self,
