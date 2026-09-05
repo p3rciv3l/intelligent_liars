@@ -1448,6 +1448,7 @@ def main(argv: list[str] | None = None) -> int:
                 expected_study_config_sha256=study_config.identity_sha256,
                 expected_completed_trials=args.restore_completed_trials,
                 expected_optuna_study_name=args.restore_optuna_study_name,
+                trial_number_start=study_config.trial_number_start,
             )
             restored_judge_boundary_is_durable = True
         else:
@@ -1758,6 +1759,7 @@ def main(argv: list[str] | None = None) -> int:
             tier_through_trials=tuple(
                 tier.through_trial for tier in study_config.evaluation_tiers
             ),
+            trial_number_start=study_config.trial_number_start,
         )
         binding = SnapshotBinding(
             study_identity_sha256=study_identity_sha256,

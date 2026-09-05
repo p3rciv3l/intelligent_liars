@@ -52,12 +52,13 @@ def _write_adaptive_state(
     abort_minimum: bool = False,
     operational_failure_ordinals: frozenset[int] = frozenset(),
     expanded_through: int = 160,
+    trial_number_start: int = 0,
 ) -> None:
     progress_completed = completed if progress_completed is None else progress_completed
     (root / "study").mkdir(parents=True)
     trials = [
         {
-            "trial_id": f"trial-{ordinal:04d}",
+            "trial_id": f"trial-{ordinal + trial_number_start:04d}",
             "ordinal": ordinal,
             "tier_name": (
                 "discovery"
@@ -395,7 +396,47 @@ def test_adaptive_checkpoint_round_trip_preserves_scheduler_progress_and_wandb(
     assert manifest["format"] == "truth_editing_adaptive_checkpoint_manifest_v1"
     assert manifest["monitoring"]["wandb_run_id"] == "adaptive-transfer"
     assert receipt["source_manifest_sha256"] == manifest["manifest_sha256"]
-    assert {name: (tmp_path / "restored" / name).read_bytes() for name in expected_names} == original
+    assert {
+        name: (tmp_path / "restored" / name).read_bytes()
+        for name in expected_names
+    } == original
+
+
+def test_adaptive_checkpoint_round_trip_accepts_one_based_trial_ids(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "source"
+    _write_adaptive_state(source, completed=8, trial_number_start=1)
+
+    manifest = publish_adaptive_checkpoint(
+        source,
+        tmp_path / "published",
+        expected_study_identity_sha256=STUDY_ID,
+        expected_study_config_sha256=STUDY_CONFIG_SHA,
+        expected_completed_trials=8,
+        expected_optuna_study_name=OPTUNA_STUDY_NAME,
+        trial_number_start=1,
+    )
+    receipt = restore_adaptive_checkpoint(
+        tmp_path / "published",
+        tmp_path / "restored",
+        expected_study_identity_sha256=STUDY_ID,
+        expected_study_config_sha256=STUDY_CONFIG_SHA,
+        expected_completed_trials=8,
+        expected_optuna_study_name=OPTUNA_STUDY_NAME,
+        trial_number_start=1,
+    )
+
+    assert manifest["completed_trials"] == 8
+    assert receipt["completed_trials"] == 8
+    restored = json.loads(
+        (tmp_path / "restored/study/study-journal.json").read_text()
+    )
+    assert [
+        trial["trial_id"]
+        for batch in restored["batches"]
+        for trial in batch["trials"]
+    ] == [f"trial-{ordinal:04d}" for ordinal in range(1, 9)]
 
 
 def test_republishing_identical_adaptive_checkpoint_is_idempotent(

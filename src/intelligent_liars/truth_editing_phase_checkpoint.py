@@ -259,6 +259,7 @@ def publish_adaptive_checkpoint(
     expected_completed_trials: int,
     expected_optuna_study_name: str,
     tier_through_trials: tuple[int, ...] = (80, 160, 800),
+    trial_number_start: int = 0,
 ) -> dict[str, Any]:
     """Publish one rolling adaptive generation without legacy phase semantics."""
 
@@ -279,6 +280,7 @@ def publish_adaptive_checkpoint(
         expected_completed_trials=expected_completed_trials,
         expected_optuna_study_name=expected_optuna_study_name,
         tier_through_trials=tier_through_trials,
+        trial_number_start=trial_number_start,
     )
     with _locked_publication_root(root):
         parent_sha = _validate_adaptive_lineage(
@@ -291,6 +293,7 @@ def publish_adaptive_checkpoint(
             new_progress=progress,
             new_scheduler=scheduler,
             tier_through_trials=tier_through_trials,
+            trial_number_start=trial_number_start,
         )
         generation_id = (
             f"adaptive-{expected_completed_trials:04d}-"
@@ -350,6 +353,7 @@ def restore_adaptive_checkpoint(
     expected_study_config_sha256: str,
     expected_completed_trials: int,
     expected_optuna_study_name: str,
+    trial_number_start: int = 0,
 ) -> dict[str, Any]:
     """Restore the latest complete adaptive generation and all control state."""
 
@@ -386,6 +390,7 @@ def restore_adaptive_checkpoint(
         expected_study_config_sha256=expected_study_config_sha256,
         expected_completed_trials=expected_completed_trials,
         expected_optuna_study_name=expected_optuna_study_name,
+        trial_number_start=trial_number_start,
     )
     unsigned = {
         "format": ADAPTIVE_RESTORE_FORMAT,
@@ -456,6 +461,7 @@ def _read_adaptive_state(
     expected_completed_trials: int,
     expected_optuna_study_name: str,
     tier_through_trials: tuple[int, ...] = (80, 160, 800),
+    trial_number_start: int = 0,
 ) -> tuple[
     list[dict[str, Any]],
     dict[str, bytes],
@@ -486,6 +492,7 @@ def _read_adaptive_state(
         expected_study_identity_sha256,
         expected_completed_trials,
         tier_through_trials=tier_through_trials,
+        trial_number_start=trial_number_start,
     )
     _validate_optuna_journal(
         payloads[ADAPTIVE_STATE_FILES[1]],
@@ -886,6 +893,7 @@ def _validate_adaptive_lineage(
     new_progress: Any,
     new_scheduler: Mapping[str, Any],
     tier_through_trials: tuple[int, ...] = (80, 160, 800),
+    trial_number_start: int = 0,
 ) -> str | None:
     latest_path = root / "adaptive-latest.json"
     if not latest_path.exists() and not latest_path.is_symlink():
@@ -917,6 +925,7 @@ def _validate_adaptive_lineage(
             expected_completed_trials=prior_completed,
             expected_optuna_study_name=expected_optuna_study_name,
             tier_through_trials=tier_through_trials,
+            trial_number_start=trial_number_start,
         )
     )
     prior_trials = _journal_trial_rows(prior_payloads[ADAPTIVE_STATE_FILES[0]])
@@ -1212,7 +1221,10 @@ def _validate_study_journal(
     completed: int,
     *,
     tier_through_trials: tuple[int, ...] = (80, 160, 800),
+    trial_number_start: int = 0,
 ) -> list[Mapping[str, Any]]:
+    if trial_number_start not in {0, 1}:
+        raise PhaseCheckpointError("study journal trial number start is invalid")
     if (
         len(tier_through_trials) != 3
         or any(
@@ -1321,7 +1333,9 @@ def _validate_study_journal(
     if len(ordinals) != completed:
         raise PhaseCheckpointError("study journal completed trial count differs")
     expected_ordinals = list(range(completed))
-    expected_ids = [f"trial-{ordinal:04d}" for ordinal in expected_ordinals]
+    expected_ids = [
+        f"trial-{ordinal + trial_number_start:04d}" for ordinal in expected_ordinals
+    ]
     if ordinals != expected_ordinals or trial_ids != expected_ids:
         raise PhaseCheckpointError("study journal has duplicate or invalid trial ordering")
     return validated_trials
