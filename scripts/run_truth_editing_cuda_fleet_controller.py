@@ -565,12 +565,14 @@ def _batch_has_durable_receipt(
     fleet_config_sha256: str,
     completed_trials: int,
     batch_size: int,
+    trial_number_start: int = 0,
 ) -> bool:
     """Prove that an otherwise-null journal batch has already incurred work."""
 
     found = False
     for ordinal in range(completed_trials, completed_trials + batch_size):
-        path = receipt_directory / f"trial-{ordinal:04d}.json"
+        trial_id = f"trial-{ordinal + trial_number_start:04d}"
+        path = receipt_directory / f"{trial_id}.json"
         if not path.exists() and not path.is_symlink():
             continue
         raw = _read_object(path, "durable partial trial receipt")
@@ -596,7 +598,7 @@ def _batch_has_durable_receipt(
         if (
             claimed != canonical_sha256(unsigned)
             or raw["fleet_config_sha256"] != fleet_config_sha256
-            or raw["trial_id"] != f"trial-{ordinal:04d}"
+            or raw["trial_id"] != trial_id
             or raw["ordinal"] != ordinal
         ):
             raise ValueError("durable partial trial receipt identity differs")
@@ -1718,6 +1720,7 @@ def main(argv: list[str] | None = None) -> int:
             fleet_config_sha256=fleet.identity_sha256,
             completed_trials=completed,
             batch_size=size,
+            trial_number_start=study_config.trial_number_start,
         ),
         admission_callback=lambda completed, size: monitor.record_execution_counts(
             active=0,

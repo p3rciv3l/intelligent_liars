@@ -1179,6 +1179,32 @@ def test_identity_valid_partial_receipt_marks_null_journal_batch_started(
     )
 
 
+def test_one_based_partial_receipt_marks_null_journal_batch_started(
+    tmp_path: Path,
+) -> None:
+    unsigned = {
+        "format": "truth_editing_vast_fleet_trial_receipt_v2",
+        "fleet_config_sha256": "a" * 64,
+        "trial_id": "trial-0004",
+        "ordinal": 3,
+        "request_sha256": "b" * 64,
+        "worker_slot": 3,
+        "result": {"outcome_kind": "success", "metrics": {}, "detail": None},
+        "telemetry": {},
+    }
+    (tmp_path / "trial-0004.json").write_text(
+        json.dumps({**unsigned, "receipt_sha256": canonical_sha256(unsigned)})
+    )
+
+    assert MODULE._batch_has_durable_receipt(
+        tmp_path,
+        fleet_config_sha256="a" * 64,
+        completed_trials=0,
+        batch_size=8,
+        trial_number_start=1,
+    )
+
+
 def test_partial_receipt_identity_drift_fails_closed(tmp_path: Path) -> None:
     unsigned = {
         "format": "truth_editing_vast_fleet_trial_receipt_v2",
