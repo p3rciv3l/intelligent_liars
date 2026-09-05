@@ -678,8 +678,8 @@ def test_successful_trials_publish_readable_live_loss_charts(tmp_path: Path) -> 
         "Best overall loss so far",
     ]
     assert overview["xs"] == [[1, 2], [1, 2]]
-    first_loss = 1.0 - (0.8 * 0.6 * 0.9) ** (1 / 3)
-    second_loss = 1.0 - (0.5 * 0.5 * 0.8) ** (1 / 3)
+    first_loss = ((1 - 0.8) + (1 - 0.6) + (1 - 0.9)) / 3
+    second_loss = ((1 - 0.5) + (1 - 0.5) + (1 - 0.8)) / 3
     assert overview["ys"][0] == pytest.approx([first_loss, second_loss])
     assert overview["ys"][1] == pytest.approx([first_loss, first_loss])
     assert overview["title"] == "Optimization loss (live; lower is better)"
@@ -740,7 +740,7 @@ def test_successful_trials_publish_readable_live_loss_charts(tmp_path: Path) -> 
     ] == pytest.approx(0.1)
 
 
-def test_infeasible_and_operational_trials_never_enter_loss_charts(
+def test_scientifically_constrained_trials_enter_loss_but_operational_trials_do_not(
     tmp_path: Path,
 ) -> None:
     run = _FakeRun()
@@ -772,7 +772,7 @@ def test_infeasible_and_operational_trials_never_enter_loss_charts(
     )
 
     _wait_until(lambda: len(wandb.plot.line_series_calls) == 4)
-    assert all(call["xs"][0] == [3] for call in wandb.plot.line_series_calls)
+    assert all(call["xs"][0] == [1, 3] for call in wandb.plot.line_series_calls)
     _wait_until(
         lambda: any(
             "progress/operationally_unresolved_trials" in values
@@ -786,10 +786,12 @@ def test_infeasible_and_operational_trials_never_enter_loss_charts(
     )
     assert summary["progress/successful_trials"] == 1
     assert summary["progress/scientifically_infeasible_trials"] == 1
+    assert summary["progress/successfully_evaluated_trials"] == 2
+    assert summary["progress/scientific_constraint_violation_trials"] == 1
     assert summary["progress/operationally_unresolved_trials"] == 1
     rows_with_loss = [values for values, _step in run.logged if "loss/current" in values]
-    assert len(rows_with_loss) == 1
-    assert rows_with_loss[0]["trial/number"] == 3
+    assert [row["trial/number"] for row in rows_with_loss] == [1, 3]
+    assert all(math.isfinite(row["loss/current"]) for row in rows_with_loss)
 
 
 def test_every_dashboard_row_uses_one_monotonic_coordinator_event_step(

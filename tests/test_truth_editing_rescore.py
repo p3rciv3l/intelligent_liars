@@ -334,7 +334,7 @@ def test_rescore_driver_appends_exact_replays_then_quarantines_and_continues(
     assert 1 not in states
     assert 2 not in states
     assert 7 not in states
-    assert states[3] == "PRUNED"
+    assert states[3] == "COMPLETE"
     assert states[6] == "COMPLETE"
 
 

@@ -108,7 +108,25 @@ REQUIRED_WANDB_METRIC_KEYS = (
 OPTIONAL_WANDB_METRIC_KEYS = (
     "charts/loss_overview",
     "charts/loss_components",
+    "charts/raw_objectives",
     "charts/preservation_kl",
+    "trial/number",
+    "trial/optimization_phase",
+    "progress/optimization_phase",
+    "progress/successfully_evaluated_trials",
+    "progress/scientific_constraint_violation_trials",
+    "progress/successful_trials",
+    "progress/scientifically_infeasible_trials",
+    "progress/operationally_unresolved_trials",
+    "loss/current",
+    "loss/best_so_far",
+    "loss/contract_sha256",
+    "loss/components/*",
+    "projection/max_residual_ratio",
+    "projection/max_error_ratio",
+    "projection/total_weight_delta_norm",
+    "projection/edited_writer_count",
+    "projection/restoration_verified",
 )
 
 _TRACE_FIELDS = {
@@ -225,7 +243,9 @@ _PARAM_ENUM: dict[str, set[str]] = {
     "basis_scope": {"general", "domain", "mixed"},
     "edit_arm": {"truth_only", "refusal_only", "joint"},
     "normalization_mode": {"exact", "norm_preserving"},
-    "proposal_origin": {"coverage_anchor", "tpe_sampled"},
+    "proposal_origin": {
+        "coverage_anchor", "random_exploration", "identity_control", "tpe_sampled"
+    },
     "refusal_direction_scope": {"global", "per_layer"},
     "refusal_writer_policy": {"attention", "mlp", "both"},
     "truth_direction_scope": {"global", "per_layer"},
@@ -351,6 +371,14 @@ def _validate_metric_value(key: str, value: Any) -> None:
     if key == "progress/phase":
         if value not in {"discovery", "expanded", "finalist", "canary"}:
             raise WandbCanaryError("W&B privacy allowlist rejected progress phase")
+        return
+    if key in {"trial/optimization_phase", "progress/optimization_phase"}:
+        if value not in {"neutral_exploration", "tpe", "control"}:
+            raise WandbCanaryError("W&B privacy allowlist rejected optimization phase")
+        return
+    if key == "loss/contract_sha256":
+        if not isinstance(value, str) or _SHA256.fullmatch(value) is None:
+            raise WandbCanaryError("W&B privacy allowlist rejected loss identity")
         return
     if key == "trial/outcome_kind":
         if value not in {

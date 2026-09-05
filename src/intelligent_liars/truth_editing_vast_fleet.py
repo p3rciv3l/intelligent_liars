@@ -66,6 +66,11 @@ _SAFE_TRIAL_TELEMETRY_FIELDS = frozenset(
         "generated_tokens",
         "generated_tokens_per_second",
         "cuda_peak_allocated_bytes",
+        "projection_max_residual_ratio",
+        "projection_max_error_ratio",
+        "projection_total_weight_delta_norm",
+        "projection_edited_writer_count",
+        "projection_restoration_verified",
         "judge_calls",
         "judge_failures",
         "judge_latency_seconds",
@@ -1137,6 +1142,11 @@ class SubprocessCudaWorker:
             "generated_tokens",
             "generated_tokens_per_second",
             "cuda_peak_allocated_bytes",
+            "projection_max_residual_ratio",
+            "projection_max_error_ratio",
+            "projection_total_weight_delta_norm",
+            "projection_edited_writer_count",
+            "projection_restoration_verified",
         }:
             value = telemetry.get(name)
             if value is None:

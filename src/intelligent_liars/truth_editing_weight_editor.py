@@ -18,6 +18,8 @@ removes the coordinate, and 2 reflects it.
 from __future__ import annotations
 
 import math
+import hashlib
+import json
 import threading
 import weakref
 from collections.abc import Mapping, Sequence
@@ -67,6 +69,8 @@ class CompiledWriterEdit:
 @dataclass(frozen=True)
 class _WriterTarget:
     name: str
+    layer_index: int
+    site: str
     weight: torch.Tensor
     basis: torch.Tensor
     strengths: tuple[float, ...]
@@ -264,6 +268,8 @@ def _validated_targets(
                         f"model.language_model.layers.{edit.layer_index}."
                         "self_attn.o_proj.weight"
                     ),
+                    layer_index=edit.layer_index,
+                    site="attention",
                     weight=attention_weight,
                     basis=basis,
                     strengths=attention_strengths,
@@ -273,6 +279,8 @@ def _validated_targets(
                         f"model.language_model.layers.{edit.layer_index}."
                         "mlp.down_proj.weight"
                     ),
+                    layer_index=edit.layer_index,
+                    site="mlp",
                     weight=mlp_weight,
                     basis=basis,
                     strengths=mlp_strengths,
@@ -304,6 +312,74 @@ def _edited_weight(target: _WriterTarget) -> torch.Tensor:
     if not torch.isfinite(result).all().item():
         raise WriterEditError(f"writer edit produced non-finite values for {target.name}")
     return result
+
+
+def _tensor_sha256(tensor: torch.Tensor) -> str:
+    value = tensor.detach().to(device="cpu").contiguous()
+    return hashlib.sha256(value.view(torch.uint8).numpy().tobytes()).hexdigest()
+
+
+def _projection_receipt(
+    target: _WriterTarget,
+    edited: torch.Tensor,
+    *,
+    recipe_id: str,
+) -> dict[str, Any]:
+    weight = target.weight.detach()
+    compute_dtype = (
+        torch.float32 if weight.dtype in {torch.float16, torch.bfloat16} else weight.dtype
+    )
+    basis = target.basis.to(device=weight.device, dtype=compute_dtype)
+    before = basis.transpose(0, 1) @ weight.to(dtype=compute_dtype)
+    after = basis.transpose(0, 1) @ edited.to(dtype=compute_dtype)
+    retained = torch.tensor(
+        tuple(1.0 - value for value in target.strengths),
+        device=weight.device,
+        dtype=compute_dtype,
+    ).unsqueeze(1)
+    expected_after = before * retained
+    pre_norm = float(torch.linalg.vector_norm(before).item())
+    post_norm = float(torch.linalg.vector_norm(after).item())
+    scale = max(pre_norm, torch.finfo(compute_dtype).eps)
+    error_ratio = float(torch.linalg.vector_norm(after - expected_after).item()) / scale
+    residual_ratio = post_norm / scale
+    delta_norm = float(
+        torch.linalg.vector_norm(
+            edited.to(dtype=compute_dtype) - weight.to(dtype=compute_dtype)
+        ).item()
+    )
+    tolerance = 5e-3
+    if error_ratio > tolerance:
+        raise WriterEditError(
+            f"installed projection verification failed for {target.name}: "
+            f"error ratio {error_ratio:.8g} exceeds {tolerance}"
+        )
+    if all(value == 0.0 for value in target.strengths) and delta_norm != 0.0:
+        raise WriterEditError(f"identity edit changed writer weight for {target.name}")
+    receipt: dict[str, Any] = {
+        "layer_index": target.layer_index,
+        "writer_site": target.site,
+        "parameter_name": target.name,
+        "basis_sha256": _tensor_sha256(target.basis),
+        "basis_rank": int(target.basis.shape[1]),
+        "requested_strengths": list(target.strengths),
+        "coordinate_retention_factors": [1.0 - value for value in target.strengths],
+        "pre_edit_projection_norm": pre_norm,
+        "post_edit_projection_norm": post_norm,
+        "normalized_residual_ratio": residual_ratio,
+        "projection_error_ratio": error_ratio,
+        "weight_delta_norm": delta_norm,
+        "exact_restoration_verified": False,
+    }
+    binding = {
+        "format": "truth_editing_projection_binding_v1",
+        "recipe_id": recipe_id,
+        **{key: value for key, value in receipt.items() if key != "exact_restoration_verified"},
+    }
+    receipt["edited_weight_binding_sha256"] = hashlib.sha256(
+        json.dumps(binding, sort_keys=True, separators=(",", ":"), allow_nan=False).encode()
+    ).hexdigest()
+    return receipt
 
 
 def materialized_writer_weights(
@@ -340,10 +416,12 @@ class EditLease:
         originals: Mapping[
             str, tuple[torch.Tensor, torch.Tensor, torch.Tensor]
         ],
+        projection_evidence: Sequence[dict[str, Any]],
     ) -> None:
         self._runtime = runtime
         self._model = model
         self._originals = dict(originals)
+        self._projection_evidence = list(projection_evidence)
         self._active = True
 
     @property
@@ -353,6 +431,12 @@ class EditLease:
     @property
     def edited_parameters(self) -> tuple[str, ...]:
         return tuple(self._originals)
+
+    @property
+    def projection_evidence(self) -> tuple[Mapping[str, Any], ...]:
+        """Numerical edit receipts, updated after exact restoration succeeds."""
+
+        return tuple(dict(item) for item in self._projection_evidence)
 
     def close(self) -> None:
         """Restore original writer bytes exactly; repeated closes are harmless."""
@@ -394,6 +478,8 @@ class EditLease:
             raise WriterEditError(
                 "writer parameters changed outside the active lease; originals were restored"
             )
+        for item in self._projection_evidence:
+            item["exact_restoration_verified"] = True
 
     def __enter__(self) -> EditLease:
         if not self._active:
@@ -462,9 +548,21 @@ class WriterEditRuntime:
                 )
                 for target in mutation_targets
             }
+            projection_evidence = tuple(
+                _projection_receipt(
+                    target,
+                    edited.get(target.name, target.weight.detach().clone()),
+                    recipe_id=compiled_recipe.recipe_id,
+                )
+                for target in targets
+            )
             with torch.no_grad():
                 for target in mutation_targets:
                     target.weight.copy_(edited[target.name])
+                    if not torch.equal(target.weight, edited[target.name]):
+                        raise WriterEditError(
+                            f"writer projection was not installed exactly for {target.name}"
+                        )
         except Exception as error:
             rollback_error: Exception | None = None
             if "originals" in locals():
@@ -488,7 +586,12 @@ class WriterEditRuntime:
                 ) from rollback_error
             raise WriterEditError("failed to apply writer edit transaction") from error
 
-        lease = EditLease(runtime=self, model=model, originals=originals)
+        lease = EditLease(
+            runtime=self,
+            model=model,
+            originals=originals,
+            projection_evidence=projection_evidence,
+        )
         self._active_lease = lease
         self._active_model = model
         return lease

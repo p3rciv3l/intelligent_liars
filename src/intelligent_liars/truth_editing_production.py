@@ -344,6 +344,11 @@ class ProductionStudyEvaluator:
                     "generated_tokens",
                     "generated_tokens_per_second",
                     "cuda_peak_allocated_bytes",
+                    "projection_max_residual_ratio",
+                    "projection_max_error_ratio",
+                    "projection_total_weight_delta_norm",
+                    "projection_edited_writer_count",
+                    "projection_restoration_verified",
                 }
                 and (
                     value is None
@@ -1567,6 +1572,7 @@ class StoredMockTrialRuntime:
             self_sha256=_sha(preservation_unsigned),
         )
         unsigned["preservation"] = preservation.to_mapping()
+        unsigned["projection_evidence"] = []
         return TrialRuntimeResult(
             batch_id=batch.batch_id,
             batch_sha256=batch.batch_sha256,
@@ -1580,6 +1586,7 @@ class StoredMockTrialRuntime:
             logits_path=str(logits_path),
             logits_sha256=logits_sha,
             telemetry={"stored_mock": True},
+            projection_evidence=(),
             self_sha256=_sha(unsigned),
         )
 

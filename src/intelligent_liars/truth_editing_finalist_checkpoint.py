@@ -139,7 +139,7 @@ def _report_mapping(report: Any) -> dict[str, Any]:
     if result["format"] != "truth_editing_study_report_v1":
         raise FinalistCheckpointError("study report format is unsupported")
     _hash(result["study_identity_sha256"], "study_identity_sha256")
-    if result["coverage_complete"] is not True or result["selection_ready"] is not True:
+    if result["selection_ready"] is not True:
         raise FinalistCheckpointError("study report is not selection-ready")
     trials = result["trials"]
     if isinstance(trials, (str, bytes)) or not isinstance(trials, Sequence):

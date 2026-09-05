@@ -51,7 +51,7 @@ from .truth_editing_weight_editor import (
 
 
 RUNTIME_FORMAT = "truth_editing_qwen_trial_runtime_v2"
-RESULT_FORMAT = "truth_editing_qwen_trial_result_v2"
+RESULT_FORMAT = "truth_editing_qwen_trial_result_v3"
 _SAFE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 _THINKING_PROMPT_SUFFIX = "<think>\n"
 _EMPTY_THINK_PREFILL = "</think>\n\n"
@@ -271,6 +271,7 @@ class TrialRuntimeResult:
     logits_path: str
     logits_sha256: str
     telemetry: Mapping[str, Any]
+    projection_evidence: tuple[Mapping[str, Any], ...]
     self_sha256: str
 
     def to_mapping(self) -> dict[str, Any]:
@@ -288,6 +289,7 @@ class TrialRuntimeResult:
             "logits_path": self.logits_path,
             "logits_sha256": self.logits_sha256,
             "telemetry": dict(self.telemetry),
+            "projection_evidence": [dict(item) for item in self.projection_evidence],
             "self_sha256": self.self_sha256,
         }
 
@@ -568,9 +570,18 @@ class TrialRuntime:
         started = self._clock()
         try:
             _reset_cuda_peak(bundle.model)
-            with self._writer_runtime.activate(bundle.model, edit):
+            lease = self._writer_runtime.activate(bundle.model, edit)
+            with lease:
                 example_results, evidence = self._infer(bundle, batch)
                 preservation = self._collect_preservation(bundle, batch)
+            projection_evidence = lease.projection_evidence
+            if not projection_evidence or not all(
+                item.get("exact_restoration_verified") is True
+                for item in projection_evidence
+            ):
+                raise QwenTrialRuntimeError(
+                    "writer edit lacks exact-restoration projection evidence"
+                )
             elapsed = self._clock() - started
             return self._persist_result(
                 batch,
@@ -579,6 +590,7 @@ class TrialRuntime:
                 evidence,
                 elapsed,
                 bundle.model,
+                projection_evidence,
             )
         except Exception as error:
             self._poisoned = True
@@ -781,6 +793,7 @@ class TrialRuntime:
         evidence: Mapping[str, np.ndarray],
         elapsed: float,
         model: Any,
+        projection_evidence: tuple[Mapping[str, Any], ...],
     ) -> TrialRuntimeResult:
         if not math.isfinite(elapsed) or elapsed < 0:
             raise QwenTrialRuntimeError("runtime clock returned invalid elapsed time")
@@ -813,6 +826,23 @@ class TrialRuntime:
             if elapsed > 0
             else None,
             "cuda_peak_allocated_bytes": _cuda_peak_bytes(model),
+            "projection_max_residual_ratio": max(
+                float(item["normalized_residual_ratio"])
+                for item in projection_evidence
+            ),
+            "projection_max_error_ratio": max(
+                float(item["projection_error_ratio"])
+                for item in projection_evidence
+            ),
+            "projection_total_weight_delta_norm": sum(
+                float(item["weight_delta_norm"])
+                for item in projection_evidence
+            ),
+            "projection_edited_writer_count": sum(
+                float(item["weight_delta_norm"]) > 0.0
+                for item in projection_evidence
+            ),
+            "projection_restoration_verified": 1.0,
         }
         unsigned = {
             "format": RESULT_FORMAT,
@@ -828,6 +858,7 @@ class TrialRuntime:
             "logits_path": str(final_logits_path.resolve()),
             "logits_sha256": logits_sha256,
             "telemetry": telemetry,
+            "projection_evidence": [dict(item) for item in projection_evidence],
         }
         self_sha = _sha256(unsigned)
         payload = dict(unsigned)
@@ -858,6 +889,7 @@ class TrialRuntime:
             logits_path=str(final_logits_path.resolve()),
             logits_sha256=logits_sha256,
             telemetry=telemetry,
+            projection_evidence=projection_evidence,
             self_sha256=self_sha,
         )
 
@@ -959,6 +991,17 @@ class TrialRuntime:
                 )
             ):
                 return None
+            projection_evidence_raw = payload.get("projection_evidence")
+            if (
+                not isinstance(projection_evidence_raw, list)
+                or not projection_evidence_raw
+                or not all(
+                    isinstance(item, Mapping)
+                    and item.get("exact_restoration_verified") is True
+                    for item in projection_evidence_raw
+                )
+            ):
+                return None
             return TrialRuntimeResult(
                 batch_id=payload["batch_id"],
                 batch_sha256=payload["batch_sha256"],
@@ -972,6 +1015,10 @@ class TrialRuntime:
                 logits_path=payload["logits_path"],
                 logits_sha256=logits_sha,
                 telemetry=MappingProxyType(dict(payload["telemetry"])),
+                projection_evidence=tuple(
+                    MappingProxyType(dict(item))
+                    for item in projection_evidence_raw
+                ),
                 self_sha256=claimed_self,
             )
         except (

@@ -95,7 +95,8 @@ def test_overlay_applies_exact_writer_projection_and_independent_strengths() -> 
         )
     )
 
-    with _runtime().activate(model, compiled):
+    lease = _runtime().activate(model, compiled)
+    with lease:
         expected_attention = original_attention.clone()
         expected_attention[0] = 0
         expected_mlp = original_mlp.clone()
@@ -103,8 +104,54 @@ def test_overlay_applies_exact_writer_projection_and_independent_strengths() -> 
         assert torch.equal(layer.self_attn.o_proj.weight, expected_attention)
         assert torch.equal(layer.mlp.down_proj.weight, expected_mlp)
 
+        evidence = {item["parameter_name"]: item for item in lease.projection_evidence}
+        attention = evidence[
+            "model.language_model.layers.0.self_attn.o_proj.weight"
+        ]
+        mlp = evidence["model.language_model.layers.0.mlp.down_proj.weight"]
+        assert attention["layer_index"] == 0
+        assert attention["basis_rank"] == 1
+        assert attention["requested_strengths"] == [1.0]
+        assert attention["normalized_residual_ratio"] == pytest.approx(0.0)
+        assert attention["coordinate_retention_factors"] == [0.0]
+        assert attention["weight_delta_norm"] > 0.0
+        assert len(attention["basis_sha256"]) == 64
+        assert len(attention["edited_weight_binding_sha256"]) == 64
+        assert attention["exact_restoration_verified"] is False
+        assert mlp["coordinate_retention_factors"] == [-1.0]
+        assert mlp["normalized_residual_ratio"] == pytest.approx(1.0)
+
     assert torch.equal(layer.self_attn.o_proj.weight, original_attention)
     assert torch.equal(layer.mlp.down_proj.weight, original_mlp)
+    assert all(
+        item["exact_restoration_verified"] is True
+        for item in lease.projection_evidence
+    )
+
+
+def test_identity_edit_emits_zero_delta_projection_receipts() -> None:
+    model = FakeQwen(hidden=3, layer_count=1)
+    _fill_weights(model)
+    compiled = _compiled(
+        CompiledLayerWriterEdit(
+            layer_index=0,
+            basis=torch.eye(3)[:, :1],
+            attention_strength=0.0,
+            mlp_strength=0.0,
+        )
+    )
+
+    lease = _runtime().activate(model, compiled)
+    with lease:
+        assert len(lease.projection_evidence) == 2
+        assert all(
+            item["weight_delta_norm"] == 0.0
+            for item in lease.projection_evidence
+        )
+        assert all(
+            item["normalized_residual_ratio"] == pytest.approx(1.0)
+            for item in lease.projection_evidence
+        )
 
 
 def test_rank_k_edit_uses_the_selected_subspace() -> None:

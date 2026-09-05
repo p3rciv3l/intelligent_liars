@@ -259,6 +259,13 @@ def test_worker_loads_once_batches_inference_restores_and_persists(tmp_path: Pat
         - first.examples[0].truthful_target_log_probability
     )
     assert first.telemetry["generated_tokens"] == 4
+    assert first.telemetry["projection_restoration_verified"] == 1.0
+    assert first.telemetry["projection_total_weight_delta_norm"] > 0.0
+    assert first.projection_evidence
+    assert all(
+        item["exact_restoration_verified"] is True
+        for item in first.projection_evidence
+    )
     assert second.runtime_identity["routine_activation_hooks"] is False
     assert second.runtime_identity["revision"] == "92f3c4b4feadd3a016ef468d103bb5f58b2a2c6b"
     assert first.preservation.batch_sha256 == _batch().batch_sha256
@@ -285,6 +292,7 @@ def test_worker_loads_once_batches_inference_restores_and_persists(tmp_path: Pat
     raw = json.loads(Path(first.raw_output_path).read_text(encoding="utf-8"))
     assert raw["self_sha256"] == first.self_sha256
     assert raw["batch_sha256"] == _batch().batch_sha256
+    assert raw["projection_evidence"] == [dict(item) for item in first.projection_evidence]
     assert raw["logits_sha256"] == hashlib.sha256(
         Path(first.logits_path).read_bytes()
     ).hexdigest()

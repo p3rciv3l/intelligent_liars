@@ -144,9 +144,9 @@ def test_adaptive_production_policy_round_trips_and_binds_study_limits() -> None
         (lambda raw: raw.update(batch_size=4), "batch_size"),
         (
             lambda raw: raw["search_policy"]["broad_coverage"].update(
-                required_before_concentration=False
+                required_before_concentration="false"
             ),
-            "broad coverage",
+            "must be a boolean",
         ),
         (
             lambda raw: raw["search_policy"].update(
@@ -862,6 +862,70 @@ def test_optional_optuna_dependency_fails_with_actionable_error() -> None:
 
 
 @pytest.mark.skipif(importlib.util.find_spec("optuna") is None, reason="Optuna is optional")
+def test_optuna_neutral_start_has_no_coverage_anchors_or_dead_normalization(tmp_path) -> None:
+    config = _config(
+        tmp_path,
+        max_trials=32,
+        tpe_startup_trials=32,
+        evaluation_tiers=[{"name": "all", "record_limit": 2, "through_trial": 32}],
+    )
+    report = TruthEditingStudy(config, _direction_bank()).run(
+        driver=OptunaSearchDriver(seed=17),
+        evaluator=OfflineSyntheticEvaluator(),
+        journal_path=tmp_path / "neutral.json",
+        stop_after_trials=8,
+    )
+
+    assert {trial.proposal.proposal_origin for trial in report.trials} == {
+        "random_exploration", "identity_control"
+    }
+    assert report.trials[7].proposal.proposal_origin == "identity_control"
+    assert report.trials[7].proposal.strength == 0.0
+    assert {trial.proposal.normalization_mode for trial in report.trials} == {"exact"}
+
+
+@pytest.mark.skipif(importlib.util.find_spec("optuna") is None, reason="Optuna is optional")
+def test_scientifically_constrained_observations_are_complete_with_finite_values(tmp_path) -> None:
+    class ConstrainedEvaluator(OfflineSyntheticEvaluator):
+        def evaluate(self, proposal, *, trial_id, record_ids, objective_names):
+            del proposal, trial_id, record_ids
+            return EvaluationResult.scientifically_infeasible(
+                {name: 0.0 for name in objective_names}, "constraint"
+            )
+
+    config = _config(
+        tmp_path,
+        max_trials=32,
+        tpe_startup_trials=32,
+        evaluation_tiers=[{"name": "all", "record_limit": 2, "through_trial": 32}],
+    )
+    driver = OptunaSearchDriver(seed=17)
+    report = TruthEditingStudy(config, _direction_bank()).run(
+        driver=driver,
+        evaluator=ConstrainedEvaluator(),
+        journal_path=tmp_path / "constrained.json",
+        stop_after_trials=4,
+    )
+
+    import optuna
+
+    storage = optuna.storages.JournalStorage(
+        optuna.storages.journal.JournalFileBackend(
+            str(tmp_path / "constrained.json.optuna.log")
+        )
+    )
+    persisted = optuna.load_study(
+        study_name=driver.persistent_study_name,
+        storage=storage,
+    )
+    trials = persisted.get_trials(deepcopy=False)
+    assert report.scientifically_infeasible_trials == 4
+    assert all(trial.state is optuna.trial.TrialState.COMPLETE for trial in trials)
+    assert all(trial.values == [0.0, 0.0, 0.0] for trial in trials)
+    assert all(trial.user_attrs["constraint_violation"] == 1.0 for trial in trials)
+
+
+@pytest.mark.skipif(importlib.util.find_spec("optuna") is None, reason="Optuna is optional")
 def test_optuna_prepare_creates_missing_journal_parent(tmp_path) -> None:
     config = _config(
         tmp_path,
@@ -985,8 +1049,9 @@ def test_optuna_replays_unresolved_operational_failures_fifo_and_exactly(
     expected_persisted_ordinals = {
         item.ordinal
         for item in first.trials
-        if item.result.outcome_kind != "operational_failure"
-        and item.proposal.matched_basis_control == "none"
+            if item.result.outcome_kind != "operational_failure"
+            and item.proposal.matched_basis_control == "none"
+            and item.proposal.proposal_origin != "identity_control"
     }
     assert persisted_ordinals == expected_persisted_ordinals
 

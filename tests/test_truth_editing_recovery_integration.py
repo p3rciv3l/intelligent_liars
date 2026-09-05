@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 from dataclasses import replace
 from pathlib import Path
 from typing import Any, Mapping
@@ -642,7 +643,9 @@ def test_recovery_matrix_survives_crash_retries_only_missing_and_finalizes(
         for trial in native.get_trials(deepcopy=False)
     }
     assert 2 not in native_by_ordinal
-    assert native_by_ordinal[1].state is optuna.trial.TrialState.PRUNED
+    assert native_by_ordinal[1].state is optuna.trial.TrialState.COMPLETE
+    assert native_by_ordinal[1].user_attrs["constraint_violation"] == 1.0
+    assert all(math.isfinite(value) for value in native_by_ordinal[1].values)
 
     recovered_judge = _FaultJudge()
     final_report = study.run(
@@ -664,7 +667,7 @@ def test_recovery_matrix_survives_crash_retries_only_missing_and_finalizes(
     )
     assert final_report.completed_trials == 24
     assert final_report.unresolved_operational_failures == 0
-    assert final_report.coverage_complete is True
+    assert final_report.coverage_complete is False
     assert final_report.selection_ready is True
 
     # Historical operational evidence remains auditable, while 100% of the

@@ -22,7 +22,12 @@ from typing import Any, Protocol
 from .heretic_truth_editing import OBJECTIVES
 from .truth_editing_batch_execution import BatchEvaluationRequest
 from .truth_editing_gpu_telemetry import GpuTelemetryCollector, GpuTelemetryRecord
-from .truth_editing_study import EvaluationResult, StudyTrial
+from .truth_editing_study import (
+    LOSS_CONTRACT_SHA256,
+    SEARCH_SPACE_SHA256,
+    EvaluationResult,
+    StudyTrial,
+)
 from .truth_editing_wandb_checkpoint import (
     AdaptiveProgressCheckpoint,
     AdaptiveRunProgress,
@@ -96,7 +101,9 @@ _ENUM_PARAMETERS: Mapping[str, frozenset[str]] = {
     "basis_scope": frozenset({"general", "domain", "mixed"}),
     "edit_arm": frozenset({"truth_only", "refusal_only", "joint"}),
     "normalization_mode": frozenset({"exact", "norm_preserving"}),
-    "proposal_origin": frozenset({"coverage_anchor", "tpe_sampled"}),
+    "proposal_origin": frozenset(
+        {"coverage_anchor", "random_exploration", "identity_control", "tpe_sampled"}
+    ),
     "refusal_direction_scope": frozenset({"global", "per_layer"}),
     "refusal_writer_policy": frozenset({"attention", "mlp", "both"}),
     "truth_direction_scope": frozenset({"global", "per_layer"}),
@@ -298,12 +305,18 @@ def _safe_metric_value(name: object, value: Any) -> str | bool | float | None:
         return value if value in _SAFE_ERROR_CATEGORIES else None
     if name == "operations/error_fingerprint":
         return value if isinstance(value, str) and _SHA256.fullmatch(value) else None
+    if name == "loss/contract_sha256":
+        return value if isinstance(value, str) and _SHA256.fullmatch(value) else None
+    if name in {"trial/optimization_phase", "progress/optimization_phase"}:
+        return value if value in {"neutral_exploration", "tpe", "control"} else None
     numeric_names = {
         "progress/completed_trials",
         "progress/active_trials",
         "progress/authorized_trials",
         "progress/successful_trials",
         "progress/scientifically_infeasible_trials",
+        "progress/successfully_evaluated_trials",
+        "progress/scientific_constraint_violation_trials",
         "progress/operationally_unresolved_trials",
         "progress/current_batch",
         "progress/total_batches",
@@ -348,6 +361,11 @@ def _safe_metric_value(name: object, value: Any) -> str | bool | float | None:
         "operations/retries",
         "operations/stopped_trials",
         "operations/errors",
+        "projection/max_residual_ratio",
+        "projection/max_error_ratio",
+        "projection/total_weight_delta_norm",
+        "projection/edited_writer_count",
+        "projection/restoration_verified",
     }
     if name in numeric_names or _GPU_METRIC.fullmatch(name) or _COVERAGE_METRIC.fullmatch(name):
         return _safe_number(value)
@@ -741,7 +759,7 @@ class CoordinatorMonitor:
                 "project": self.project,
                 "entity": self.entity,
                 "id": self.run_id,
-                "name": RUN_NAME,
+                "name": run_name,
                 "resume": "allow",
                 "reinit": False,
                 "save_code": False,
@@ -749,6 +767,8 @@ class CoordinatorMonitor:
                     "monitoring_schema": VERIFICATION_FORMAT,
                     "total_trials": self._total_trials,
                     "batch_size": self._batch_size,
+                    "loss_contract_sha256": LOSS_CONTRACT_SHA256,
+                    "search_space_sha256": SEARCH_SPACE_SHA256,
                 },
             }
             settings_type = getattr(self._wandb, "Settings", None)
@@ -1031,7 +1051,8 @@ class CoordinatorMonitor:
         retained_truth = [row[names[1]] for _, row in complete]
         capability = [row[names[2]] for _, row in complete]
         overall_loss = [
-            1.0 - (false_value * truth_value * capability_value) ** (1.0 / 3.0)
+            sum((1.0 - false_value, 1.0 - truth_value, 1.0 - capability_value))
+            / 3.0
             for false_value, truth_value, capability_value in zip(
                 false_report, retained_truth, capability, strict=True
             )
@@ -1136,10 +1157,21 @@ class CoordinatorMonitor:
                     )
                     continue
                 parameters = _sanitized_parameters(request.proposal)
+                proposal_mapping = _proposal_mapping(request.proposal)
                 values: dict[str, Any] = {
                     "trial/ordinal": request.ordinal,
                     "trial/number": request.ordinal + 1,
                     "trial/outcome_kind": result.outcome_kind,
+                    "trial/optimization_phase": (
+                        "control"
+                        if (
+                            proposal_mapping.get("matched_basis_control", "none") != "none"
+                            or proposal_mapping.get("proposal_origin") == "identity_control"
+                        )
+                        else "neutral_exploration"
+                        if proposal_mapping.get("proposal_origin") == "random_exploration"
+                        else "tpe"
+                    ),
                 }
                 values.update(
                     {
@@ -1155,19 +1187,18 @@ class CoordinatorMonitor:
                 values.update(
                     {f"trial/objectives/{name}": value for name, value in objectives.items()}
                 )
-                if objectives and result.outcome_kind == "successful":
+                if objectives and result.outcome_kind != "operational_failure":
                     self._loss_chart_points[request.ordinal] = objectives
                     if all(name in objectives for name in OBJECTIVES):
                         component_losses = {
                             name: 1.0 - objectives[name] for name in OBJECTIVES
                         }
-                        current_loss = 1.0 - math.prod(
-                            objectives[name] for name in OBJECTIVES
-                        ) ** (1.0 / len(OBJECTIVES))
+                        current_loss = sum(
+                            1.0 - objectives[name] for name in OBJECTIVES
+                        ) / len(OBJECTIVES)
                         prior_losses = [
-                            1.0
-                            - math.prod(point[name] for name in OBJECTIVES)
-                            ** (1.0 / len(OBJECTIVES))
+                            sum(1.0 - point[name] for name in OBJECTIVES)
+                            / len(OBJECTIVES)
                             for point in self._loss_chart_points.values()
                             if all(name in point for name in OBJECTIVES)
                         ]
@@ -1175,13 +1206,14 @@ class CoordinatorMonitor:
                             {
                                 "loss/current": current_loss,
                                 "loss/best_so_far": min(prior_losses),
+                                "loss/contract_sha256": LOSS_CONTRACT_SHA256,
                                 **{
                                     f"loss/components/{name}": value
                                     for name, value in component_losses.items()
                                 },
                             }
                         )
-                if objectives and result.outcome_kind == "successful":
+                if objectives and result.outcome_kind != "operational_failure":
                     self._objectives.append(objectives)
                     self._objective_ordinals.append(request.ordinal)
                     self._objective_parameters.append(parameters)
@@ -1204,10 +1236,35 @@ class CoordinatorMonitor:
                 "progress/elapsed_seconds": elapsed,
                 "progress/eta_seconds": eta,
                 "progress/phase": _phase(self._completed_trials),
+                "progress/optimization_phase": (
+                    "control"
+                    if requests
+                    and (
+                        _proposal_mapping(requests[-1].proposal).get(
+                            "matched_basis_control", "none"
+                        ) != "none"
+                        or _proposal_mapping(requests[-1].proposal).get(
+                            "proposal_origin"
+                        ) == "identity_control"
+                    )
+                    else "neutral_exploration"
+                    if requests
+                    and _proposal_mapping(requests[-1].proposal).get(
+                        "proposal_origin"
+                    ) == "random_exploration"
+                    else "tpe"
+                ),
                 "progress/successful_trials": self._outcome_counts["successful"],
                 "progress/scientifically_infeasible_trials": self._outcome_counts[
                     "scientifically_infeasible"
                 ],
+                "progress/successfully_evaluated_trials": (
+                    self._outcome_counts["successful"]
+                    + self._outcome_counts["scientifically_infeasible"]
+                ),
+                "progress/scientific_constraint_violation_trials": (
+                    self._outcome_counts["scientifically_infeasible"]
+                ),
                 "progress/operationally_unresolved_trials": self._outcome_counts[
                     "operational_failure"
                 ] + self._outcome_counts["stopped"],
@@ -1386,14 +1443,28 @@ class CoordinatorMonitor:
             ordinal = int(trial_id.removeprefix("trial-"))
         except ValueError:
             return
+        values: dict[str, float] = {}
         tps = _safe_number(telemetry.get("generated_tokens_per_second"))
-        if tps is None or tps < 0:
-            return
-        self._safe_log(
-            {
+        if tps is not None and tps >= 0:
+            values.update({
                 f"gpu/{gpu_slot}/tps": tps,
                 f"gpu/{gpu_slot}/active_trial_ordinal": ordinal,
-            },
+            })
+        projection_names = {
+            "projection_max_residual_ratio": "projection/max_residual_ratio",
+            "projection_max_error_ratio": "projection/max_error_ratio",
+            "projection_total_weight_delta_norm": "projection/total_weight_delta_norm",
+            "projection_edited_writer_count": "projection/edited_writer_count",
+            "projection_restoration_verified": "projection/restoration_verified",
+        }
+        for source, target in projection_names.items():
+            value = _safe_number(telemetry.get(source))
+            if value is not None and value >= 0:
+                values[target] = value
+        if not values:
+            return
+        self._safe_log(
+            values,
             telemetry_key=f"gpu/{gpu_slot}",
         )
 

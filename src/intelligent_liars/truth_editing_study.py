@@ -23,7 +23,7 @@ import math
 import os
 import random
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from typing import Any, Literal, Protocol, cast
 
@@ -70,11 +70,16 @@ _WRITER_POLICIES = ("attention", "mlp", "both")
 _BASIS_METHODS = ("qr", "svd")
 _STRENGTH_REGIONS = ("disabled", "projection", "reflection")
 _NORMALIZATION_MODES = ("exact", "norm_preserving")
+_SEARCH_NORMALIZATION_MODES = ("exact",)
+_STRENGTH_CHOICES = (0.0, 0.5, 1.0, 2.0)
+_IDENTITY_CONTROL_ORDINALS = frozenset({7, 23})
 _DIRECTION_SCOPES = ("global", "per_layer")
 _EDIT_ARMS = ("truth_only", "refusal_only", "joint")
 _MATCHED_BASIS_CONTROLS = ("none", "orthogonal")
 _REFUSAL_WRITER_POLICIES = ("attention", "mlp", "both")
-_PROPOSAL_ORIGINS = ("coverage_anchor", "tpe_sampled")
+_PROPOSAL_ORIGINS = (
+    "coverage_anchor", "random_exploration", "identity_control", "tpe_sampled"
+)
 
 
 class StudyError(ValueError):
@@ -96,6 +101,44 @@ def _canonical(value: Any) -> bytes:
 
 def _sha(value: Any) -> str:
     return hashlib.sha256(_canonical(value)).hexdigest()
+
+
+LOSS_CONTRACT = {
+    "format": "truth_editing_loss_contract_v2",
+    "objective_order": list(OBJECTIVES),
+    "component_formula": "1 - objective",
+    "scalar_formula": "arithmetic_mean(component_losses)",
+    "constraint_representation": "optuna_user_attr_nonnegative_violation",
+    "operational_failures_have_values": False,
+}
+LOSS_CONTRACT_SHA256 = _sha(LOSS_CONTRACT)
+SEARCH_SPACE_CONTRACT = {
+    "format": "truth_editing_search_space_v3",
+    "sampler": "multivariate_tpe_with_seeded_random_startup",
+    "neutral_startup_trials": 32,
+    "normalization_modes": list(_SEARCH_NORMALIZATION_MODES),
+    "strength_choices": list(_STRENGTH_CHOICES),
+    "basis_methods": list(_BASIS_METHODS),
+    "direction_scopes": list(_DIRECTION_SCOPES),
+    "edit_arms": list(_EDIT_ARMS),
+    "writer_sites": ["attention", "mlp", "both"],
+    "remaining_bounds": {
+        "kernel_center": "inclusive selected writer-region layer bounds",
+        "kernel_half_width": "0 through selected writer-region width",
+        "edge_ratio": [0.0, 1.0],
+        "rank": "1 through qualified selected-basis rank",
+    },
+    "control_schedule": {
+        "identity_trial_ordinals_zero_based": sorted(_IDENTITY_CONTROL_ORDINALS),
+        "feeds_tpe": False,
+        "matched_random": "post-search finalist control schedule",
+    },
+}
+SEARCH_SPACE_SHA256 = _sha(SEARCH_SPACE_CONTRACT)
+
+
+def _optuna_constraints(trial: Any) -> tuple[float]:
+    return (float(trial.user_attrs.get("constraint_violation", 0.0)),)
 
 
 def _exact(value: Mapping[str, Any], fields: set[str], name: str) -> None:
@@ -433,8 +476,10 @@ def parse_truth_editing_study_config(value: Mapping[str, Any]) -> TruthEditingSt
             raise StudyError("adaptive evaluation budget reserve fraction must be 0.20")
         if raw_policy["evaluation_spend_reserve_usd"] != "1":
             raise StudyError("adaptive evaluation reserve must be exactly 1 USD")
-        if broad.get("required_before_concentration") is not True:
-            raise StudyError("broad coverage must be required before concentration")
+        broad_required = _boolean(
+            broad.get("required_before_concentration"),
+            "broad_coverage.required_before_concentration",
+        )
         if tuple(item.through_trial for item in tiers) != (80, 200, 800):
             raise StudyError("adaptive evaluation tiers must end at 80/200/800")
         search_policy = AdaptiveSearchPolicy(
@@ -448,7 +493,7 @@ def parse_truth_editing_study_config(value: Mapping[str, Any]) -> TruthEditingSt
             evaluation_budget_reserve_fraction="0.20",
             evaluation_spend_reserve_usd="1",
             broad_coverage=BroadCoveragePolicy(
-                required_before_concentration=True,
+                required_before_concentration=broad_required,
             ),
         )
     return TruthEditingStudyConfig(
@@ -535,7 +580,9 @@ class SearchProposal:
     refusal_strength: float = 0.0
     refusal_writer_policy: Literal["attention", "mlp", "both"] = "both"
     matched_basis_control: Literal["none", "orthogonal"] = "none"
-    proposal_origin: Literal["coverage_anchor", "tpe_sampled"] = "coverage_anchor"
+    proposal_origin: Literal[
+        "coverage_anchor", "random_exploration", "identity_control", "tpe_sampled"
+    ] = "coverage_anchor"
 
     def __post_init__(self) -> None:
         """Canonicalize the legacy coarse writer fields into explicit kernels.
@@ -863,6 +910,9 @@ def _broad_coverage_contract(
         strength_regions=frozenset(_STRENGTH_REGIONS),
         basis_scopes=frozenset(scopes),
         direction_scopes=frozenset(_DIRECTION_SCOPES),
+        # The legacy offline driver still covers both historical values for
+        # replay compatibility. Optuna's active search contract exposes only
+        # ``exact`` because normalization is not a runtime intervention knob.
         normalization_modes=frozenset(_NORMALIZATION_MODES),
         edit_arms=frozenset(_EDIT_ARMS),
         active_edit_arms=frozenset(
@@ -1327,9 +1377,10 @@ class OfflineDeterministicSearchDriver:
 class OptunaSearchDriver(OfflineDeterministicSearchDriver):
     """Optional adapter; imports Optuna only when explicitly selected.
 
-    Coverage suggestions remain deterministic.  After coverage, Optuna's
-    multivariate TPE observations may replace the deterministic concentration
-    policy without changing the study or journal interfaces.
+    The configured startup window uses Optuna's seeded random sampling without
+    hand-authored anchors. Afterwards multivariate TPE learns only from finite
+    scientific observations; scheduled controls and operational failures are
+    excluded from its objective history.
     """
 
     def __init__(
@@ -1351,8 +1402,8 @@ class OptunaSearchDriver(OfflineDeterministicSearchDriver):
         self._study = optuna.create_study(
             directions=["maximize"] * len(OBJECTIVES),
             sampler=optuna.samplers.TPESampler(
-                seed=seed, multivariate=True, n_startup_trials=60,
-                n_ei_candidates=128,
+                seed=seed, multivariate=True, n_startup_trials=32,
+                n_ei_candidates=128, constraints_func=_optuna_constraints,
             ),
         )
         self._live_trials: dict[int, Any] = {}
@@ -1372,7 +1423,13 @@ class OptunaSearchDriver(OfflineDeterministicSearchDriver):
 
     @property
     def identity(self) -> Mapping[str, Any]:
-        return {"adapter": "optuna_multivariate_tpe_v2", "seed": self.seed, "version": self._optuna_version}
+        return {
+            "adapter": "optuna_multivariate_tpe_v2",
+            "seed": self.seed,
+            "version": self._optuna_version,
+            "loss_contract_sha256": LOSS_CONTRACT_SHA256,
+            "search_space_sha256": SEARCH_SPACE_SHA256,
+        }
 
     @property
     def persistent_study_name(self) -> str:
@@ -1393,6 +1450,7 @@ class OptunaSearchDriver(OfflineDeterministicSearchDriver):
             multivariate=config.tpe_multivariate,
             n_startup_trials=config.tpe_startup_trials,
             n_ei_candidates=config.tpe_ei_candidates,
+            constraints_func=_optuna_constraints,
         )
         self._study = self._optuna.create_study(
             directions=["maximize"] * len(OBJECTIVES), sampler=sampler,
@@ -1473,10 +1531,6 @@ class OptunaSearchDriver(OfflineDeterministicSearchDriver):
                 self._failure_replays_inflight[request.ordinal] = proposal_sha256
                 self._reserved.append(proposal)
                 return proposal
-        if not self._coverage_complete(request):
-            proposal = super().suggest(request)
-            self._pending_proposals[request.ordinal] = proposal
-            return proposal
         trial = self._study.ask()
         available_basis_scopes = tuple(sorted(_required_basis_scopes(
             request.directions, request.config.max_directions_per_trial
@@ -1569,9 +1623,7 @@ class OptunaSearchDriver(OfflineDeterministicSearchDriver):
             1,
             available_rank,
         )
-        normalization_mode = trial.suggest_categorical(
-            "normalization_mode", _NORMALIZATION_MODES
-        )
+        normalization_mode = "exact"
         edit_arm = trial.suggest_categorical("edit_arm", _EDIT_ARMS)
         truth_active = edit_arm != "refusal_only"
         attention_enabled = truth_active and trial.suggest_categorical(
@@ -1602,7 +1654,7 @@ class OptunaSearchDriver(OfflineDeterministicSearchDriver):
                 )
             if not enabled:
                 return center, half_width, 0.0, 0.0
-            peak = trial.suggest_float(f"{site}_peak_strength", 0.0, 2.0)
+            peak = trial.suggest_categorical(f"{site}_peak_strength", _STRENGTH_CHOICES)
             edge_ratio = trial.suggest_float(f"{site}_edge_ratio", 0.0, 1.0)
             return center, half_width, edge_ratio * peak, peak
 
@@ -1625,7 +1677,9 @@ class OptunaSearchDriver(OfflineDeterministicSearchDriver):
             refusal_writer_policy = trial.suggest_categorical(
                 "refusal_writer_policy", _REFUSAL_WRITER_POLICIES
             )
-            refusal_strength = trial.suggest_float("refusal_strength", 0.0, 2.0)
+            refusal_strength = trial.suggest_categorical(
+                "refusal_strength", _STRENGTH_CHOICES
+            )
         else:
             refusal_scope = "global"
             refusal_source_layer = None
@@ -1660,8 +1714,31 @@ class OptunaSearchDriver(OfflineDeterministicSearchDriver):
             refusal_writer_policy=cast(
                 Literal["attention", "mlp", "both"], refusal_writer_policy
             ),
-            proposal_origin="tpe_sampled",
+            proposal_origin=(
+                "random_exploration"
+                if request.ordinal < request.config.tpe_startup_trials
+                else "tpe_sampled"
+            ),
         )
+        if request.ordinal in _IDENTITY_CONTROL_ORDINALS:
+            proposal = replace(
+                proposal,
+                writer_policy="both",
+                strength=0.0,
+                edit_arm="truth_only",
+                attention_enabled=True,
+                attention_edge_strength=0.0,
+                attention_peak_strength=0.0,
+                mlp_enabled=True,
+                mlp_edge_strength=0.0,
+                mlp_peak_strength=0.0,
+                refusal_enabled=False,
+                refusal_direction_scope="global",
+                refusal_source_layer=None,
+                refusal_strength=0.0,
+                refusal_writer_policy="both",
+                proposal_origin="identity_control",
+            )
         self._live_trials[request.ordinal] = trial
         self._pending_proposals[request.ordinal] = proposal
         self._reserved.append(proposal)
@@ -1705,7 +1782,6 @@ class OptunaSearchDriver(OfflineDeterministicSearchDriver):
             source_layer_parameter: proposal.source_layer,
             "basis_method": proposal.basis_method,
             requested_rank_parameter: proposal.requested_rank,
-            "normalization_mode": proposal.normalization_mode,
             "edit_arm": proposal.edit_arm,
             "truth_direction_scope": proposal.truth_direction_scope,
         }
@@ -1714,7 +1790,6 @@ class OptunaSearchDriver(OfflineDeterministicSearchDriver):
             source_layer_parameter: categorical(compatible_layers),
             "basis_method": categorical(_BASIS_METHODS),
             requested_rank_parameter: integer(1, available_rank),
-            "normalization_mode": categorical(_NORMALIZATION_MODES),
             "edit_arm": categorical(_EDIT_ARMS),
             "truth_direction_scope": categorical(_DIRECTION_SCOPES),
         }
@@ -1789,7 +1864,9 @@ class OptunaSearchDriver(OfflineDeterministicSearchDriver):
             if enabled:
                 params[f"{site}_peak_strength"] = peak
                 params[f"{site}_edge_ratio"] = edge / peak if peak else 0.0
-                distributions[f"{site}_peak_strength"] = floating(0.0, 2.0)
+                distributions[f"{site}_peak_strength"] = categorical(
+                    _STRENGTH_CHOICES
+                )
                 distributions[f"{site}_edge_ratio"] = floating(0.0, 1.0)
         if proposal.refusal_enabled:
             params["refusal_direction_scope"] = proposal.refusal_direction_scope
@@ -1804,20 +1881,11 @@ class OptunaSearchDriver(OfflineDeterministicSearchDriver):
                     item.source_layer for item in self._directions
                 })))
             params["refusal_strength"] = proposal.refusal_strength
-            distributions["refusal_strength"] = floating(0.0, 2.0)
+            distributions["refusal_strength"] = categorical(_STRENGTH_CHOICES)
         if trial.result.outcome_kind == "operational_failure":
             return self._optuna.trial.create_trial(
                 params=params, distributions=distributions,
                 state=self._optuna.trial.TrialState.FAIL,
-                user_attrs={
-                    "study_ordinal": trial.ordinal,
-                    "proposal_sha256": _sha(trial.proposal.to_dict()),
-                },
-            )
-        if trial.result.outcome_kind == "scientifically_infeasible":
-            return self._optuna.trial.create_trial(
-                params=params, distributions=distributions,
-                state=self._optuna.trial.TrialState.PRUNED,
                 user_attrs={
                     "study_ordinal": trial.ordinal,
                     "proposal_sha256": _sha(trial.proposal.to_dict()),
@@ -1829,6 +1897,11 @@ class OptunaSearchDriver(OfflineDeterministicSearchDriver):
             user_attrs={
                 "study_ordinal": trial.ordinal,
                 "proposal_sha256": _sha(trial.proposal.to_dict()),
+                "constraint_violation": (
+                    1.0
+                    if trial.result.outcome_kind == "scientifically_infeasible"
+                    else 0.0
+                ),
             },
         )
 
@@ -1871,11 +1944,15 @@ class OptunaSearchDriver(OfflineDeterministicSearchDriver):
                     raise StudyError("Optuna resume suggestion differs from journal")
             elif self._pending_proposals[item.ordinal].to_dict() != item.proposal.to_dict():
                 raise StudyError("Optuna observed proposal differs from pending suggestion")
-        live_tpe_ordinals: set[int] = set()
         for item in trials:
             live = self._live_trials.pop(item.ordinal, None)
-            if live is not None:
-                live_tpe_ordinals.add(item.ordinal)
+            if item.proposal.proposal_origin == "identity_control":
+                if live is not None:
+                    live.set_user_attr("control_kind", "identity")
+                    self._study.tell(
+                        live, state=self._optuna.trial.TrialState.PRUNED
+                    )
+                continue
             if item.proposal.matched_basis_control != "none":
                 if live is not None:
                     raise StudyError(
@@ -1890,9 +1967,13 @@ class OptunaSearchDriver(OfflineDeterministicSearchDriver):
                     self._study.add_trial(self._frozen_trial(item))
             elif item.result.outcome_kind == "operational_failure":
                 self._study.tell(live, state=self._optuna.trial.TrialState.FAIL)
-            elif item.result.outcome_kind == "scientifically_infeasible":
-                self._study.tell(live, state=self._optuna.trial.TrialState.PRUNED)
             else:
+                live.set_user_attr(
+                    "constraint_violation",
+                    1.0
+                    if item.result.outcome_kind == "scientifically_infeasible"
+                    else 0.0,
+                )
                 self._study.tell(
                     live, tuple(item.result.metrics[name] for name in OBJECTIVES)
                 )
@@ -1902,11 +1983,9 @@ class OptunaSearchDriver(OfflineDeterministicSearchDriver):
         for item in trials:
             if (
                 item.proposal.matched_basis_control == "none"
+                and item.proposal.proposal_origin != "identity_control"
                 and item.ordinal not in self._persisted_ordinals
-                and (
-                    item.result.outcome_kind != "operational_failure"
-                    or item.ordinal in live_tpe_ordinals
-                )
+                and item.result.outcome_kind != "operational_failure"
             ):
                 self._persistent_study.add_trial(self._frozen_trial(item))
                 self._persisted_ordinals.add(item.ordinal)
@@ -2047,6 +2126,15 @@ class StudyReport:
     @property
     def successful_trials(self) -> int: return sum(t.result.outcome_kind == "successful" for t in self.trials)
     @property
+    def successfully_evaluated_trials(self) -> int:
+        return sum(
+            t.result.outcome_kind in {"successful", "scientifically_infeasible"}
+            for t in self.trials
+        )
+    @property
+    def scientific_constraint_violation_trials(self) -> int:
+        return self.scientifically_infeasible_trials
+    @property
     def unresolved_operational_failures(self) -> int:
         resolved_requests: set[str] = set()
         unresolved = 0
@@ -2068,7 +2156,7 @@ class StudyReport:
     def selection_ready(self) -> bool:
         """Whether this journal can safely feed scientific model selection."""
 
-        return self.coverage_complete and self.unresolved_operational_failures == 0
+        return self.unresolved_operational_failures == 0
 
     def to_dict(self) -> dict[str, Any]:
         return {
