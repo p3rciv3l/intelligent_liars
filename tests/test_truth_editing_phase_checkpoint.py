@@ -36,6 +36,7 @@ def _write_state(
     wandb_run_id: str = "ab12cd34",
     matched_control_ordinals: frozenset[int] = frozenset(),
     operational_failure_ordinals: frozenset[int] = frozenset(),
+    scientifically_infeasible_ordinals: frozenset[int] = frozenset(),
     omit_operational_failures_from_optuna: bool = False,
 ) -> None:
     (root / "study").mkdir(parents=True)
@@ -69,7 +70,11 @@ def _write_state(
                 }
                 if ordinal in operational_failure_ordinals
                 else {
-                    "outcome_kind": "successful",
+                    "outcome_kind": (
+                        "scientifically_infeasible"
+                        if ordinal in scientifically_infeasible_ordinals
+                        else "successful"
+                    ),
                     "metrics": {name: 0.5 for name in OBJECTIVES},
                     "detail": None,
                 }
@@ -164,6 +169,27 @@ def test_optuna_checkpoint_accepts_audit_only_operational_failures(
         completed=8,
         operational_failure_ordinals=frozenset({0, 3}),
         omit_operational_failures_from_optuna=True,
+    )
+    journal = json.loads((source / "study/study-journal.json").read_text())
+    journal_trials = [
+        trial for batch in journal["batches"] for trial in batch["trials"]
+    ]
+
+    _validate_optuna_journal(
+        (source / "study/study-journal.json.optuna.log").read_bytes(),
+        journal_trials,
+        expected_study_name=OPTUNA_STUDY_NAME,
+    )
+
+
+def test_optuna_checkpoint_accepts_scientifically_infeasible_complete_trials(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "source"
+    _write_state(
+        source,
+        completed=8,
+        scientifically_infeasible_ordinals=frozenset({0, 3, 7}),
     )
     journal = json.loads((source / "study/study-journal.json").read_text())
     journal_trials = [

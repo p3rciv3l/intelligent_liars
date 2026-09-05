@@ -1409,7 +1409,7 @@ def _validate_optuna_journal(
         outcome = result.get("outcome_kind")
         state_name = {
             "successful": "COMPLETE",
-            "scientifically_infeasible": "PRUNED",
+            "scientifically_infeasible": "COMPLETE",
             "operational_failure": "FAIL",
         }.get(outcome)
         if state_name is None:
