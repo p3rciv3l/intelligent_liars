@@ -46,6 +46,7 @@
   "strength_max": 2.0,
   "strength_min": 0.0,
   "study_id": "truth-editing-qwen3-vl-fresh-20260905",
+  "trial_number_start": 1,
   "tpe_ei_candidates": 128,
   "tpe_multivariate": true,
   "tpe_startup_trials": 70,

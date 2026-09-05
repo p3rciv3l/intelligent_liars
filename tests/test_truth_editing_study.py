@@ -236,6 +236,29 @@ def test_run_covers_search_axes_before_concentrating(tmp_path) -> None:
     assert driver.observed_batch_sizes == [2, 2, 2, 2, 2, 2]
 
 
+def test_one_based_trial_ids_preserve_zero_based_internal_ordinals(tmp_path) -> None:
+    config = _config(tmp_path, trial_number_start=1)
+    report = TruthEditingStudy(config, _direction_bank()).run(
+        driver=OfflineDeterministicSearchDriver(seed=config.sampler_seed),
+        evaluator=OfflineSyntheticEvaluator(),
+        journal_path=tmp_path / "journal.json",
+        stop_after_trials=2,
+    )
+
+    assert [trial.ordinal for trial in report.trials] == [0, 1]
+    assert [trial.trial_id for trial in report.trials] == ["trial-0001", "trial-0002"]
+    restored = TruthEditingStudy(config, _direction_bank()).run(
+        driver=OfflineDeterministicSearchDriver(seed=config.sampler_seed),
+        evaluator=OfflineSyntheticEvaluator(),
+        journal_path=tmp_path / "journal.json",
+        stop_after_trials=2,
+    )
+    assert [trial.trial_id for trial in restored.trials] == [
+        "trial-0001",
+        "trial-0002",
+    ]
+
+
 def test_stop_boundary_is_batch_atomic_and_resumes_same_study_identity(tmp_path) -> None:
     config = _config(tmp_path)
     bank = _direction_bank()

@@ -247,6 +247,7 @@ class TruthEditingStudyConfig:
     tpe_ei_candidates: int
     tpe_multivariate: bool
     search_policy: AdaptiveSearchPolicy | None = None
+    trial_number_start: int = 0
 
     def to_dict(self) -> dict[str, Any]:
         result = {
@@ -270,6 +271,8 @@ class TruthEditingStudyConfig:
         }
         if self.search_policy is not None:
             result["search_policy"] = self.search_policy.to_dict()
+        if self.trial_number_start:
+            result["trial_number_start"] = self.trial_number_start
         return result
 
     @property
@@ -288,10 +291,11 @@ def parse_truth_editing_study_config(value: Mapping[str, Any]) -> TruthEditingSt
         "tpe_startup_trials", "tpe_ei_candidates", "tpe_multivariate",
     }
     config_format = value.get("format")
+    optional_fields = {"trial_number_start"} if "trial_number_start" in value else set()
     if config_format == STUDY_CONFIG_FORMAT:
-        fields = common_fields
+        fields = common_fields | optional_fields
     elif config_format == ADAPTIVE_STUDY_CONFIG_FORMAT:
-        fields = common_fields | {"search_policy"}
+        fields = common_fields | {"search_policy"} | optional_fields
     else:
         raise StudyError("study config format is unsupported")
     _exact(value, fields, "study config")
@@ -352,6 +356,11 @@ def parse_truth_editing_study_config(value: Mapping[str, Any]) -> TruthEditingSt
         raise StudyError("tpe_ei_candidates must preserve the documented value 128")
     if value["tpe_multivariate"] is not True:
         raise StudyError("tpe_multivariate must be true")
+    trial_number_start = _integer(
+        value.get("trial_number_start", 0), "trial_number_start", 0
+    )
+    if trial_number_start not in {0, 1}:
+        raise StudyError("trial_number_start must be zero or one")
     search_policy: AdaptiveSearchPolicy | None = None
     if config_format == ADAPTIVE_STUDY_CONFIG_FORMAT:
         raw_policy = value["search_policy"]
@@ -454,6 +463,7 @@ def parse_truth_editing_study_config(value: Mapping[str, Any]) -> TruthEditingSt
         tpe_startup_trials=startup_trials, tpe_ei_candidates=ei_candidates,
         tpe_multivariate=True,
         search_policy=search_policy,
+        trial_number_start=trial_number_start,
     )
 
 
@@ -2445,7 +2455,11 @@ class TruthEditingStudy:
                     "journal trial",
                 )
                 expected_ordinal = batch_ordinal * self.config.batch_size + offset
-                if entry["ordinal"] != expected_ordinal or entry["trial_id"] != f"trial-{expected_ordinal:04d}":
+                expected_trial_number = expected_ordinal + self.config.trial_number_start
+                if (
+                    entry["ordinal"] != expected_ordinal
+                    or entry["trial_id"] != f"trial-{expected_trial_number:04d}"
+                ):
                     raise StudyError("journal trial identity or ordering is invalid")
                 if entry["result"] is None:
                     continue
@@ -2664,7 +2678,10 @@ class TruthEditingStudy:
                                     "rescore evaluation records differ from the frozen tier"
                                 )
                     entries.append({
-                        "trial_id": f"trial-{ordinal:04d}", "ordinal": ordinal,
+                        "trial_id": (
+                            f"trial-{ordinal + self.config.trial_number_start:04d}"
+                        ),
+                        "ordinal": ordinal,
                         "tier_name": tier.name,
                         "evaluation_record_ids": list(record_ids),
                         "proposal": proposal.to_dict(), "result": None,
