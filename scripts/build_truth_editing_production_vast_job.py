@@ -82,6 +82,9 @@ CANONICAL_ADAPTIVE_OFFHOST_KEY_PREFIX = (
 CANONICAL_FINAL_MODEL_SLUG = "qwen3-vl-8b-truth-edited"
 MAXIMUM_INFRASTRUCTURE_SPEND_USD = 45.0
 MAXIMUM_HOST_LEASE_SECONDS = 24 * 3600
+# Vast reports an RTX 4090 as 24,564 MiB, or 23.988 GiB. Keep a narrow
+# reservation allowance while retaining the mechanically required 24 GB class.
+MINIMUM_GPU_VRAM_GIB = 23.9
 CANONICAL_TIMED_CANARY_CONFIG = (
     "configs/truth_editing_timed_canary_v6_adaptive_r10_bbb25ef3.json"
 )
@@ -1062,7 +1065,7 @@ def build_production_job(
             "model": {"repository": FROZEN_MODEL_ID, "revision": FROZEN_MODEL_REVISION},
             "resources": {
                 "disk_gib": 120,
-                "minimum_gpu_vram_gib": 24,
+                "minimum_gpu_vram_gib": MINIMUM_GPU_VRAM_GIB,
                 "maximum_elapsed_seconds": maximum_elapsed_seconds,
                 "maximum_cost_usd": maximum_cost_usd,
                 "maximum_download_gib": 25.0,
@@ -1241,7 +1244,7 @@ def build_timed_canary_job(
             },
             "resources": {
                 "disk_gib": 120,
-                "minimum_gpu_vram_gib": 24,
+                "minimum_gpu_vram_gib": MINIMUM_GPU_VRAM_GIB,
                 "maximum_elapsed_seconds": maximum_elapsed_seconds,
                 "maximum_cost_usd": maximum_cost_usd,
                 "maximum_download_gib": 25.0,

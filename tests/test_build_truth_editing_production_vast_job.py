@@ -506,6 +506,7 @@ def test_builder_emits_adaptive_24_hour_job_without_a_fixed_trial_barrier(
     assert fleet.adaptive_capacity_policy_path == "configs/capacity-policy.json"
     assert "phase_boundaries" not in fleet.identity
     assert raw["base_job"]["format"] == MODULE.ADAPTIVE_PRODUCTION_JOB_FORMAT
+    assert raw["base_job"]["resources"]["minimum_gpu_vram_gib"] == 23.9
     assert raw["base_job"]["resources"]["maximum_elapsed_seconds"] == 24 * 3600
     assert raw["base_job"]["resources"]["maximum_cost_usd"] == 45.0
     workload = raw["study"]["workload_command"]
