@@ -1327,6 +1327,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--wandb-entity", default=os.environ.get("WANDB_ENTITY"))
     parser.add_argument("--wandb-run-id")
     parser.add_argument(
+        "--stop-after-trials",
+        type=int,
+        help="stop cleanly at this complete trial boundary before finalization",
+    )
+    parser.add_argument(
         "--host-hourly-usd",
         type=float,
         default=host_hourly_usd_from_environment(os.environ),
@@ -1862,6 +1867,7 @@ def main(argv: list[str] | None = None) -> int:
 
     with evaluator, pump:
         receipt = run.run(
+            stop_after_trials=args.stop_after_trials,
             batch_admission=durable_batch_admission,
             after_complete_batch=after_complete_batch,
             after_prepare_before_first_admission=(
@@ -1872,6 +1878,28 @@ def main(argv: list[str] | None = None) -> int:
     payload["run_receipt_sha256"] = receipt.identity_sha256
     _write_json_immutable(args.receipt, payload)
     terminal = _read_object(adaptive_checkpoint_path, "adaptive checkpoint")
+    if (
+        args.stop_after_trials is not None
+        and receipt.completed_trials == args.stop_after_trials
+        and terminal.get("phase") not in {"finalization_reserved", "complete"}
+    ):
+        monitor.close()
+        pause_unsigned = {
+            "format": "truth_editing_adaptive_controller_pause_v1",
+            "reason": "requested_complete_trial_boundary",
+            "completed_trials": receipt.completed_trials,
+            "study_identity_sha256": receipt.study_identity_sha256,
+            "run_receipt_sha256": receipt.identity_sha256,
+            "adaptive_checkpoint_sha256": terminal["checkpoint_sha256"],
+        }
+        _write_json_immutable(
+            args.output_root.resolve() / "monitoring/controller-pause-receipt.json",
+            {
+                **pause_unsigned,
+                "receipt_sha256": canonical_sha256(pause_unsigned),
+            },
+        )
+        return 0
     if (
         terminal.get("phase") == "aborted"
         and terminal.get("stop_reason") == "minimum_trial_guarantee_lost"
