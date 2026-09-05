@@ -160,6 +160,44 @@ def test_optuna_checkpoint_accepts_matched_control_omitted_from_tpe_journal(
     )
 
 
+def test_optuna_checkpoint_accepts_identity_control_omitted_from_tpe_journal(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "source"
+    _write_state(source, completed=8)
+    journal = json.loads((source / "study/study-journal.json").read_text())
+    journal_trials = [
+        trial for batch in journal["batches"] for trial in batch["trials"]
+    ]
+    journal_trials[0]["proposal"]["proposal_origin"] = "identity_control"
+    optuna_path = source / "study/study-journal.json.optuna.log"
+    optuna_path.unlink()
+    storage = optuna.storages.JournalStorage(
+        optuna.storages.journal.JournalFileBackend(str(optuna_path))
+    )
+    study = optuna.create_study(
+        study_name=OPTUNA_STUDY_NAME,
+        storage=storage,
+        directions=["maximize"] * len(OBJECTIVES),
+    )
+    for trial in journal_trials[1:]:
+        study.add_trial(
+            optuna.trial.create_trial(
+                values=[0.5] * len(OBJECTIVES),
+                user_attrs={
+                    "study_ordinal": trial["ordinal"],
+                    "proposal_sha256": _canonical_sha(trial["proposal"]),
+                },
+            )
+        )
+
+    _validate_optuna_journal(
+        optuna_path.read_bytes(),
+        journal_trials,
+        expected_study_name=OPTUNA_STUDY_NAME,
+    )
+
+
 def test_optuna_checkpoint_accepts_audit_only_operational_failures(
     tmp_path: Path,
 ) -> None:

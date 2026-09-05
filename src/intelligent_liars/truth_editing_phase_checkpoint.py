@@ -1401,7 +1401,14 @@ def _validate_optuna_journal(
         matched_control = proposal.get("matched_basis_control")
         if matched_control not in {"none", "orthogonal"}:
             raise PhaseCheckpointError("study journal matched control is invalid")
-        if matched_control != "none":
+        proposal_origin = proposal.get("proposal_origin")
+        if not isinstance(proposal_origin, str):
+            raise PhaseCheckpointError("study journal proposal origin is invalid")
+        # Fixed controls are authoritative scientific records, but neither is a
+        # sampler observation: identity controls have no sampled intervention,
+        # and matched-basis controls must not be attributed to their parent
+        # truth-direction parameters.
+        if matched_control != "none" or proposal_origin == "identity_control":
             continue
         proposal_sha = _json_sha(proposal)
         result = trial.get("result")
