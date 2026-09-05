@@ -1771,7 +1771,7 @@ def _build_archive(root: Path, binding: SnapshotBinding) -> tuple[dict[str, Any]
     manifest = {**unsigned, "manifest_sha256": _json_sha(unsigned)}
     manifest_bytes = _canonical(manifest)
     with tempfile.NamedTemporaryFile() as handle:
-        with tarfile.open(fileobj=handle, mode="w", format=tarfile.USTAR_FORMAT) as archive:
+        with tarfile.open(fileobj=handle, mode="w", format=tarfile.PAX_FORMAT) as archive:
             _tar_bytes(archive, "snapshot-manifest.json", manifest_bytes)
             for name, data in files:
                 _tar_bytes(archive, name, data)
@@ -1797,7 +1797,7 @@ def _build_partial_archive(
     manifest = {**unsigned, "manifest_sha256": _json_sha(unsigned)}
     manifest_bytes = _canonical(manifest)
     with tempfile.NamedTemporaryFile() as handle:
-        with tarfile.open(fileobj=handle, mode="w", format=tarfile.USTAR_FORMAT) as archive:
+        with tarfile.open(fileobj=handle, mode="w", format=tarfile.PAX_FORMAT) as archive:
             _tar_bytes(archive, "snapshot-manifest.json", manifest_bytes)
             for name, data in files:
                 _tar_bytes(archive, name, data)

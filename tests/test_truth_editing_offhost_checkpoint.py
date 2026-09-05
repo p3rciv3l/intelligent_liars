@@ -358,6 +358,13 @@ def test_one_based_partial_and_full_snapshots_restore_exact_receipts(
     _prime_zero(repository, tmp_path, trial_number_start=1)
     host = tmp_path / "one-based-host"
     events = _pending_runtime(host, (0, 1, 2), trial_number_start=1)
+    long_record = (
+        host
+        / "judge-cache/semantic-record-completions/scopes"
+        / ("scope-" + "x" * 100)
+        / ("record-" + "y" * 120 + ".json")
+    )
+    _json(long_record, {"complete": True})
     committed = _binding(0, trial_number_start=1)
 
     _, partial, _ = repository.publish_partial_from_runtime(
@@ -380,9 +387,18 @@ def test_one_based_partial_and_full_snapshots_restore_exact_receipts(
     repository.restore_latest_partial(restored_partial, partial)
     assert not (restored_partial / "fleet-receipts/trial-0000.json").exists()
     assert (restored_partial / "fleet-receipts/trial-0003.json").is_file()
+    assert (
+        restored_partial
+        / "judge-cache"
+        / long_record.relative_to(host / "judge-cache")
+    ).is_file()
 
     full = tmp_path / "one-based-full"
     _snapshot(full, 8, trial_number_start=1)
+    full_long_record = full / "judge-cache" / long_record.relative_to(
+        host / "judge-cache"
+    )
+    _json(full_long_record, {"complete": True})
     full_binding = _binding(8, trial_number_start=1)
     repository.publish(full, full_binding)
     restored_full = tmp_path / "one-based-restored-full"
@@ -391,6 +407,11 @@ def test_one_based_partial_and_full_snapshots_restore_exact_receipts(
     assert {
         path.name for path in (restored_full / "fleet-receipts").iterdir()
     } == {f"trial-{number:04d}.json" for number in range(1, 9)}
+    assert (
+        restored_full
+        / "judge-cache"
+        / full_long_record.relative_to(full / "judge-cache")
+    ).is_file()
 
 
 def test_concurrent_partial_callbacks_coalesce_monotonically_and_full_barrier_wins(
