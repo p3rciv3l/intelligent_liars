@@ -536,6 +536,12 @@ def test_builder_emits_adaptive_24_hour_job_without_a_fixed_trial_barrier(
     assert "--adaptive" in stream
     assert "--phase" not in stream
     assert "--study-config-sha256" in stream
+    assert stream[stream.index("--study-config-sha256") + 1] == (
+        MODULE.FleetConfig.from_mapping(
+            json.loads((repo / FLEET_CONFIG).read_text())
+        ).study_identity_sha256
+    )
+    assert stream[stream.index("--trial-number-start") + 1] == "0"
     assert "checkpoints/adaptive-latest.json" in raw["base_job"]["expected_outputs"]
     assert "checkpoints/latest.json" not in raw["base_job"]["expected_outputs"]
     assert "production-run.json" not in raw["base_job"]["expected_outputs"]

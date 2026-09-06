@@ -322,7 +322,7 @@ def _tensor_sha256(tensor: torch.Tensor) -> str:
 def _projection_tolerance(dtype: torch.dtype) -> float:
     """Return a verification bound that respects installed-weight precision."""
 
-    return max(5e-3, 2.0 * float(torch.finfo(dtype).eps))
+    return max(5e-3, 4.0 * float(torch.finfo(dtype).eps))
 
 
 def _projection_receipt(
@@ -357,8 +357,8 @@ def _projection_receipt(
     # The edit is computed in float32 but installed back into the model's
     # storage dtype.  BF16 has epsilon 0.0078125, so the legacy 0.005 bound was
     # tighter than a single representable precision step and rejected valid
-    # projections.  Two storage-dtype epsilons cover deterministic round-trip
-    # quantization while remaining much tighter than a meaningful edit.
+    # projections.  Four storage-dtype epsilons cover the subtract, cast, and
+    # reprojection round trip while remaining much tighter than a meaningful edit.
     tolerance = _projection_tolerance(weight.dtype)
     if error_ratio > tolerance:
         raise WriterEditError(

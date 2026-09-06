@@ -877,6 +877,10 @@ def build_production_job(
         repo=repo,
     )
     study_config_sha256 = file_sha256(study_config_path)
+    study_config_raw = _read_object(study_config_path, "study config")
+    trial_number_start = study_config_raw.get("trial_number_start", 0)
+    if isinstance(trial_number_start, bool) or trial_number_start not in {0, 1}:
+        raise RuntimeError("study trial_number_start must be zero or one")
     resolved_optuna_name = optuna_study_name or _optuna_study_name(
         repo, production_path
     )
@@ -890,6 +894,7 @@ def build_production_job(
     adaptive_policy_path: Path | None = None
     adaptive_receipt_path: Path | None = None
     adaptive_fleet_relative: str | None = None
+    adaptive_study_config_identity: str | None = None
     if phase == ADAPTIVE_PHASE:
         if fleet_config is None:
             raise RuntimeError("adaptive production requires an immutable fleet config")
@@ -927,6 +932,7 @@ def build_production_job(
             or adaptive_fleet.production_config_sha256 != production_sha256
         ):
             raise RuntimeError("adaptive fleet input identity differs")
+        adaptive_study_config_identity = adaptive_fleet.study_identity_sha256
         bundle_paths = sorted(
             {
                 *bundle_paths,
@@ -1041,11 +1047,14 @@ def build_production_job(
         "/workspace/outputs/checkpoints",
     ]
     if phase == ADAPTIVE_PHASE:
+        assert adaptive_study_config_identity is not None
         stream.extend(
             [
                 "--adaptive",
                 "--study-config-sha256",
-                study_config_sha256,
+                adaptive_study_config_identity,
+                "--trial-number-start",
+                str(trial_number_start),
             ]
         )
     else:

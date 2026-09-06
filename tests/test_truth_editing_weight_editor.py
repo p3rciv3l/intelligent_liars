@@ -83,7 +83,7 @@ def _runtime(*, model_sha256: str = "a" * 64) -> WriterEditRuntime:
 def test_projection_tolerance_tracks_installed_weight_precision() -> None:
     assert _projection_tolerance(torch.float32) == 5e-3
     assert _projection_tolerance(torch.float16) == 5e-3
-    assert _projection_tolerance(torch.bfloat16) == 0.015625
+    assert _projection_tolerance(torch.bfloat16) == 0.03125
 
 
 def test_overlay_applies_exact_writer_projection_and_independent_strengths() -> None:
