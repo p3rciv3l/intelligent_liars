@@ -2482,10 +2482,20 @@ def open_production_run(config_path: Path | str) -> ProductionTruthEditingRun:
         )
     ):
         raise ProductionCompositionError("scientific QA view includes a non-base-known source")
-    if tuple(tier.record_ids for tier in evaluator_config.tiers) != tuple(
+    evaluator_tier_records = tuple(
+        tier.record_ids for tier in evaluator_config.tiers
+    )
+    study_tier_records = tuple(
         tuple(study_config.validation_record_ids[:tier.record_limit])
         for tier in study_config.evaluation_tiers
-    ):
+    )
+    tiers_match = evaluator_tier_records == study_tier_records
+    if study_config.search_strategy == "aggressive_projection_v1":
+        tiers_match = (
+            evaluator_tier_records[: len(study_tier_records)]
+            == study_tier_records
+        )
+    if not tiers_match:
         raise ProductionCompositionError("study and evaluator tiers differ")
     preservation_backend = QwenPreservationInferenceBackend()
     preservation_collectors = {

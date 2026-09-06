@@ -1840,7 +1840,10 @@ def main(argv: list[str] | None = None) -> int:
         # A fresh rescore lineage instead seeds immutable source batches and
         # must establish its first target-lineage authorization at that exact
         # capacity-bound boundary before dispatch.
-        if context.completed_trials != 0 and scheduler.has_checkpoint:
+        # A durable zero-trial checkpoint is still a resume boundary.  Reusing
+        # it must not republish a cheaper zero-trial snapshot from a later host
+        # lease, which would regress the cumulative spend lineage.
+        if scheduler.has_checkpoint:
             return
         resuming_durable_batch = _batch_has_durable_receipt(
             evaluator.receipt_directory,
