@@ -1040,27 +1040,18 @@ def _validate_adaptive_lineage(
             new_spend.reserved_evaluation_usd,
         ),
         (prior_spend.reserved_total_usd, new_spend.reserved_total_usd),
-        (
-            _canonical_nonnegative_money(
-                prior_scheduler["accounted_infrastructure_usd"],
-                "prior adaptive scheduler accounted infrastructure spend",
-            ),
-            _canonical_nonnegative_money(
-                new_scheduler["accounted_infrastructure_usd"],
-                "adaptive scheduler accounted infrastructure spend",
-            ),
-        ),
-        (
-            _canonical_nonnegative_money(
-                prior_scheduler["accounted_evaluation_usd"],
-                "prior adaptive scheduler accounted evaluation spend",
-            ),
-            _canonical_nonnegative_money(
-                new_scheduler["accounted_evaluation_usd"],
-                "adaptive scheduler accounted evaluation spend",
-            ),
-        ),
     )
+    # ``accounted_*`` includes the next authorized batch's conservative
+    # reservation.  Committing that batch deliberately releases unused
+    # projected spend, so those two planning values may decrease.  The actual
+    # and pending ledgers above remain strictly monotonic and authoritative.
+    for name in ("accounted_infrastructure_usd", "accounted_evaluation_usd"):
+        _canonical_nonnegative_money(
+            prior_scheduler[name], f"prior adaptive scheduler {name}"
+        )
+        _canonical_nonnegative_money(
+            new_scheduler[name], f"adaptive scheduler {name}"
+        )
     if any(current < previous for previous, current in spend_pairs):
         raise PhaseCheckpointError("adaptive scheduler spend lineage regressed")
     return str(prior["manifest_sha256"])

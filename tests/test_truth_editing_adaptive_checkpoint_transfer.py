@@ -632,6 +632,49 @@ def test_adaptive_checkpoint_rejects_noncanonical_accounted_spend(
         )
 
 
+def test_adaptive_checkpoint_allows_releasing_unused_projected_spend(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "source"
+    publication = tmp_path / "published"
+    _write_adaptive_state(source, completed=8, single_tier=True)
+    path = source / "study/adaptive-run-checkpoint.json"
+    committed = json.loads(path.read_text())
+
+    admitted = dict(committed)
+    admitted["accounted_infrastructure_usd"] = "2"
+    admitted["accounted_evaluation_usd"] = "0.2"
+    admitted.pop("checkpoint_sha256")
+    admitted["checkpoint_sha256"] = _sha(admitted)
+    path.write_text(json.dumps(admitted) + "\n")
+    first = publish_adaptive_checkpoint(
+        source,
+        publication,
+        expected_study_identity_sha256=STUDY_ID,
+        expected_study_config_sha256=STUDY_CONFIG_SHA,
+        expected_completed_trials=8,
+        expected_optuna_study_name=OPTUNA_STUDY_NAME,
+    )
+
+    path.write_text(json.dumps(committed) + "\n")
+    second = publish_adaptive_checkpoint(
+        source,
+        publication,
+        expected_study_identity_sha256=STUDY_ID,
+        expected_study_config_sha256=STUDY_CONFIG_SHA,
+        expected_completed_trials=8,
+        expected_optuna_study_name=OPTUNA_STUDY_NAME,
+    )
+
+    assert Decimal(committed["accounted_infrastructure_usd"]) < Decimal(
+        admitted["accounted_infrastructure_usd"]
+    )
+    assert Decimal(committed["accounted_evaluation_usd"]) < Decimal(
+        admitted["accounted_evaluation_usd"]
+    )
+    assert second["parent_manifest_sha256"] == first["manifest_sha256"]
+
+
 def test_adaptive_checkpoint_rejects_lagging_progress(tmp_path: Path) -> None:
     source = tmp_path / "source"
     _write_adaptive_state(source, progress_completed=72)
