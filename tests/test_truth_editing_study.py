@@ -15,6 +15,7 @@ from intelligent_liars.truth_editing_study import (
     CAPABILITY_PRESERVATION_FLOOR,
     CONSTRAINT_POLICY_SHA256,
     CompletedBatchCommit,
+    CoverageLedger,
     EvaluationResult,
     OfflineDeterministicSearchDriver,
     OfflineSyntheticEvaluator,
@@ -23,6 +24,7 @@ from intelligent_liars.truth_editing_study import (
     PreparedStudyContext,
     StudyError,
     SearchProposal,
+    SearchRequest,
     STUDY_ORCHESTRATOR_SEMANTICS_SHA256,
     schedule_finalist_basis_controls,
     TruthEditingStudy,
@@ -137,6 +139,100 @@ def test_adaptive_production_policy_round_trips_and_binds_study_limits() -> None
     assert parsed.search_policy.minimum_trials == 200
     assert parsed.search_policy.maximum_trials == 800
     assert parsed.search_policy.broad_coverage.required_before_concentration is True
+
+
+def _aggressive_config_value() -> dict:
+    raw = _adaptive_config_value()
+    raw.update(
+        study_id="aggressive-projection-test",
+        max_trials=64,
+        tpe_startup_trials=32,
+        trial_number_start=1,
+        search_strategy="aggressive_projection_v1",
+        evaluation_tiers=[
+            {"name": "discovery", "record_limit": 6, "through_trial": 64}
+        ],
+    )
+    raw["search_policy"].update(minimum_trials=64, maximum_trials=64)
+    raw["search_policy"]["broad_coverage"]["required_before_concentration"] = False
+    return raw
+
+
+def _aggressive_direction_bank():
+    raw = _manifest()
+    base = raw["directions"][0]
+    raw["directions"] = []
+    from intelligent_liars.truth_editing_contracts import canonical_sha256
+
+    index = 0
+    for layer in (6, 18, 30):
+        for family in ("general", *(f"domain-{number:02d}" for number in range(17))):
+            item = json.loads(json.dumps(base))
+            item["direction_id"] = f"aggressive-{family}-layer-{layer:02d}"
+            item["family"] = "general" if family == "general" else "domain_specific"
+            item["domains"] = ["general_domain" if family == "general" else family]
+            item["source_layer"] = layer
+            item["artifact"]["path"] = f"directions/aggressive-{index}.safetensors"
+            item["artifact"]["file_sha256"] = f"{index + 1:064x}"
+            item["artifact"]["vector_sha256"] = f"{index + 101:064x}"
+            item["qualification"]["receipt_sha256"] = f"{index + 201:064x}"
+            raw["directions"].append(item)
+            index += 1
+    raw.pop("self_sha256", None)
+    raw["self_sha256"] = canonical_sha256(raw)
+    return parse_direction_bank_manifest(raw)
+
+
+def test_aggressive_projection_schedule_is_stratified_and_never_left_to_chance(
+    tmp_path: Path,
+) -> None:
+    config = parse_truth_editing_study_config(_aggressive_config_value())
+    bank = _aggressive_direction_bank()
+    driver = OptunaSearchDriver(
+        seed=config.sampler_seed, strategy=config.search_strategy
+    )
+    driver.prepare(config, bank.directions, tmp_path / "optuna.journal")
+    proposals = tuple(
+        driver.suggest(SearchRequest(index, config, bank.directions, CoverageLedger()))
+        for index in range(32)
+    )
+
+    domain_names = {
+        domain
+        for proposal in proposals[:17]
+        for domain in proposal.selected_domains
+    }
+    assert len(domain_names) == 17
+    assert all(proposal.strength == 1.0 for proposal in proposals[:24])
+    assert {proposal.writer_policy for proposal in proposals} == {
+        "attention", "mlp", "both"
+    }
+    assert {proposal.writer_region for proposal in proposals} == {
+        "early", "middle", "late"
+    }
+    assert {proposal.basis_scope for proposal in proposals} == {
+        "general", "domain", "mixed"
+    }
+    assert {proposal.truth_direction_scope for proposal in proposals} == {
+        "global", "per_layer"
+    }
+    assert {proposal.requested_rank for proposal in proposals} >= {1, 2, 4}
+    assert {proposal.strength for proposal in proposals} >= {0.0, 0.5, 1.0, 1.25, 1.5, 2.0}
+    assert proposals[30].proposal_origin == "identity_control"
+    assert proposals[29].proposal_origin == proposals[31].proposal_origin == "fixed_control"
+
+    sampled = driver.suggest(
+        SearchRequest(32, config, bank.directions, CoverageLedger())
+    )
+    assert sampled.proposal_origin == "tpe_sampled"
+    assert sampled.strength >= 1.0
+    assert sampled.writer_policy in {"attention", "mlp", "both"}
+    if sampled.attention_enabled:
+        assert sampled.attention_kernel_center in sampled.writer_layers
+        assert sampled.attention_peak_strength >= 1.0
+    if sampled.mlp_enabled:
+        assert sampled.mlp_kernel_center in sampled.writer_layers
+        assert sampled.mlp_peak_strength >= 1.0
 
 
 @pytest.mark.parametrize(

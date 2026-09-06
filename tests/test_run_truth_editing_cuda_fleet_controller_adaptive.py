@@ -1562,6 +1562,23 @@ def test_rolling_capacity_measures_dispatch_to_journal_wall_time_not_worker_only
     assert rolling["measured"]["trial_wall_seconds"] >= 120.0
 
 
+@pytest.mark.parametrize(
+    ("generation_seconds", "wall_seconds", "expected"),
+    [
+        (225.4187562679872, 225.4187562679872, False),
+        (225.41875626798722, 225.4187562679872, False),
+        (225.4187572679872, 225.4187562679872, True),
+    ],
+)
+def test_generation_wall_time_comparison_allows_only_round_trip_ulp(
+    generation_seconds: float, wall_seconds: float, expected: bool
+) -> None:
+    assert (
+        MODULE._materially_exceeds_wall_time(generation_seconds, wall_seconds)
+        is expected
+    )
+
+
 def test_complete_worker_telemetry_wall_covers_generation_plus_signed_judge(
     tmp_path: Path,
 ) -> None:

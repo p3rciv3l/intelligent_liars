@@ -102,6 +102,24 @@ def test_capacity_plan_uses_complete_batches_and_can_expand_to_800() -> None:
     assert validate_capacity_receipt(receipt) == receipt
 
 
+def test_aggressive_capacity_policy_authorizes_exactly_eight_batches() -> None:
+    policy = CapacityPolicy.from_mapping(json.loads(Path(
+        "configs/truth_editing_adaptive_capacity_policy_v2_aggressive_projection_20260906.json"
+    ).read_text()))
+
+    receipt = build_capacity_receipt(
+        policy=policy,
+        measurement=load_capacity_measurement(measurement(), now=NOW),
+        planned_at=NOW,
+    )
+
+    assert receipt["decision"]["minimum_trials"] == 64
+    assert receipt["decision"]["maximum_trials"] == 64
+    assert receipt["decision"]["planned_trial_limit"] == 64
+    assert receipt["decision"]["planned_batch_limit"] == 8
+    assert validate_capacity_receipt(receipt) == receipt
+
+
 def test_each_projection_tier_exposes_validated_next_batch_upper_bounds() -> None:
     policy = CapacityPolicy.from_mapping(
         json.loads(Path("configs/truth_editing_adaptive_capacity_policy_v1.json").read_text())

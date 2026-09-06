@@ -637,7 +637,7 @@ class FileSemanticRecordCompletionStore:
         if not path.is_file():
             raise RecordCompletionError(f"record completion {name} must be regular")
         try:
-            value = json.loads(path.read_text())
+            value = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError) as error:
             raise RecordCompletionError(
                 f"record completion {name} is unreadable"

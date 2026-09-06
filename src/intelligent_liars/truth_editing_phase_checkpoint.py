@@ -1408,7 +1408,9 @@ def _validate_optuna_journal(
         # sampler observation: identity controls have no sampled intervention,
         # and matched-basis controls must not be attributed to their parent
         # truth-direction parameters.
-        if matched_control != "none" or proposal_origin == "identity_control":
+        if matched_control != "none" or proposal_origin in {
+            "identity_control", "fixed_control"
+        }:
             continue
         proposal_sha = _json_sha(proposal)
         result = trial.get("result")

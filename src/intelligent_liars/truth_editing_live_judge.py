@@ -1014,7 +1014,7 @@ class FileJudgeCache:
         if not target.exists():
             return None
         try:
-            payload = json.loads(target.read_text())
+            payload = json.loads(target.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError) as error:
             raise LiveJudgeError(f"judge cache entry {key} is unreadable") from error
         if not isinstance(payload, Mapping):
@@ -1119,7 +1119,9 @@ class FileJudgeCache:
         receipts: list[JudgeCacheReceipt] = []
         for path in sorted(event_dir.glob("*.json")):
             try:
-                receipt = parse_judge_cache_receipt(json.loads(path.read_text()), result=None)
+                receipt = parse_judge_cache_receipt(
+                    json.loads(path.read_text(encoding="utf-8")), result=None
+                )
             except Exception as error:
                 raise LiveJudgeError(f"judge failure event {path.name} is invalid: {error}") from error
             if receipt.cache_key_sha256 != key or path.stem != receipt.content_sha256:
@@ -1136,7 +1138,7 @@ class FileJudgeCache:
         if not target.exists():
             return None
         try:
-            payload = json.loads(target.read_text())
+            payload = json.loads(target.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError) as error:
             raise LiveJudgeError(f"judge pending correction {key} is unreadable") from error
         return _parse_pending_correction_state(payload, expected_key=key)
@@ -1189,7 +1191,7 @@ class FileJudgeCache:
             inferred = _infer_terminal_failure(self.failure_receipts(key))
             return inferred
         try:
-            payload = json.loads(target.read_text())
+            payload = json.loads(target.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError) as error:
             raise LiveJudgeError(f"judge terminal failure {key} is unreadable") from error
         if not isinstance(payload, Mapping):
@@ -2526,14 +2528,14 @@ class _CalibrationAttemptJournal:
         rendered = _canonical_json({**identity, "content_sha256": _sha(identity)}) + "\n"
         if manifest.exists():
             try:
-                existing = json.loads(manifest.read_text())
+                existing = json.loads(manifest.read_text(encoding="utf-8"))
             except (OSError, json.JSONDecodeError) as error:
                 raise LiveJudgeError("calibration attempt journal is unreadable") from error
             if existing != json.loads(rendered):
                 raise LiveJudgeError("calibration attempt journal identity differs")
         else:
             FileJudgeCache._atomic_first_write(manifest, rendered)
-            if json.loads(manifest.read_text()) != json.loads(rendered):
+            if json.loads(manifest.read_text(encoding="utf-8")) != json.loads(rendered):
                 raise LiveJudgeError("concurrent calibration journal identity differs")
 
     def transport(self, downstream: JudgeTransport) -> JudgeTransport:
@@ -2691,7 +2693,7 @@ class _CalibrationAttemptJournal:
 
     def _read_event(self, path: Path, request_sha: str, status: str) -> Mapping[str, Any]:
         try:
-            payload = json.loads(path.read_text())
+            payload = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError) as error:
             raise LiveJudgeError(f"calibration paid attempt {path} is unreadable") from error
         if not isinstance(payload, Mapping):
@@ -2711,7 +2713,7 @@ class _CalibrationAttemptJournal:
     def _exclusive_event(path: Path, unsigned: Mapping[str, Any]) -> None:
         payload = {**unsigned, "content_sha256": _sha(unsigned)}
         FileJudgeCache._atomic_first_write(path, _canonical_json(payload) + "\n")
-        if json.loads(path.read_text()) != payload:
+        if json.loads(path.read_text(encoding="utf-8")) != payload:
             raise LiveJudgeError("concurrent calibration paid attempt differs")
 
     @staticmethod
@@ -3127,7 +3129,7 @@ def _load_calibration_plan(value: Mapping[str, Any] | str | Path) -> Mapping[str
         raw = copy.deepcopy(dict(value))
     else:
         try:
-            raw = json.loads(Path(value).read_text())
+            raw = json.loads(Path(value).read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError) as error:
             raise LiveJudgeError("live calibration plan is unreadable") from error
     plan = _exact_mapping(

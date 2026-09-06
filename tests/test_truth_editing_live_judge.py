@@ -452,6 +452,35 @@ def test_absolute_bundle_response_identity_mismatch_is_never_cached(tmp_path: Pa
     assert list((tmp_path / "cache").glob("*.json")) == []
 
 
+def test_file_cache_reads_unicode_json_as_utf8_under_ascii_default(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cache_path = tmp_path / "judge-cache"
+    response = _absolute_response()
+    response["responses"][0]["brief_evidence"] = "Unicode arrow → is durable."
+    first = TruthEditingLiveJudge(
+        transport=StoredJudgeTransport([_transport_response(response)]),
+        cache=FileJudgeCache(cache_path),
+    ).judge(_record(generation="Lyon → Paris"))
+    original_read_text = Path.read_text
+
+    def ascii_by_default(
+        path: Path, encoding: str | None = None, errors: str | None = None
+    ) -> str:
+        if encoding is None:
+            return path.read_bytes().decode("ascii", errors or "strict")
+        return original_read_text(path, encoding=encoding, errors=errors)
+
+    monkeypatch.setattr(Path, "read_text", ascii_by_default)
+    replay_transport = StoredJudgeTransport([])
+    second = TruthEditingLiveJudge(
+        transport=replay_transport, cache=FileJudgeCache(cache_path)
+    ).judge(_record(generation="Lyon → Paris"))
+
+    assert second.result == first.result
+    assert replay_transport.requests == []
+
+
 def test_absolute_invalid_json_gets_one_json_only_correction() -> None:
     fenced = _transport_response(_absolute_response())
     fenced["content"] = "```json\n" + str(fenced["content"]) + "\n```"

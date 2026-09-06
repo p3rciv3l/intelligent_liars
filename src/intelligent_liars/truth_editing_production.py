@@ -2302,7 +2302,10 @@ def configured_search_driver(
     if config.rescore_generation_sha256 is not None:
         raise ProductionCompositionError("rescore generation path is required")
     if config.search_driver == "optuna":
-        return OptunaSearchDriver(seed=study_config.sampler_seed)
+        return OptunaSearchDriver(
+            seed=study_config.sampler_seed,
+            strategy=study_config.search_strategy,
+        )
     return OfflineDeterministicSearchDriver(seed=study_config.sampler_seed)
 
 

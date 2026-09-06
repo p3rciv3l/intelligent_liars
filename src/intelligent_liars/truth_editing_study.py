@@ -72,14 +72,23 @@ _STRENGTH_REGIONS = ("disabled", "projection", "reflection")
 _NORMALIZATION_MODES = ("exact", "norm_preserving")
 _SEARCH_NORMALIZATION_MODES = ("exact",)
 _STRENGTH_CHOICES = (0.0, 0.5, 1.0, 2.0)
+_AGGRESSIVE_STRENGTH_CHOICES = (1.0, 1.25, 1.5, 2.0)
+_AGGRESSIVE_STRENGTH_PROFILES = {
+    "full_removal": 1.0,
+    "over_removal_125": 1.25,
+    "over_removal_150": 1.5,
+    "reflection": 2.0,
+}
 _IDENTITY_CONTROL_ORDINALS = frozenset({7, 23})
 _DIRECTION_SCOPES = ("global", "per_layer")
 _EDIT_ARMS = ("truth_only", "refusal_only", "joint")
 _MATCHED_BASIS_CONTROLS = ("none", "orthogonal")
 _REFUSAL_WRITER_POLICIES = ("attention", "mlp", "both")
 _PROPOSAL_ORIGINS = (
-    "coverage_anchor", "random_exploration", "identity_control", "tpe_sampled"
+    "coverage_anchor", "random_exploration", "identity_control", "fixed_control",
+    "tpe_sampled"
 )
+_SEARCH_STRATEGIES = ("neutral", "aggressive_projection_v1")
 
 
 class StudyError(ValueError):
@@ -144,6 +153,23 @@ SEARCH_SPACE_CONTRACT = {
     },
 }
 SEARCH_SPACE_SHA256 = _sha(SEARCH_SPACE_CONTRACT)
+AGGRESSIVE_SEARCH_SPACE_CONTRACT = {
+    "format": "truth_editing_aggressive_projection_search_space_v1",
+    "sampler": "deterministic_stratified_32_then_multivariate_tpe",
+    "mandatory_coverage_trials": 32,
+    "strength_choices_after_coverage": list(_AGGRESSIVE_STRENGTH_CHOICES),
+    "strength_profiles_after_coverage": _AGGRESSIVE_STRENGTH_PROFILES,
+    "full_removal_strength": 1.0,
+    "over_removal_strengths": [1.25, 1.5],
+    "reflection_strength": 2.0,
+    "fixed_control_strengths": [0.0, 0.5],
+    "normalization_modes": ["exact"],
+    "basis_methods": list(_BASIS_METHODS),
+    "direction_scopes": list(_DIRECTION_SCOPES),
+    "writer_sites": ["attention", "mlp", "both"],
+    "controls_feed_tpe": False,
+}
+AGGRESSIVE_SEARCH_SPACE_SHA256 = _sha(AGGRESSIVE_SEARCH_SPACE_CONTRACT)
 
 
 def _optuna_constraints(trial: Any) -> tuple[float]:
@@ -312,6 +338,7 @@ class TruthEditingStudyConfig:
     tpe_multivariate: bool
     search_policy: AdaptiveSearchPolicy | None = None
     trial_number_start: int = 0
+    search_strategy: Literal["neutral", "aggressive_projection_v1"] = "neutral"
 
     def to_dict(self) -> dict[str, Any]:
         result = {
@@ -337,6 +364,8 @@ class TruthEditingStudyConfig:
             result["search_policy"] = self.search_policy.to_dict()
         if self.trial_number_start:
             result["trial_number_start"] = self.trial_number_start
+        if self.search_strategy != "neutral":
+            result["search_strategy"] = self.search_strategy
         return result
 
     @property
@@ -355,7 +384,9 @@ def parse_truth_editing_study_config(value: Mapping[str, Any]) -> TruthEditingSt
         "tpe_startup_trials", "tpe_ei_candidates", "tpe_multivariate",
     }
     config_format = value.get("format")
-    optional_fields = {"trial_number_start"} if "trial_number_start" in value else set()
+    optional_fields = {
+        name for name in ("trial_number_start", "search_strategy") if name in value
+    }
     if config_format == STUDY_CONFIG_FORMAT:
         fields = common_fields | optional_fields
     elif config_format == ADAPTIVE_STUDY_CONFIG_FORMAT:
@@ -425,6 +456,9 @@ def parse_truth_editing_study_config(value: Mapping[str, Any]) -> TruthEditingSt
     )
     if trial_number_start not in {0, 1}:
         raise StudyError("trial_number_start must be zero or one")
+    search_strategy = value.get("search_strategy", "neutral")
+    if search_strategy not in _SEARCH_STRATEGIES:
+        raise StudyError("search_strategy is unsupported")
     search_policy: AdaptiveSearchPolicy | None = None
     if config_format == ADAPTIVE_STUDY_CONFIG_FORMAT:
         raw_policy = value["search_policy"]
@@ -463,11 +497,15 @@ def parse_truth_editing_study_config(value: Mapping[str, Any]) -> TruthEditingSt
         maximum_trials = _integer(
             raw_policy["maximum_trials"], "search_policy.maximum_trials"
         )
-        if minimum_trials != 200:
-            raise StudyError("search_policy.minimum_trials must be exactly 200")
-        if maximum_trials != 800 or max_trials != maximum_trials:
+        expected_trials = 64 if search_strategy == "aggressive_projection_v1" else 800
+        expected_minimum = 64 if search_strategy == "aggressive_projection_v1" else 200
+        if minimum_trials != expected_minimum:
             raise StudyError(
-                "search_policy.maximum_trials and max_trials must be exactly 800"
+                f"search_policy.minimum_trials must be exactly {expected_minimum}"
+            )
+        if maximum_trials != expected_trials or max_trials != maximum_trials:
+            raise StudyError(
+                "search_policy.maximum_trials and max_trials differ from the search strategy"
             )
         if _integer(value["batch_size"], "batch_size") != 8:
             raise StudyError("adaptive production batch_size must be exactly 8")
@@ -501,8 +539,12 @@ def parse_truth_editing_study_config(value: Mapping[str, Any]) -> TruthEditingSt
             broad.get("required_before_concentration"),
             "broad_coverage.required_before_concentration",
         )
-        if tuple(item.through_trial for item in tiers) != (80, 200, 800):
-            raise StudyError("adaptive evaluation tiers must end at 80/200/800")
+        expected_tiers = (
+            (64,) if search_strategy == "aggressive_projection_v1"
+            else (80, 200, 800)
+        )
+        if tuple(item.through_trial for item in tiers) != expected_tiers:
+            raise StudyError("adaptive evaluation tiers differ from the search strategy")
         search_policy = AdaptiveSearchPolicy(
             minimum_trials=minimum_trials,
             maximum_trials=maximum_trials,
@@ -530,6 +572,7 @@ def parse_truth_editing_study_config(value: Mapping[str, Any]) -> TruthEditingSt
         tpe_multivariate=True,
         search_policy=search_policy,
         trial_number_start=trial_number_start,
+        search_strategy=cast(Any, search_strategy),
     )
 
 
@@ -912,6 +955,135 @@ def _required_basis_scopes(
         for scope in ("general", "domain", "mixed")
         if _scope_candidates(directions, layer, scope, maximum)
     }
+
+
+def _aggressive_coverage_proposal(request: SearchRequest) -> SearchProposal:
+    """Return one member of the frozen 32-trial aggressive coverage schedule."""
+
+    ordinal = request.ordinal
+    if not 0 <= ordinal < 32:
+        raise StudyError("aggressive coverage ordinal is outside [0, 32)")
+    config = request.config
+    domain_names = tuple(sorted({
+        domain
+        for item in request.directions if item.family != "general"
+        for domain in item.domains
+        if domain not in {"general", "all"}
+    }))
+    if len(domain_names) > 17:
+        raise StudyError("aggressive coverage has more than 17 domain families")
+
+    region = config.writer_regions[ordinal % len(config.writer_regions)]
+    source_layer = region.layers[len(region.layers) // 2]
+    writer_policy = _WRITER_POLICIES[ordinal % len(_WRITER_POLICIES)]
+    direction_scope = _DIRECTION_SCOPES[(ordinal // len(_WRITER_POLICIES)) % 2]
+    strength = 1.0
+    rank_target = (1, 2, 4)[ordinal % 3]
+    basis_scope: str
+    selected: tuple[DirectionEntry, ...]
+
+    if ordinal < len(domain_names):
+        domain = domain_names[ordinal]
+        selected = (next(
+            item for item in request.directions
+            if item.source_layer == source_layer and domain in item.domains
+        ),)
+        basis_scope = "domain"
+        rank_target = 1
+    elif ordinal == 17:
+        selected = (next(
+            item for item in request.directions
+            if item.source_layer == source_layer and item.family == "general"
+        ),)
+        basis_scope = "general"
+        rank_target = 1
+    else:
+        recipe = {
+            18: ("general", "attention", 0, "global", 1.0, 1),
+            19: ("general", "mlp", 1, "global", 1.0, 1),
+            20: ("general", "both", 2, "global", 1.0, 1),
+            21: ("mixed", "attention", 0, "global", 1.0, 2),
+            22: ("mixed", "mlp", 1, "global", 1.0, 2),
+            23: ("mixed", "both", 2, "global", 1.0, 2),
+            24: ("domain", "attention", 0, "global", 1.25, 2),
+            25: ("general", "mlp", 1, "per_layer", 1.5, 1),
+            26: ("mixed", "both", 2, "global", 2.0, 2),
+            27: ("domain", "attention", 0, "per_layer", 2.0, 4),
+            28: ("domain", "both", 2, "per_layer", 1.0, 4),
+            29: ("general", "attention", 0, "global", 0.5, 1),
+            30: ("general", "both", 1, "global", 0.0, 1),
+            31: ("mixed", "mlp", 2, "per_layer", 0.5, 2),
+        }[ordinal]
+        basis_scope, writer_policy, region_index, direction_scope, strength, rank_target = recipe
+        region = config.writer_regions[region_index]
+        source_layer = region.layers[len(region.layers) // 2]
+        eligible = _scope_candidates(
+            request.directions, source_layer, basis_scope,
+            config.max_directions_per_trial,
+        )
+        if basis_scope == "mixed":
+            selected = (
+                next(item for item in eligible if item.family == "general"),
+                next(item for item in eligible if item.family != "general"),
+            )
+        else:
+            selected = tuple(eligible[:rank_target])
+
+    writer_layers = (
+        (source_layer,) if direction_scope == "per_layer" else tuple(region.layers)
+    )
+    center = float(
+        source_layer if direction_scope == "per_layer"
+        else writer_layers[len(writer_layers) // 2]
+    )
+    half_width = (
+        0.0 if direction_scope == "per_layer"
+        else float(max(writer_layers) - min(writer_layers))
+    )
+    attention_enabled = writer_policy in {"attention", "both"}
+    mlp_enabled = writer_policy in {"mlp", "both"}
+    selected_domains = tuple(sorted({
+        domain for item in selected for domain in item.domains
+        if domain not in {"general", "all"}
+    }))
+    family_names = {item.family for item in selected}
+    direction_family = (
+        next(iter(family_names)) if len(family_names) == 1 else "mixed"
+    )
+    origin = (
+        "identity_control" if strength == 0.0
+        else "fixed_control" if strength < 1.0
+        else "coverage_anchor"
+    )
+    return SearchProposal(
+        direction_ids=tuple(item.direction_id for item in selected),
+        direction_family=direction_family,
+        source_layer=source_layer,
+        basis_method=_BASIS_METHODS[ordinal % len(_BASIS_METHODS)],
+        requested_rank=min(
+            rank_target, config.max_rank, sum(item.rank for item in selected)
+        ),
+        writer_region=region.name,
+        writer_layers=writer_layers,
+        writer_policy=cast(Any, writer_policy),
+        strength=strength,
+        basis_scope=cast(Any, basis_scope),
+        selected_domains=selected_domains,
+        truth_direction_scope=cast(Any, direction_scope),
+        normalization_mode="exact",
+        edit_arm="truth_only",
+        attention_enabled=attention_enabled,
+        attention_kernel_center=center,
+        attention_kernel_half_width=half_width,
+        attention_edge_strength=strength if attention_enabled else 0.0,
+        attention_peak_strength=strength if attention_enabled else 0.0,
+        mlp_enabled=mlp_enabled,
+        mlp_kernel_center=center,
+        mlp_kernel_half_width=half_width,
+        mlp_edge_strength=strength if mlp_enabled else 0.0,
+        mlp_peak_strength=strength if mlp_enabled else 0.0,
+        proposal_origin=cast(Any, origin),
+    )
 
 
 def _broad_coverage_contract(
@@ -1408,6 +1580,7 @@ class OptunaSearchDriver(OfflineDeterministicSearchDriver):
         self,
         *,
         seed: int,
+        strategy: Literal["neutral", "aggressive_projection_v1"] = "neutral",
         _auto_requeue_operational_failures: bool = True,
     ) -> None:
         try:
@@ -1418,6 +1591,9 @@ class OptunaSearchDriver(OfflineDeterministicSearchDriver):
                 "runtime dependency or use --search-driver offline"
             ) from error
         super().__init__(seed=seed)
+        if strategy not in _SEARCH_STRATEGIES:
+            raise StudyError("Optuna search strategy is unsupported")
+        self._strategy = strategy
         self._optuna = optuna
         self._optuna_version = optuna.__version__
         self._study = optuna.create_study(
@@ -1444,12 +1620,21 @@ class OptunaSearchDriver(OfflineDeterministicSearchDriver):
 
     @property
     def identity(self) -> Mapping[str, Any]:
+        search_space_sha256 = (
+            AGGRESSIVE_SEARCH_SPACE_SHA256
+            if self._strategy == "aggressive_projection_v1"
+            else SEARCH_SPACE_SHA256
+        )
         return {
-            "adapter": "optuna_multivariate_tpe_v2",
+            "adapter": (
+                "optuna_aggressive_projection_v1"
+                if self._strategy == "aggressive_projection_v1"
+                else "optuna_multivariate_tpe_v2"
+            ),
             "seed": self.seed,
             "version": self._optuna_version,
             "loss_contract_sha256": LOSS_CONTRACT_SHA256,
-            "search_space_sha256": SEARCH_SPACE_SHA256,
+            "search_space_sha256": search_space_sha256,
         }
 
     @property
@@ -1464,6 +1649,8 @@ class OptunaSearchDriver(OfflineDeterministicSearchDriver):
         self, config: TruthEditingStudyConfig, directions: tuple[DirectionEntry, ...],
         state_path: Path,
     ) -> None:
+        if config.search_strategy != self._strategy:
+            raise StudyError("Optuna driver strategy differs from study config")
         self._config = config
         self._directions = directions
         sampler = self._optuna.samplers.TPESampler(
@@ -1619,6 +1806,11 @@ class OptunaSearchDriver(OfflineDeterministicSearchDriver):
                 self._failure_replays_inflight[request.ordinal] = proposal_sha256
                 self._reserved.append(proposal)
                 return proposal
+        if self._strategy == "aggressive_projection_v1" and request.ordinal < 32:
+            proposal = _aggressive_coverage_proposal(request)
+            self._pending_proposals[request.ordinal] = proposal
+            self._reserved.append(proposal)
+            return proposal
         trial = self._study.ask()
         available_basis_scopes = tuple(sorted(_required_basis_scopes(
             request.directions, request.config.max_directions_per_trial
@@ -1712,27 +1904,41 @@ class OptunaSearchDriver(OfflineDeterministicSearchDriver):
             available_rank,
         )
         normalization_mode = "exact"
-        edit_arm = trial.suggest_categorical("edit_arm", _EDIT_ARMS)
+        edit_arm_choices = (
+            ("truth_only", "joint")
+            if self._strategy == "aggressive_projection_v1" else _EDIT_ARMS
+        )
+        edit_arm = trial.suggest_categorical("edit_arm", edit_arm_choices)
         truth_active = edit_arm != "refusal_only"
-        attention_enabled = truth_active and trial.suggest_categorical(
-            "attention_enabled", (False, True)
-        )
-        mlp_enabled = truth_active and trial.suggest_categorical(
-            "mlp_enabled", (False, True)
-        )
+        if self._strategy == "aggressive_projection_v1":
+            sampled_writer_policy = trial.suggest_categorical(
+                "truth_writer_policy", _WRITER_POLICIES
+            )
+            attention_enabled = sampled_writer_policy in {"attention", "both"}
+            mlp_enabled = sampled_writer_policy in {"mlp", "both"}
+        else:
+            attention_enabled = truth_active and trial.suggest_categorical(
+                "attention_enabled", (False, True)
+            )
+            mlp_enabled = truth_active and trial.suggest_categorical(
+                "mlp_enabled", (False, True)
+            )
 
         def kernel(site: str, enabled: bool) -> tuple[float, float, float, float]:
             if truth_direction_scope == "per_layer":
                 center = float(source_layer)
                 half_width = 0.0
             else:
-                center = trial.suggest_float(
+                # An integer writer-layer center guarantees that the peak lands
+                # on at least one installed writer.  A fractional center with a
+                # near-zero width could otherwise compile to a nominally strong
+                # proposal whose applied delta is exactly zero.
+                center = float(trial.suggest_categorical(
                     self._conditional_parameter(
                         f"{site}_kernel_center", region.name
                     ),
-                    min(writer_layers),
-                    max(writer_layers),
-                )
+                    writer_layers,
+                ))
                 half_width = trial.suggest_float(
                     self._conditional_parameter(
                         f"{site}_kernel_half_width", region.name
@@ -1742,7 +1948,16 @@ class OptunaSearchDriver(OfflineDeterministicSearchDriver):
                 )
             if not enabled:
                 return center, half_width, 0.0, 0.0
-            peak = trial.suggest_categorical(f"{site}_peak_strength", _STRENGTH_CHOICES)
+            if self._strategy == "aggressive_projection_v1":
+                profile = trial.suggest_categorical(
+                    f"{site}_strength_profile",
+                    tuple(_AGGRESSIVE_STRENGTH_PROFILES),
+                )
+                peak = _AGGRESSIVE_STRENGTH_PROFILES[profile]
+            else:
+                peak = trial.suggest_categorical(
+                    f"{site}_peak_strength", _STRENGTH_CHOICES
+                )
             edge_ratio = trial.suggest_float(f"{site}_edge_ratio", 0.0, 1.0)
             return center, half_width, edge_ratio * peak, peak
 
@@ -1765,9 +1980,16 @@ class OptunaSearchDriver(OfflineDeterministicSearchDriver):
             refusal_writer_policy = trial.suggest_categorical(
                 "refusal_writer_policy", _REFUSAL_WRITER_POLICIES
             )
-            refusal_strength = trial.suggest_categorical(
-                "refusal_strength", _STRENGTH_CHOICES
-            )
+            if self._strategy == "aggressive_projection_v1":
+                refusal_profile = trial.suggest_categorical(
+                    "refusal_strength_profile",
+                    tuple(_AGGRESSIVE_STRENGTH_PROFILES),
+                )
+                refusal_strength = _AGGRESSIVE_STRENGTH_PROFILES[refusal_profile]
+            else:
+                refusal_strength = trial.suggest_categorical(
+                    "refusal_strength", _STRENGTH_CHOICES
+                )
         else:
             refusal_scope = "global"
             refusal_source_layer = None
@@ -1878,7 +2100,10 @@ class OptunaSearchDriver(OfflineDeterministicSearchDriver):
             source_layer_parameter: categorical(compatible_layers),
             "basis_method": categorical(_BASIS_METHODS),
             requested_rank_parameter: integer(1, available_rank),
-            "edit_arm": categorical(_EDIT_ARMS),
+            "edit_arm": categorical(
+                ("truth_only", "joint")
+                if self._strategy == "aggressive_projection_v1" else _EDIT_ARMS
+            ),
             "truth_direction_scope": categorical(_DIRECTION_SCOPES),
         }
         if proposal.basis_scope == "mixed":
@@ -1924,10 +2149,14 @@ class OptunaSearchDriver(OfflineDeterministicSearchDriver):
                 tuple(item.name for item in self._config.writer_regions)
             )
         if proposal.edit_arm != "refusal_only":
-            params["attention_enabled"] = proposal.attention_enabled
-            params["mlp_enabled"] = proposal.mlp_enabled
-            distributions["attention_enabled"] = categorical((False, True))
-            distributions["mlp_enabled"] = categorical((False, True))
+            if self._strategy == "aggressive_projection_v1":
+                params["truth_writer_policy"] = proposal.writer_policy
+                distributions["truth_writer_policy"] = categorical(_WRITER_POLICIES)
+            else:
+                params["attention_enabled"] = proposal.attention_enabled
+                params["mlp_enabled"] = proposal.mlp_enabled
+                distributions["attention_enabled"] = categorical((False, True))
+                distributions["mlp_enabled"] = categorical((False, True))
         for site in ("attention", "mlp"):
             enabled = cast(bool, getattr(proposal, f"{site}_enabled"))
             center = cast(float, getattr(proposal, f"{site}_kernel_center"))
@@ -1943,18 +2172,32 @@ class OptunaSearchDriver(OfflineDeterministicSearchDriver):
                 )
                 params[center_parameter] = center
                 params[width_parameter] = width
-                distributions[center_parameter] = floating(
-                    min(proposal.writer_layers), max(proposal.writer_layers)
+                distributions[center_parameter] = (
+                    categorical(proposal.writer_layers)
+                    if self._strategy == "aggressive_projection_v1"
+                    else floating(
+                        min(proposal.writer_layers), max(proposal.writer_layers)
+                    )
                 )
                 distributions[width_parameter] = floating(
                     0.0, float(max(proposal.writer_layers) - min(proposal.writer_layers))
                 )
             if enabled:
-                params[f"{site}_peak_strength"] = peak
+                if self._strategy == "aggressive_projection_v1":
+                    profile = next(
+                        name for name, value in _AGGRESSIVE_STRENGTH_PROFILES.items()
+                        if value == peak
+                    )
+                    params[f"{site}_strength_profile"] = profile
+                    distributions[f"{site}_strength_profile"] = categorical(
+                        tuple(_AGGRESSIVE_STRENGTH_PROFILES)
+                    )
+                else:
+                    params[f"{site}_peak_strength"] = peak
+                    distributions[f"{site}_peak_strength"] = categorical(
+                        _STRENGTH_CHOICES
+                    )
                 params[f"{site}_edge_ratio"] = edge / peak if peak else 0.0
-                distributions[f"{site}_peak_strength"] = categorical(
-                    _STRENGTH_CHOICES
-                )
                 distributions[f"{site}_edge_ratio"] = floating(0.0, 1.0)
         if proposal.refusal_enabled:
             params["refusal_direction_scope"] = proposal.refusal_direction_scope
@@ -1968,8 +2211,18 @@ class OptunaSearchDriver(OfflineDeterministicSearchDriver):
                 distributions["refusal_source_layer"] = categorical(tuple(sorted({
                     item.source_layer for item in self._directions
                 })))
-            params["refusal_strength"] = proposal.refusal_strength
-            distributions["refusal_strength"] = categorical(_STRENGTH_CHOICES)
+            if self._strategy == "aggressive_projection_v1":
+                profile = next(
+                    name for name, value in _AGGRESSIVE_STRENGTH_PROFILES.items()
+                    if value == proposal.refusal_strength
+                )
+                params["refusal_strength_profile"] = profile
+                distributions["refusal_strength_profile"] = categorical(
+                    tuple(_AGGRESSIVE_STRENGTH_PROFILES)
+                )
+            else:
+                params["refusal_strength"] = proposal.refusal_strength
+                distributions["refusal_strength"] = categorical(_STRENGTH_CHOICES)
         if trial.result.outcome_kind == "operational_failure":
             return self._optuna.trial.create_trial(
                 params=params, distributions=distributions,
@@ -2038,9 +2291,12 @@ class OptunaSearchDriver(OfflineDeterministicSearchDriver):
                 raise StudyError("Optuna observed proposal differs from pending suggestion")
         for item in trials:
             live = self._live_trials.pop(item.ordinal, None)
-            if item.proposal.proposal_origin == "identity_control":
+            if item.proposal.proposal_origin in {"identity_control", "fixed_control"}:
                 if live is not None:
-                    live.set_user_attr("control_kind", "identity")
+                    live.set_user_attr(
+                        "control_kind",
+                        "identity" if item.proposal.strength == 0.0 else "partial_removal",
+                    )
                     self._study.tell(
                         live, state=self._optuna.trial.TrialState.PRUNED
                     )
@@ -2076,7 +2332,7 @@ class OptunaSearchDriver(OfflineDeterministicSearchDriver):
         for item in trials:
             if (
                 item.proposal.matched_basis_control == "none"
-                and item.proposal.proposal_origin != "identity_control"
+                and item.proposal.proposal_origin not in {"identity_control", "fixed_control"}
                 and item.ordinal not in self._persisted_ordinals
                 and item.result.outcome_kind != "operational_failure"
             ):

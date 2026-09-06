@@ -1,0 +1,43 @@
+{
+  "budget": {
+    "evaluation_reserve_fraction": "0.20",
+    "evaluation_usd": "5",
+    "infrastructure_usd": "45",
+    "total_usd": "50"
+  },
+  "execution": {
+    "batch_size": 8,
+    "finalization_seconds": 10800,
+    "maximum_trials": 64,
+    "minimum_trials": 64,
+    "search_seconds": 75600
+  },
+  "format": "truth_editing_adaptive_capacity_policy_v1",
+  "maximum_measurement_age_seconds": 21600,
+  "policy_id": "truth-editing-aggressive-projection-64-v1",
+  "projection_tiers": [
+    {
+      "generation_multiplier": "1",
+      "judge_multiplier": "1",
+      "name": "discovery",
+      "through_trial": 32
+    },
+    {
+      "generation_multiplier": "1",
+      "judge_multiplier": "1",
+      "name": "expanded",
+      "through_trial": 64
+    },
+    {
+      "generation_multiplier": "1",
+      "judge_multiplier": "1",
+      "name": "concentrated",
+      "through_trial": 64
+    }
+  ],
+  "self_sha256": "9e41e0bcd7c189565b7aee9d5e3b7d4750aa97dae2b01a06e2ab08ad56c2815e",
+  "uncertainty": {
+    "duration_multiplier": "1.25",
+    "judge_cost_multiplier": "1.25"
+  }
+}

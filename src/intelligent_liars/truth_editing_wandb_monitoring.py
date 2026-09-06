@@ -102,7 +102,7 @@ _ENUM_PARAMETERS: Mapping[str, frozenset[str]] = {
     "edit_arm": frozenset({"truth_only", "refusal_only", "joint"}),
     "normalization_mode": frozenset({"exact", "norm_preserving"}),
     "proposal_origin": frozenset(
-        {"coverage_anchor", "random_exploration", "identity_control", "tpe_sampled"}
+        {"coverage_anchor", "random_exploration", "identity_control", "fixed_control", "tpe_sampled"}
     ),
     "refusal_direction_scope": frozenset({"global", "per_layer"}),
     "refusal_writer_policy": frozenset({"attention", "mlp", "both"}),
@@ -451,6 +451,7 @@ class CoordinatorMonitor:
         adaptive_progress_path: Path | None = None,
         transport_queue_capacity: int = 1024,
         transport_close_timeout_seconds: float = 1.0,
+        search_space_sha256: str = SEARCH_SPACE_SHA256,
     ) -> None:
         self.run_id = run_id
         self.project = project
@@ -459,6 +460,7 @@ class CoordinatorMonitor:
         self._total_trials = total_trials
         self._display_total_trials = total_trials
         self._batch_size = batch_size
+        self._search_space_sha256 = search_space_sha256
         self._total_batches = math.ceil(total_trials / batch_size)
         self._monotonic = monotonic
         self._started_at = float(monotonic())
@@ -534,6 +536,7 @@ class CoordinatorMonitor:
         batch_size: int,
         wandb_module: _WandbModule | None = None,
         monotonic: Any = time.monotonic,
+        search_space_sha256: str = SEARCH_SPACE_SHA256,
     ) -> "CoordinatorMonitor":
         """Durably bind the coordinator run ID before connecting to W&B."""
 
@@ -553,6 +556,7 @@ class CoordinatorMonitor:
             monotonic=monotonic,
             run_checkpoint_sha256=checkpoint.checkpoint_sha256,
             adaptive_progress_path=checkpoint_path.with_name("adaptive-progress.json"),
+            search_space_sha256=search_space_sha256,
         )
 
     @property
@@ -768,7 +772,7 @@ class CoordinatorMonitor:
                     "total_trials": self._total_trials,
                     "batch_size": self._batch_size,
                     "loss_contract_sha256": LOSS_CONTRACT_SHA256,
-                    "search_space_sha256": SEARCH_SPACE_SHA256,
+                    "search_space_sha256": self._search_space_sha256,
                 },
             }
             settings_type = getattr(self._wandb, "Settings", None)
@@ -1166,10 +1170,14 @@ class CoordinatorMonitor:
                         "control"
                         if (
                             proposal_mapping.get("matched_basis_control", "none") != "none"
-                            or proposal_mapping.get("proposal_origin") == "identity_control"
+                            or proposal_mapping.get("proposal_origin") in {
+                                "identity_control", "fixed_control"
+                            }
                         )
-                        else "neutral_exploration"
-                        if proposal_mapping.get("proposal_origin") == "random_exploration"
+                        else "exploration"
+                        if proposal_mapping.get("proposal_origin") in {
+                            "random_exploration", "coverage_anchor"
+                        }
                         else "tpe"
                     ),
                 }
@@ -1245,13 +1253,13 @@ class CoordinatorMonitor:
                         ) != "none"
                         or _proposal_mapping(requests[-1].proposal).get(
                             "proposal_origin"
-                        ) == "identity_control"
+                        ) in {"identity_control", "fixed_control"}
                     )
-                    else "neutral_exploration"
+                    else "exploration"
                     if requests
                     and _proposal_mapping(requests[-1].proposal).get(
                         "proposal_origin"
-                    ) == "random_exploration"
+                    ) in {"random_exploration", "coverage_anchor"}
                     else "tpe"
                 ),
                 "progress/successful_trials": self._outcome_counts["successful"],

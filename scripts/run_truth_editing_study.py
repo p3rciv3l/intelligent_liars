@@ -46,7 +46,9 @@ def main() -> int:
     )
     driver: SearchDriver
     if args.search_driver == "optuna":
-        driver = OptunaSearchDriver(seed=config.sampler_seed)
+        driver = OptunaSearchDriver(
+            seed=config.sampler_seed, strategy=config.search_strategy
+        )
     else:
         driver = OfflineDeterministicSearchDriver(seed=config.sampler_seed)
     report = TruthEditingStudy(config, direction_manifest).run(

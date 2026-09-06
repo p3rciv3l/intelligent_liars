@@ -203,11 +203,16 @@ class CapacityPolicy:
         for index, value in enumerate(tiers_raw):
             tier = _exact(value, {"name", "through_trial", "generation_multiplier", "judge_multiplier"}, f"projection_tiers[{index}]")
             tiers.append((_text(tier["name"], "tier name"), _integer(tier["through_trial"], "through_trial", 1), _money(tier["generation_multiplier"], "generation_multiplier"), _money(tier["judge_multiplier"], "judge_multiplier")))
+        policy_id = _text(raw["policy_id"], "policy_id")
+        aggressive = policy_id == "truth-editing-aggressive-projection-64-v1"
         batch = _integer(execution["batch_size"], "batch_size", 1)
         minimum = _integer(execution["minimum_trials"], "minimum_trials", 1)
         maximum = _integer(execution["maximum_trials"], "maximum_trials", minimum)
-        if batch != 8 or minimum != 200 or maximum != 800:
-            raise CapacityPlanningError("adaptive run must preserve 8 workers and the 200-800 trial range")
+        expected_range = (64, 64) if aggressive else (200, 800)
+        if batch != 8 or (minimum, maximum) != expected_range:
+            raise CapacityPlanningError(
+                "adaptive run trial range differs from its policy identity"
+            )
         search = _integer(execution["search_seconds"], "search_seconds", 1)
         finalization = _integer(execution["finalization_seconds"], "finalization_seconds", 1)
         if search != 21 * 3600 or finalization != 3 * 3600:
@@ -228,10 +233,15 @@ class CapacityPolicy:
         judge_margin = _money(uncertainty["judge_cost_multiplier"], "judge_cost_multiplier")
         if duration_margin < 1 or judge_margin < 1:
             raise CapacityPlanningError("uncertainty multipliers must be at least one")
-        if [tier[:2] for tier in tiers] != [("discovery", 80), ("expanded", 200), ("concentrated", 800)] or any(tier[2] < 1 or tier[3] < 1 for tier in tiers):
+        expected_tiers = (
+            [("discovery", 32), ("expanded", 64), ("concentrated", 64)]
+            if aggressive else
+            [("discovery", 80), ("expanded", 200), ("concentrated", 800)]
+        )
+        if [tier[:2] for tier in tiers] != expected_tiers or any(tier[2] < 1 or tier[3] < 1 for tier in tiers):
             raise CapacityPlanningError("projection tier identities or multipliers changed")
         return cls(
-            policy_id=_text(raw["policy_id"], "policy_id"), batch_size=batch,
+            policy_id=policy_id, batch_size=batch,
             minimum_trials=minimum, maximum_trials=maximum, search_seconds=search,
             finalization_seconds=finalization, total_budget_usd=total,
             infrastructure_budget_usd=infrastructure, evaluation_budget_usd=evaluation,
@@ -438,7 +448,17 @@ def _validated_tier_projections(value: Any) -> list[dict[str, Any]]:
     if not isinstance(value, list) or len(value) != 3:
         raise CapacityPlanningError("projection tiers must contain exactly three tiers")
     result: list[dict[str, Any]] = []
-    expected = (("discovery", 80), ("expanded", 200), ("concentrated", 800))
+    identities = tuple(
+        (candidate.get("name"), candidate.get("through_trial"))
+        for candidate in value if isinstance(candidate, Mapping)
+    )
+    allowed = {
+        (("discovery", 80), ("expanded", 200), ("concentrated", 800)),
+        (("discovery", 32), ("expanded", 64), ("concentrated", 64)),
+    }
+    if identities not in allowed:
+        raise CapacityPlanningError("projection tier identities changed")
+    expected = identities
     previous_duration = previous_infrastructure = previous_evaluation = Decimal(0)
     for index, ((expected_name, expected_through), candidate) in enumerate(zip(expected, value)):
         tier = _exact(candidate, _TIER_FIELDS, f"projection tier[{index}]")
@@ -499,11 +519,11 @@ def _select_next_batch_projection(
         isinstance(next_completed_trials, bool)
         or not isinstance(next_completed_trials, int)
         or next_completed_trials < 8
-        or next_completed_trials > 800
+        or next_completed_trials > tiers[-1]["through_trial"]
         or next_completed_trials % 8
     ):
         raise CapacityPlanningError(
-            "next_completed_trials must be a complete batch boundary from 8 through 800"
+            "next_completed_trials must be a covered complete batch boundary"
         )
     tier = next((row for row in tiers if next_completed_trials <= row["through_trial"]), None)
     if tier is None:  # Defensive: strict tier validation ends at trial 800.
@@ -1065,9 +1085,19 @@ def validate_capacity_receipt(value: Mapping[str, Any]) -> dict[str, Any]:
         },
         "capacity receipt decision",
     )
-    target = _integer(decision.get("planned_trial_limit"), "planned_trial_limit", 200)
-    if target > 800 or target % 8 or target < completed:
-        raise CapacityPlanningError("planned trial limit must be 200-800 in complete batches of eight")
+    minimum_trials = _integer(decision.get("minimum_trials"), "minimum_trials", 1)
+    maximum_trials = _integer(
+        decision.get("maximum_trials"), "maximum_trials", minimum_trials
+    )
+    if (minimum_trials, maximum_trials) not in {(200, 800), (64, 64)}:
+        raise CapacityPlanningError("capacity receipt trial range is unsupported")
+    target = _integer(
+        decision.get("planned_trial_limit"), "planned_trial_limit", minimum_trials
+    )
+    if target > maximum_trials or target % 8 or target < completed:
+        raise CapacityPlanningError(
+            "planned trial limit must stay within complete-batch policy bounds"
+        )
     guarantee_met = decision["minimum_trial_guarantee_met"]
     if not isinstance(guarantee_met, bool):
         raise CapacityPlanningError("minimum_trial_guarantee_met must be boolean")
@@ -1079,7 +1109,9 @@ def validate_capacity_receipt(value: Mapping[str, Any]) -> dict[str, Any]:
             "evaluation_budget_limited_trials",
         )
     )
-    expected_guarantee = completed >= 200 or capacity_limit >= 200
+    expected_guarantee = (
+        completed >= minimum_trials or capacity_limit >= minimum_trials
+    )
     if guarantee_met != expected_guarantee:
         raise CapacityPlanningError("minimum trial guarantee marker differs from capacity")
     return {**raw, "receipt_sha256": claimed}

@@ -244,7 +244,7 @@ _PARAM_ENUM: dict[str, set[str]] = {
     "edit_arm": {"truth_only", "refusal_only", "joint"},
     "normalization_mode": {"exact", "norm_preserving"},
     "proposal_origin": {
-        "coverage_anchor", "random_exploration", "identity_control", "tpe_sampled"
+        "coverage_anchor", "random_exploration", "identity_control", "fixed_control", "tpe_sampled"
     },
     "refusal_direction_scope": {"global", "per_layer"},
     "refusal_writer_policy": {"attention", "mlp", "both"},

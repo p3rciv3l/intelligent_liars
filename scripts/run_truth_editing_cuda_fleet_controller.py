@@ -96,8 +96,10 @@ from intelligent_liars.truth_editing_offhost_checkpoint import (  # noqa: E402
     materialize_offhost_snapshot,
 )
 from intelligent_liars.truth_editing_study import (  # noqa: E402
+    AGGRESSIVE_SEARCH_SPACE_SHA256,
     CompletedBatchCommit,
     PreparedStudyContext,
+    SEARCH_SPACE_SHA256,
     TruthEditingStudy,
     TruthEditingStudyConfig,
     load_truth_editing_study_config,
@@ -702,6 +704,14 @@ def _prior_spend_from_checkpoint(
         raise ValueError("adaptive checkpoint spend baseline is missing") from error
 
 
+def _materially_exceeds_wall_time(
+    generation_seconds: float, wall_seconds: float
+) -> bool:
+    """Reject impossible telemetry while accepting one JSON round-trip ULP."""
+
+    return generation_seconds > math.nextafter(wall_seconds, math.inf)
+
+
 class _RollingCapacityController:
     """Accumulate one exact batch of worker telemetry and sign its reforecast."""
 
@@ -1035,7 +1045,7 @@ class _RollingCapacityController:
                 for row in complete
             )
             wall_seconds = max(row["evaluation_seconds"] for row in complete)
-            if generation_seconds > wall_seconds:
+            if _materially_exceeds_wall_time(generation_seconds, wall_seconds):
                 raise CapacityPlanningError(
                     "worker generation telemetry exceeds trial wall time"
                 )
@@ -1419,7 +1429,6 @@ def main(argv: list[str] | None = None) -> int:
     search_policy = study_config.search_policy
     if (
         study_config.batch_size != 8
-        or study_config.max_trials != 800
         or production.search_driver != "optuna"
         or search_policy is None
         or search_policy.minimum_trials != capacity_policy.minimum_trials
@@ -1551,6 +1560,11 @@ def main(argv: list[str] | None = None) -> int:
         receipt_path=monitoring_root / "wandb-events.jsonl",
         total_trials=capacity_policy.maximum_trials,
         batch_size=study_config.batch_size,
+        search_space_sha256=(
+            AGGRESSIVE_SEARCH_SPACE_SHA256
+            if study_config.search_strategy == "aggressive_projection_v1"
+            else SEARCH_SPACE_SHA256
+        ),
     )
     rolling_capacity: _RollingCapacityController | None = None
     scheduler: AdaptiveBatchScheduler | None = None

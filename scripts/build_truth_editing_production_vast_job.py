@@ -574,10 +574,11 @@ def _validate_phase_contract(
     }
     if phase == ADAPTIVE_PHASE:
         policy = study.get("search_policy")
+        aggressive = study.get("search_strategy") == "aggressive_projection_v1"
         expected_policy = {
             "format": "truth_editing_adaptive_search_policy_v1",
-            "minimum_trials": 200,
-            "maximum_trials": 800,
+            "minimum_trials": 64 if aggressive else 200,
+            "maximum_trials": 64 if aggressive else 800,
             "search_elapsed_limit_seconds": 21 * 3600,
             "reserve_elapsed_seconds": 3 * 3600,
             "all_in_budget_usd": "50",
@@ -593,8 +594,8 @@ def _validate_phase_contract(
             key: value for key, value in policy.items() if key != "broad_coverage"
         }
         if (
-            actual != ADAPTIVE_PHASE_BOUNDARIES
-            or study.get("max_trials") != 800
+            actual != ({"discovery": 64} if aggressive else ADAPTIVE_PHASE_BOUNDARIES)
+            or study.get("max_trials") != (64 if aggressive else 800)
             or study.get("batch_size") != 8
             or policy_without_coverage != expected_policy
             or not isinstance(broad_coverage, Mapping)
@@ -604,8 +605,8 @@ def _validate_phase_contract(
             )
         ):
             raise RuntimeError(
-                "adaptive production study must retain 80/200/800 tiers, "
-                "a 200-trial total floor, an explicit coverage policy, and the frozen "
+                "adaptive production study must retain its identity-bound tiers, "
+                "an explicit coverage policy, and the frozen "
                 "21h + 3h budget policy"
             )
         return
