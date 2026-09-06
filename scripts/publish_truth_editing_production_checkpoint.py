@@ -60,6 +60,13 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--study-config-sha256")
     parser.add_argument("--optuna-study-name", required=True)
+    parser.add_argument(
+        "--trial-number-start",
+        type=int,
+        choices=(0, 1),
+        default=0,
+        help="external trial-number offset used by the frozen study contract",
+    )
     args = parser.parse_args(argv)
     try:
         if not args.journal.exists():
@@ -97,10 +104,13 @@ def main(argv: list[str] | None = None) -> int:
                 expected_study_config_sha256=args.study_config_sha256,
                 expected_completed_trials=completed,
                 expected_optuna_study_name=args.optuna_study_name,
+                trial_number_start=args.trial_number_start,
             )
         else:
             if args.study_config_sha256 is not None:
                 raise PhaseCheckpointError("study config identity is only valid for adaptive publication")
+            if args.trial_number_start != 0:
+                raise PhaseCheckpointError("one-based numbering is only valid for adaptive publication")
             boundary = BOUNDARIES[args.phase]
             if completed < boundary:
                 print(json.dumps({"status": "deferred", "completed_trials": completed, "phase_boundary": boundary}))

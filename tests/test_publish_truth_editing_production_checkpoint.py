@@ -146,6 +146,7 @@ def test_periodic_publisher_dispatches_exact_rolling_adaptive_state(
         expected_study_config_sha256: str,
         expected_completed_trials: int,
         expected_optuna_study_name: str,
+        trial_number_start: int,
     ) -> dict[str, object]:
         observed.update(
             {
@@ -155,6 +156,7 @@ def test_periodic_publisher_dispatches_exact_rolling_adaptive_state(
                 "study_config": expected_study_config_sha256,
                 "completed": expected_completed_trials,
                 "optuna_study_name": expected_optuna_study_name,
+                "trial_number_start": trial_number_start,
             }
         )
         return {"format": "truth_editing_adaptive_checkpoint_manifest_v1"}
@@ -170,6 +172,7 @@ def test_periodic_publisher_dispatches_exact_rolling_adaptive_state(
             "--adaptive",
             "--study-config-sha256", "b" * 64,
             "--optuna-study-name", "fixture-study",
+            "--trial-number-start", "1",
         ]
     ) == 0
 
@@ -180,6 +183,7 @@ def test_periodic_publisher_dispatches_exact_rolling_adaptive_state(
         "study_config": "b" * 64,
         "completed": 88,
         "optuna_study_name": "fixture-study",
+        "trial_number_start": 1,
     }
     assert json.loads(capsys.readouterr().out)["format"] == (
         "truth_editing_adaptive_checkpoint_manifest_v1"

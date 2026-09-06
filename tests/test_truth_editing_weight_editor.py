@@ -11,6 +11,7 @@ from intelligent_liars.truth_editing_weight_editor import (
     CompiledWriterEdit,
     WriterEditError,
     WriterEditRuntime,
+    _projection_tolerance,
     materialized_writer_weights,
 )
 
@@ -77,6 +78,12 @@ def _compiled(*edits: CompiledLayerWriterEdit) -> CompiledWriterEdit:
 
 def _runtime(*, model_sha256: str = "a" * 64) -> WriterEditRuntime:
     return WriterEditRuntime(verified_model_sha256=model_sha256)
+
+
+def test_projection_tolerance_tracks_installed_weight_precision() -> None:
+    assert _projection_tolerance(torch.float32) == 5e-3
+    assert _projection_tolerance(torch.float16) == 5e-3
+    assert _projection_tolerance(torch.bfloat16) == 0.015625
 
 
 def test_overlay_applies_exact_writer_projection_and_independent_strengths() -> None:
