@@ -631,9 +631,15 @@ def _validate_adaptive_scheduler(
             or value % 8
         ):
             raise PhaseCheckpointError("adaptive scheduler trial boundary is invalid")
-    if not 200 <= raw["planned_trial_count"] <= 800:
+    if not (
+        raw["planned_trial_count"] == 64
+        or 200 <= raw["planned_trial_count"] <= 800
+    ):
         raise PhaseCheckpointError("adaptive scheduler initial plan is invalid")
-    if not 200 <= raw["current_advisory_trial_count"] <= 800:
+    if not (
+        raw["current_advisory_trial_count"] == 64
+        or 200 <= raw["current_advisory_trial_count"] <= 800
+    ):
         raise PhaseCheckpointError("adaptive scheduler advisory target is invalid")
     _digest(
         raw["current_capacity_receipt_sha256"],

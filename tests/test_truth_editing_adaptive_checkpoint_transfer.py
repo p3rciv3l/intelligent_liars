@@ -182,7 +182,9 @@ def _write_adaptive_state(
     policy = CapacityPolicy.from_mapping(
         json.loads(
             Path(
-                "configs/truth_editing_adaptive_capacity_policy_v1_13bf1f92.json"
+                "configs/truth_editing_adaptive_capacity_policy_v2_aggressive_projection_20260906.json"
+                if single_tier
+                else "configs/truth_editing_adaptive_capacity_policy_v1_13bf1f92.json"
             ).read_text()
         )
     )
