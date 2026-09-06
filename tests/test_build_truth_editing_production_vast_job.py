@@ -616,6 +616,15 @@ def test_adaptive_builder_binds_fresh_lineage_and_canary_boundary(
     )
     assert workload[workload.index("--wandb-run-id") + 1] == "neutral-v4-canary"
     assert workload[workload.index("--stop-after-trials") + 1] == "8"
+    expected = raw["base_job"]["expected_outputs"]
+    assert "adaptive-controller-result.json" not in expected
+    assert "checkpoints/adaptive-latest.json" in expected
+    assert "study/adaptive-run-checkpoint.json" in expected
+    assert "monitoring/adaptive-progress.json" in expected
+    assert "monitoring/controller-pause-receipt.json" in expected
+    assert "study/frozen/study-report.json" not in expected
+    assert "providers/production-judge-budget/finalization-receipt.json" not in expected
+    assert not any(path.startswith("finalization/") for path in expected)
 
 
 def test_adaptive_release_writers_no_clobber_and_strict_reopen(

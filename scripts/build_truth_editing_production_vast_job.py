@@ -953,7 +953,9 @@ def build_production_job(
         "model/cache-hydration-receipt.json",
         "model/model-verification-receipt.json",
     ]
-    if phase in {"finalist", ADAPTIVE_PHASE}:
+    if phase == "finalist" or (
+        phase == ADAPTIVE_PHASE and stop_after_trials is None
+    ):
         expected.extend(
             [
                 "study/frozen/study-report.json",
@@ -963,25 +965,32 @@ def build_production_job(
     if phase == ADAPTIVE_PHASE:
         expected.extend(
             [
-                "adaptive-controller-result.json",
                 "checkpoints/adaptive-latest.json",
                 "study/adaptive-run-checkpoint.json",
                 "study/adaptive-run-receipt.json",
                 "monitoring/adaptive-progress.json",
                 "monitoring/rolling-capacity-receipt.json",
-                "providers/production-judge-budget/finalization-receipt.json",
-                "finalization/adaptive-finalization-handoff.json",
-                "finalization/adaptive-finalization-audit.json",
-                "finalization/audited-selection-receipt.json",
-                "finalization/adaptive-finalization-receipt.json",
-                "finalization/final-model-publication-receipt.json",
-                "finalization/checkpoint-publication/checkpoint-manifest.json",
-                "finalization/checkpoint-publication/selection-receipt.json",
-                "finalization/checkpoint-publication/control-schedule-receipt.json",
-                "finalization/checkpoint-publication/registry-entry-proposal.json",
-                "finalization/checkpoint-publication/publication-receipt.json",
             ]
         )
+        if stop_after_trials is not None:
+            expected.append("monitoring/controller-pause-receipt.json")
+        else:
+            expected.extend(
+                [
+                    "adaptive-controller-result.json",
+                    "providers/production-judge-budget/finalization-receipt.json",
+                    "finalization/adaptive-finalization-handoff.json",
+                    "finalization/adaptive-finalization-audit.json",
+                    "finalization/audited-selection-receipt.json",
+                    "finalization/adaptive-finalization-receipt.json",
+                    "finalization/final-model-publication-receipt.json",
+                    "finalization/checkpoint-publication/checkpoint-manifest.json",
+                    "finalization/checkpoint-publication/selection-receipt.json",
+                    "finalization/checkpoint-publication/control-schedule-receipt.json",
+                    "finalization/checkpoint-publication/registry-entry-proposal.json",
+                    "finalization/checkpoint-publication/publication-receipt.json",
+                ]
+            )
     else:
         expected.insert(0, "production-run.json")
         expected.insert(4, "checkpoints/latest.json")

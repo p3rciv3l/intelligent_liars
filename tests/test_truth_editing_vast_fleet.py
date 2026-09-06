@@ -762,6 +762,8 @@ def test_persistent_cuda_worker_is_gpu_isolated_reused_and_paid_failure_is_unsco
     assert captured["env"]["OPENROUTER_API_KEY"] == "worker-needs-this"
     assert not any(name.startswith("WANDB_") for name in captured["env"])
     assert not any(name.startswith("AWS_") for name in captured["env"])
+    assert captured["encoding"] == "utf-8"
+    assert captured["errors"] == "strict"
     failed = worker.evaluate(dispatch)
     assert failed.outcome_kind == "operational_failure"
     assert failed.metrics == {}

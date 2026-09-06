@@ -1096,6 +1096,8 @@ class SubprocessCudaWorker:
             # fill an unread pipe and deadlock a long-lived worker.
             stderr=None,
             text=True,
+            encoding="utf-8",
+            errors="strict",
             bufsize=1,
             env=environment,
         )
