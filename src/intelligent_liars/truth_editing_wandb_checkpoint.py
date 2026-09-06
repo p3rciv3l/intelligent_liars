@@ -385,9 +385,12 @@ def _progress_from_mapping(value: Any) -> AdaptiveRunProgress:
 
 
 def _validated_progress(progress: AdaptiveRunProgress) -> None:
+    trial_range = (
+        progress.planned_floor_trials,
+        progress.adaptive_ceiling_trials,
+    )
     if (
-        progress.planned_floor_trials != 200
-        or progress.adaptive_ceiling_trials != 800
+        trial_range not in {(200, 800), (64, 64)}
         or progress.batch_size != 8
         or progress.search_cutoff_seconds != 21 * 3600
         or progress.reserve_seconds != 3 * 3600

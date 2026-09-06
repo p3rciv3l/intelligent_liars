@@ -196,6 +196,25 @@ def test_adaptive_progress_checkpoint_round_trips_and_hash_chains_updates(
     assert json.loads(path.read_text())["format"] == ADAPTIVE_PROGRESS_FORMAT
 
 
+def test_aggressive_64_trial_progress_uses_the_same_durable_checkpoint_contract(
+    tmp_path: Path,
+) -> None:
+    raw = dict(vars(_adaptive_progress("d" * 64)))
+    raw.update(
+        planned_floor_trials=64,
+        adaptive_ceiling_trials=64,
+        measured_target_trials=64,
+    )
+    progress = AdaptiveRunProgress(**raw)
+
+    checkpoint = advance_adaptive_progress_checkpoint(
+        tmp_path / "aggressive-progress.json", progress
+    )
+
+    assert checkpoint.progress.planned_floor_trials == 64
+    assert checkpoint.progress.adaptive_ceiling_trials == 64
+
+
 def test_adaptive_progress_checkpoint_rejects_policy_drift_and_regression(
     tmp_path: Path,
 ) -> None:
