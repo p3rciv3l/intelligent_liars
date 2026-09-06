@@ -644,7 +644,7 @@ def test_recovery_matrix_survives_crash_retries_only_missing_and_finalizes(
     }
     assert 2 not in native_by_ordinal
     assert native_by_ordinal[1].state is optuna.trial.TrialState.COMPLETE
-    assert native_by_ordinal[1].user_attrs["constraint_violation"] == 1.0
+    assert native_by_ordinal[1].user_attrs["constraint_violation"] == 0.0
     assert all(math.isfinite(value) for value in native_by_ordinal[1].values)
 
     recovered_judge = _FaultJudge()

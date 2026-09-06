@@ -112,6 +112,15 @@ LOSS_CONTRACT = {
     "operational_failures_have_values": False,
 }
 LOSS_CONTRACT_SHA256 = _sha(LOSS_CONTRACT)
+CAPABILITY_PRESERVATION_FLOOR = 0.90
+CONSTRAINT_POLICY = {
+    "format": "truth_editing_optuna_constraint_policy_v1",
+    "capability_preservation_floor": CAPABILITY_PRESERVATION_FLOOR,
+    "constraint_formula": "max(0, capability_preservation_floor - capability_preservation_lcb)",
+    "behavior_thresholds_are_objectives_not_optuna_constraints": True,
+    "operational_failures_have_constraints": False,
+}
+CONSTRAINT_POLICY_SHA256 = _sha(CONSTRAINT_POLICY)
 SEARCH_SPACE_CONTRACT = {
     "format": "truth_editing_search_space_v3",
     "sampler": "multivariate_tpe_with_seeded_random_startup",
@@ -138,7 +147,19 @@ SEARCH_SPACE_SHA256 = _sha(SEARCH_SPACE_CONTRACT)
 
 
 def _optuna_constraints(trial: Any) -> tuple[float]:
+    # Scheduled controls are represented as pruned trials with no scientific
+    # values. Keep them outside constrained multi-objective ranking.
+    if trial.values is None:
+        return (1.0,)
     return (float(trial.user_attrs.get("constraint_violation", 0.0)),)
+
+
+def _capability_constraint_violation(metrics: Mapping[str, float]) -> float:
+    capability = _number(
+        metrics["capability_preservation_lcb"],
+        "capability_preservation_lcb",
+    )
+    return max(0.0, CAPABILITY_PRESERVATION_FLOOR - capability)
 
 
 def _exact(value: Mapping[str, Any], fields: set[str], name: str) -> None:
@@ -1501,6 +1522,73 @@ class OptunaSearchDriver(OfflineDeterministicSearchDriver):
             if "study_ordinal" in trial.user_attrs
         }
 
+    def apply_constraint_policy(self) -> None:
+        """Migrate durable finite observations to the current Optuna constraint.
+
+        Finished JournalStorage trial attributes are intentionally immutable. Keep
+        those audit records intact, durably record their superseding interpretation
+        at study scope, and update this process's cached view. The active sampler is
+        then rebuilt from the authenticated scientific journal by ``observe`` using
+        the same interpretation, without replaying evaluation work.
+        """
+
+        if self._persistent_study is None:
+            raise StudyError("persistent Optuna study is unavailable before prepare")
+        existing_policy = self._persistent_study.user_attrs.get(
+            "constraint_policy_sha256"
+        )
+        if existing_policy not in {None, CONSTRAINT_POLICY_SHA256}:
+            raise StudyError(
+                "persistent Optuna study has a different constraint policy"
+            )
+        complete_trials = tuple(
+            trial
+            for trial in self._persistent_study.get_trials(deepcopy=False)
+            if trial.state is self._optuna.trial.TrialState.COMPLETE
+        )
+        for trial in complete_trials:
+            values = trial.values
+            if values is None or len(values) != len(OBJECTIVES):
+                raise StudyError(
+                    "completed Optuna trial lacks the frozen objective values"
+                )
+            metrics = dict(zip(OBJECTIVES, values, strict=True))
+            violation = _capability_constraint_violation(metrics)
+            trial.user_attrs["constraint_violation"] = violation
+            trial.user_attrs["constraint_policy_sha256"] = (
+                CONSTRAINT_POLICY_SHA256
+            )
+            trial.system_attrs["constraints"] = (violation,)
+        supersession = {
+            "format": "truth_editing_optuna_constraint_supersession_v1",
+            "constraint_policy_sha256": CONSTRAINT_POLICY_SHA256,
+            "legacy_trial_constraints_superseded": True,
+            "trial_violations_by_number": {
+                str(trial.number): _capability_constraint_violation(
+                    dict(zip(OBJECTIVES, trial.values or (), strict=True))
+                )
+                for trial in complete_trials
+            },
+        }
+        if self._persistent_study.user_attrs.get(
+            "constraint_policy_supersession"
+        ) != supersession:
+            self._persistent_study.set_user_attr(
+                "constraint_policy_supersession", supersession
+            )
+        if existing_policy is None:
+            self._persistent_study.set_user_attr(
+                "constraint_policy_sha256", CONSTRAINT_POLICY_SHA256
+            )
+            self._persistent_study.set_user_attr(
+                "capability_preservation_floor",
+                CAPABILITY_PRESERVATION_FLOOR,
+            )
+            self._persistent_study.set_user_attr(
+                "constraint_policy_migrated_complete_trials",
+                len(complete_trials),
+            )
+
     @staticmethod
     def _coverage_complete(request: SearchRequest) -> bool:
         return _broad_coverage_contract(
@@ -1897,10 +1985,14 @@ class OptunaSearchDriver(OfflineDeterministicSearchDriver):
             user_attrs={
                 "study_ordinal": trial.ordinal,
                 "proposal_sha256": _sha(trial.proposal.to_dict()),
-                "constraint_violation": (
-                    1.0
-                    if trial.result.outcome_kind == "scientifically_infeasible"
-                    else 0.0
+                "constraint_violation": _capability_constraint_violation(
+                    trial.result.metrics
+                ),
+                "constraint_policy_sha256": CONSTRAINT_POLICY_SHA256,
+            },
+            system_attrs={
+                "constraints": (
+                    _capability_constraint_violation(trial.result.metrics),
                 ),
             },
         )
@@ -1970,9 +2062,10 @@ class OptunaSearchDriver(OfflineDeterministicSearchDriver):
             else:
                 live.set_user_attr(
                     "constraint_violation",
-                    1.0
-                    if item.result.outcome_kind == "scientifically_infeasible"
-                    else 0.0,
+                    _capability_constraint_violation(item.result.metrics),
+                )
+                live.set_user_attr(
+                    "constraint_policy_sha256", CONSTRAINT_POLICY_SHA256,
                 )
                 self._study.tell(
                     live, tuple(item.result.metrics[name] for name in OBJECTIVES)
@@ -2646,6 +2739,10 @@ class TruthEditingStudy:
             self._save(path, journal)
             journal = json.loads(path.read_text())
             self._validate_journal_structure(journal, identity_inputs)
+
+        apply_constraint_policy = getattr(driver, "apply_constraint_policy", None)
+        if callable(apply_constraint_policy):
+            apply_constraint_policy()
 
         completed = self._load_trials(journal)
         if any(item.ordinal >= target_trials for item in completed):

@@ -12,6 +12,8 @@ import pytest
 
 from intelligent_liars.truth_editing_contracts import parse_direction_bank_manifest
 from intelligent_liars.truth_editing_study import (
+    CAPABILITY_PRESERVATION_FLOOR,
+    CONSTRAINT_POLICY_SHA256,
     CompletedBatchCommit,
     EvaluationResult,
     OfflineDeterministicSearchDriver,
@@ -890,7 +892,11 @@ def test_scientifically_constrained_observations_are_complete_with_finite_values
         def evaluate(self, proposal, *, trial_id, record_ids, objective_names):
             del proposal, trial_id, record_ids
             return EvaluationResult.scientifically_infeasible(
-                {name: 0.0 for name in objective_names}, "constraint"
+                {
+                    **{name: 0.0 for name in objective_names},
+                    "capability_preservation_lcb": 0.95,
+                },
+                "behavior constraint",
             )
 
     config = _config(
@@ -921,8 +927,133 @@ def test_scientifically_constrained_observations_are_complete_with_finite_values
     trials = persisted.get_trials(deepcopy=False)
     assert report.scientifically_infeasible_trials == 4
     assert all(trial.state is optuna.trial.TrialState.COMPLETE for trial in trials)
-    assert all(trial.values == [0.0, 0.0, 0.0] for trial in trials)
-    assert all(trial.user_attrs["constraint_violation"] == 1.0 for trial in trials)
+    assert all(trial.values == [0.0, 0.0, 0.95] for trial in trials)
+    assert all(trial.user_attrs["constraint_violation"] == 0.0 for trial in trials)
+    assert all(
+        trial.user_attrs["constraint_policy_sha256"] == CONSTRAINT_POLICY_SHA256
+        for trial in trials
+    )
+    assert all(trial.system_attrs["constraints"] == [0.0] for trial in trials)
+
+
+@pytest.mark.skipif(importlib.util.find_spec("optuna") is None, reason="Optuna is optional")
+def test_optuna_constraint_is_continuous_below_ninety_percent_floor(tmp_path) -> None:
+    class CapabilityConstrainedEvaluator(OfflineSyntheticEvaluator):
+        def evaluate(self, proposal, *, trial_id, record_ids, objective_names):
+            del proposal, trial_id, record_ids
+            return EvaluationResult.scientifically_infeasible(
+                {
+                    **{name: 0.0 for name in objective_names},
+                    "capability_preservation_lcb": 0.85,
+                },
+                "capability constraint",
+            )
+
+    config = _config(
+        tmp_path,
+        max_trials=2,
+        evaluation_tiers=[{"name": "all", "record_limit": 2, "through_trial": 2}],
+    )
+    driver = OptunaSearchDriver(seed=17)
+    TruthEditingStudy(config, _direction_bank()).run(
+        driver=driver,
+        evaluator=CapabilityConstrainedEvaluator(),
+        journal_path=tmp_path / "capability-constrained.json",
+    )
+
+    import optuna
+
+    storage = optuna.storages.JournalStorage(
+        optuna.storages.journal.JournalFileBackend(
+            str(tmp_path / "capability-constrained.json.optuna.log")
+        )
+    )
+    persisted = optuna.load_study(
+        study_name=driver.persistent_study_name,
+        storage=storage,
+    )
+    expected = CAPABILITY_PRESERVATION_FLOOR - 0.85
+    assert all(
+        trial.user_attrs["constraint_violation"] == pytest.approx(expected)
+        for trial in persisted.get_trials(deepcopy=False)
+    )
+
+
+@pytest.mark.skipif(importlib.util.find_spec("optuna") is None, reason="Optuna is optional")
+def test_optuna_resume_supersedes_historical_constraints_without_rewriting_trials(
+    tmp_path, monkeypatch,
+) -> None:
+    class PreservedButBehaviorallyConstrained(OfflineSyntheticEvaluator):
+        def evaluate(self, proposal, *, trial_id, record_ids, objective_names):
+            del proposal, trial_id, record_ids
+            return EvaluationResult.scientifically_infeasible(
+                {
+                    **{name: 0.0 for name in objective_names},
+                    "capability_preservation_lcb": 0.97,
+                },
+                "behavior constraint",
+            )
+
+    config = _config(
+        tmp_path,
+        max_trials=2,
+        evaluation_tiers=[{"name": "all", "record_limit": 2, "through_trial": 2}],
+    )
+    journal = tmp_path / "migrated.json"
+    import intelligent_liars.truth_editing_study as study_module
+
+    monkeypatch.setattr(
+        study_module, "_capability_constraint_violation", lambda metrics: 1.0
+    )
+    first_driver = OptunaSearchDriver(seed=17)
+    TruthEditingStudy(config, _direction_bank()).run(
+        driver=first_driver,
+        evaluator=PreservedButBehaviorallyConstrained(),
+        journal_path=journal,
+    )
+
+    monkeypatch.undo()
+
+    import optuna
+
+    optuna_log = tmp_path / "migrated.json.optuna.log"
+    storage = optuna.storages.JournalStorage(
+        optuna.storages.journal.JournalFileBackend(str(optuna_log))
+    )
+    persisted = optuna.load_study(
+        study_name=first_driver.persistent_study_name,
+        storage=storage,
+    )
+    assert all(
+        trial.user_attrs["constraint_violation"] == 1.0
+        and trial.system_attrs["constraints"] == [1.0]
+        for trial in persisted.get_trials(deepcopy=False)
+    )
+
+    resumed_driver = OptunaSearchDriver(seed=17)
+    TruthEditingStudy(config, _direction_bank()).run(
+        driver=resumed_driver,
+        evaluator=PreservedButBehaviorallyConstrained(),
+        journal_path=journal,
+    )
+    migrated = resumed_driver._persistent_study
+    assert migrated is not None
+    assert all(
+        trial.user_attrs["constraint_violation"] == 0.0
+        and tuple(trial.system_attrs["constraints"]) == (0.0,)
+        for trial in migrated.get_trials(deepcopy=False)
+    )
+    supersession = migrated.user_attrs["constraint_policy_supersession"]
+    assert supersession["legacy_trial_constraints_superseded"] is True
+    assert supersession["trial_violations_by_number"] == {"0": 0.0, "1": 0.0}
+
+    migrated_log = optuna_log.read_bytes()
+    TruthEditingStudy(config, _direction_bank()).run(
+        driver=OptunaSearchDriver(seed=17),
+        evaluator=PreservedButBehaviorallyConstrained(),
+        journal_path=journal,
+    )
+    assert optuna_log.read_bytes() == migrated_log
 
 
 @pytest.mark.skipif(importlib.util.find_spec("optuna") is None, reason="Optuna is optional")

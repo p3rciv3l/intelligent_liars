@@ -1656,6 +1656,13 @@ class MonitoredSearchDriver:
     def prepare(self, config: Any, directions: Any, state_path: Path) -> None:
         self._driver.prepare(config, directions, state_path)
 
+    def apply_constraint_policy(self) -> None:
+        """Forward optimizer policy migration without involving monitoring."""
+
+        apply_policy = getattr(self._driver, "apply_constraint_policy", None)
+        if apply_policy is not None:
+            apply_policy()
+
     def suggest(self, request: Any) -> Any:
         return self._driver.suggest(request)
 
