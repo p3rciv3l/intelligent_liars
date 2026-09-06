@@ -1225,18 +1225,20 @@ def _validate_study_journal(
 ) -> list[Mapping[str, Any]]:
     if trial_number_start not in {0, 1}:
         raise PhaseCheckpointError("study journal trial number start is invalid")
+    single_aggressive_tier = tier_through_trials == (64,)
+    legacy_adaptive_tiers = (
+        len(tier_through_trials) == 3
+        and tier_through_trials[0]
+        < tier_through_trials[1]
+        < tier_through_trials[2]
+    )
     if (
-        len(tier_through_trials) != 3
+        not (single_aggressive_tier or legacy_adaptive_tiers)
         or any(
             isinstance(boundary, bool)
             or not isinstance(boundary, int)
             or not 0 < boundary <= 800
             for boundary in tier_through_trials
-        )
-        or not (
-            tier_through_trials[0]
-            < tier_through_trials[1]
-            < tier_through_trials[2]
         )
     ):
         raise PhaseCheckpointError("study journal tier boundaries are invalid")
@@ -1299,7 +1301,7 @@ def _validate_study_journal(
                 raise PhaseCheckpointError("phase checkpoint contains an incomplete trial")
             expected_tier = (
                 "discovery"
-                if ordinal < tier_through_trials[0]
+                if single_aggressive_tier or ordinal < tier_through_trials[0]
                 else "expanded" if ordinal < tier_through_trials[1] else "finalist"
             )
             if trial.get("tier_name") != expected_tier:

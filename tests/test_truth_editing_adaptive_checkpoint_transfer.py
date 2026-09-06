@@ -53,6 +53,7 @@ def _write_adaptive_state(
     operational_failure_ordinals: frozenset[int] = frozenset(),
     expanded_through: int = 160,
     trial_number_start: int = 0,
+    single_tier: bool = False,
 ) -> None:
     progress_completed = completed if progress_completed is None else progress_completed
     (root / "study").mkdir(parents=True)
@@ -62,7 +63,7 @@ def _write_adaptive_state(
             "ordinal": ordinal,
             "tier_name": (
                 "discovery"
-                if ordinal < 80
+                if single_tier or ordinal < 80
                 else "expanded" if ordinal < expanded_through else "finalist"
             ),
             "evaluation_record_ids": ["record-1"],
@@ -139,9 +140,9 @@ def _write_adaptive_state(
     progress = AdaptiveRunProgress(
         wandb_run_checkpoint_sha256=wandb.checkpoint_sha256,
         study_config_sha256=STUDY_CONFIG_SHA,
-        planned_floor_trials=200,
-        adaptive_ceiling_trials=800,
-        measured_target_trials=480,
+        planned_floor_trials=64 if single_tier else 200,
+        adaptive_ceiling_trials=64 if single_tier else 800,
+        measured_target_trials=64 if single_tier else 480,
         batch_size=8,
         search_cutoff_seconds=75600,
         reserve_seconds=10800,
@@ -795,3 +796,23 @@ def test_adaptive_checkpoint_accepts_configured_expanded_tier_through_200(
         tier_through_trials=(80, 200, 800),
     )
     assert manifest["completed_trials"] == 168
+
+
+def test_adaptive_checkpoint_accepts_aggressive_single_discovery_tier(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "source-aggressive"
+    _write_adaptive_state(source, completed=8, single_tier=True)
+
+    manifest = publish_adaptive_checkpoint(
+        source,
+        tmp_path / "published-aggressive",
+        expected_study_identity_sha256=STUDY_ID,
+        expected_study_config_sha256=STUDY_CONFIG_SHA,
+        expected_completed_trials=8,
+        expected_optuna_study_name=OPTUNA_STUDY_NAME,
+        tier_through_trials=(64,),
+        trial_number_start=0,
+    )
+
+    assert manifest["completed_trials"] == 8
