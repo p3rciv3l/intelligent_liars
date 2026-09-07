@@ -222,6 +222,57 @@ def test_project_glm_flash_judge_contract_is_frozen():
     }
 
 
+def test_project_gemini_flash_readability_contract_omits_sampling():
+    yaml_path = Path(__file__).resolve().parents[1] / "model_deployments.yaml"
+    session = FakeSession()
+    tools = [
+        {
+            "type": "function",
+            "function": {
+                "name": "done_step",
+                "parameters": {"type": "object", "properties": {}},
+            },
+        }
+    ]
+
+    client = get_model_client(
+        "gemini-3.8-flash",
+        api_key="sk-test",
+        yaml_path=yaml_path,
+    )
+    client.generate(
+        [{"role": "user", "content": "hi"}],
+        session=session,
+        tools=tools,
+        tool_choice="auto",
+    )
+
+    payload = session.calls[0]["json"]
+    assert client.model == "google/gemini-3.8-flash:nitro"
+    assert client.timeout == 1200
+    assert session.calls[0]["timeout"] == 1200
+    assert "temperature" not in payload
+    assert "top_p" not in payload
+    assert "top_k" not in payload
+    assert "max_tokens" not in payload
+    assert payload["tools"] == tools
+    assert payload["tool_choice"] == "auto"
+    assert payload["reasoning"] == {"effort": "high", "exclude": False}
+    assert payload["provider"] == {
+        "only": [
+            "google-ai-studio/priority",
+            "google-vertex/global/priority",
+            "google-ai-studio",
+            "google-vertex",
+        ],
+        "sort": "throughput",
+        "allow_fallbacks": True,
+        "require_parameters": True,
+        "data_collection": "deny",
+    }
+    assert "quantizations" not in payload["provider"]
+
+
 def test_get_model_client_merges_provider_with_call_site_winning(tmp_path):
     yaml_path = tmp_path / "model_deployments.yaml"
     yaml_path.write_text(

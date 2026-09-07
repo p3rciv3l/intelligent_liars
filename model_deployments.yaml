@@ -43,3 +43,49 @@ models:
       allow_fallbacks: false
       require_parameters: true
       data_collection: deny
+
+  # Readability-bench inference. Google-hosted Gemini 3.8 Flash only.
+  # `:nitro` is OpenRouter's fastest routing mode: sort by throughput and
+  # admit priority-tier endpoints. Sampling fields stay null so they are
+  # omitted from the request; OpenRouter then omits them upstream and
+  # Google applies its own defaults. Sending an explicit conventional
+  # default (e.g. temperature: 1.0) is not the same as omitting it.
+  # Gemini 3.8 Flash's Google migration notes also say to strip
+  # temperature / top_p / top_k. Highest native thinking level is `high`
+  # (supported_efforts: high, medium, low; default is medium). OpenRouter
+  # reports quantization unknown; there is no fp8/int8 Google endpoint.
+  - name: gemini-3.8-flash
+    model: google/gemini-3.8-flash:nitro
+    timeout: 1200
+    temperature: null
+    top_p: null
+    top_k: null
+    frequency_penalty: null
+    presence_penalty: null
+    repetition_penalty: null
+    min_p: null
+    top_a: null
+    seed: null
+    max_tokens: null
+    logit_bias: null
+    logprobs: null
+    top_logprobs: null
+    response_format: null
+    verbosity: null
+    tools: null
+    tool_choice: null
+    parallel_tool_calls: null
+    plugins: null
+    reasoning:
+      effort: high
+      exclude: false
+    provider:
+      only:
+        - google-ai-studio/priority
+        - google-vertex/global/priority
+        - google-ai-studio
+        - google-vertex
+      sort: throughput
+      allow_fallbacks: true
+      require_parameters: true
+      data_collection: deny
